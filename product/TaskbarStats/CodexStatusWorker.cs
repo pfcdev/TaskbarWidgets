@@ -20,7 +20,7 @@ internal static class CodexStatusWorker
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var status = await CollectStatusAsync();
+            var status = await CollectStatusAsync(AccountManager.GetActiveAccount());
             WriteStatus(status);
 
             if (!once)
@@ -45,18 +45,20 @@ static TimeSpan GetInterval(string[] args)
     return TimeSpan.FromSeconds(60);
 }
 
-static async Task<CodexStatus> CollectStatusAsync()
+static async Task<CodexStatus> CollectStatusAsync(AccountSnapshot activeAccount)
 {
     var status = new CodexStatus
     {
         Version = 1,
         UpdatedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        Status = "ok"
+        Status = "ok",
+        ActiveAccountId = activeAccount.Id,
+        ActiveAccountLabel = activeAccount.Label
     };
 
     try
     {
-        var appServer = await ReadRateLimitsFromAppServerAsync();
+        var appServer = await ReadRateLimitsFromAppServerAsync(activeAccount.CodexHome);
         status.PlanType = appServer.PlanType;
         status.PrimaryUsedPercent = appServer.PrimaryUsedPercent;
         status.PrimaryWindowMins = appServer.PrimaryWindowMins;
@@ -76,7 +78,7 @@ static async Task<CodexStatus> CollectStatusAsync()
 
     try
     {
-        var usage = ReadLocalUsage30d();
+        var usage = ReadLocalUsage30d(activeAccount.CodexHome);
         status.Tokens30d = usage.Tokens;
         status.ThreadCount30d = usage.Threads;
     }
@@ -90,7 +92,7 @@ static async Task<CodexStatus> CollectStatusAsync()
 
     try
     {
-        var task = ReadLatestTaskState();
+        var task = ReadLatestTaskState(activeAccount.CodexHome);
         status.TaskState = task.State;
         status.TaskLabel = task.Label;
         status.TaskTitle = task.Title;
@@ -141,10 +143,10 @@ static void PreservePreviousRateLimitFields(CodexStatus status)
     }
 }
 
-static async Task<AppServerStatus> ReadRateLimitsFromAppServerAsync()
+static async Task<AppServerStatus> ReadRateLimitsFromAppServerAsync(string codexHome)
 {
     var port = GetFreeLoopbackPort();
-    using var process = StartCodexWebSocketAppServer(port);
+    using var process = StartCodexWebSocketAppServer(port, codexHome);
     _ = Task.Run(async () =>
     {
         try
@@ -241,9 +243,11 @@ static int GetFreeLoopbackPort()
     return port;
 }
 
-static Process StartCodexWebSocketAppServer(int port)
+static Process StartCodexWebSocketAppServer(int port, string codexHome)
 {
     var codex = FindCodexExecutable();
+    Directory.CreateDirectory(codexHome);
+
     var info = new ProcessStartInfo
     {
         FileName = codex.Path,
@@ -254,6 +258,8 @@ static Process StartCodexWebSocketAppServer(int port)
         StandardOutputEncoding = Encoding.UTF8,
         StandardErrorEncoding = Encoding.UTF8
     };
+    info.Environment["CODEX_HOME"] = codexHome;
+    info.Environment["CODEX_SQLITE_HOME"] = codexHome;
 
     foreach (var argument in codex.Arguments)
     {
@@ -384,11 +390,8 @@ static async Task<string> ReceiveTextAsync(ClientWebSocket socket,
     }
 }
 
-static Usage30d ReadLocalUsage30d()
+static Usage30d ReadLocalUsage30d(string codexHome)
 {
-    var codexHome = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".codex");
     var stateDb = Path.Combine(codexHome, "state_5.sqlite");
     if (!File.Exists(stateDb))
     {
@@ -441,11 +444,9 @@ static Usage30d ReadLocalUsage30d()
     return new Usage30d(tokens, threads);
 }
 
-static TaskStateSnapshot ReadLatestTaskState()
+static TaskStateSnapshot ReadLatestTaskState(string codexHome)
 {
-    var sessionsRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".codex", "sessions");
+    var sessionsRoot = Path.Combine(codexHome, "sessions");
     if (!Directory.Exists(sessionsRoot))
     {
         return TaskStateSnapshot.Idle();
@@ -726,6 +727,8 @@ internal sealed class CodexStatus
     public long UpdatedAtUnix { get; init; }
     public string Status { get; set; } = "ok";
     public string? Error { get; set; }
+    public string? ActiveAccountId { get; set; }
+    public string? ActiveAccountLabel { get; set; }
     public string? PlanType { get; set; }
     public double? PrimaryUsedPercent { get; set; }
     public long? PrimaryWindowMins { get; set; }

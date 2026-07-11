@@ -44,6 +44,7 @@ Unsupported builds should fail closed and log diagnostics.
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Windows.UI.Xaml.Input.h>
 #include <winrt/Windows.UI.Xaml.Media.h>
 #include <winrt/Windows.UI.Xaml.Media.Imaging.h>
@@ -55,6 +56,8 @@ namespace wf = winrt::Windows::Foundation;
 namespace wuc = winrt::Windows::UI::Core;
 namespace wux = winrt::Windows::UI::Xaml;
 namespace wuxc = winrt::Windows::UI::Xaml::Controls;
+namespace wuxcp = winrt::Windows::UI::Xaml::Controls::Primitives;
+namespace wuxi = winrt::Windows::UI::Xaml::Input;
 namespace wuxm = winrt::Windows::UI::Xaml::Media;
 namespace wuxmi = winrt::Windows::UI::Xaml::Media::Imaging;
 
@@ -110,6 +113,111 @@ void Wh_Log(PCWSTR format, ...) {
         fputws(line, file);
         fclose(file);
     }
+}
+
+std::wstring GetTaskbarStatsPath(PCWSTR leaf = nullptr) {
+    WCHAR localAppData[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariable(L"LOCALAPPDATA", localAppData,
+                                          ARRAYSIZE(localAppData));
+    if (length == 0 || length >= ARRAYSIZE(localAppData)) {
+        return {};
+    }
+
+    std::wstring path = localAppData;
+    path += L"\\TaskbarStats";
+    CreateDirectory(path.c_str(), nullptr);
+    if (leaf && *leaf) {
+        path += L"\\";
+        path += leaf;
+    }
+
+    return path;
+}
+
+std::string WideToUtf8(const std::wstring& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    int length = WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                                     static_cast<int>(value.size()), nullptr, 0,
+                                     nullptr, nullptr);
+    if (length <= 0) {
+        return {};
+    }
+
+    std::string result(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                        static_cast<int>(value.size()), result.data(), length,
+                        nullptr, nullptr);
+    return result;
+}
+
+std::string JsonEscapeUtf8(const std::wstring& value) {
+    std::string utf8 = WideToUtf8(value);
+    std::string escaped;
+    escaped.reserve(utf8.size());
+    for (char ch : utf8) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+
+    return escaped;
+}
+
+void WriteTaskbarStatsCommand(const std::wstring& command,
+                              const std::wstring& accountId = L"") {
+    std::wstring directory = GetTaskbarStatsPath(L"Commands");
+    if (directory.empty()) {
+        return;
+    }
+
+    CreateDirectory(directory.c_str(), nullptr);
+
+    SYSTEMTIME time{};
+    GetSystemTime(&time);
+    WCHAR fileName[128]{};
+    swprintf_s(fileName, L"\\%04u%02u%02u%02u%02u%02u%03u_%u.json",
+               time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+               time.wSecond, time.wMilliseconds, GetCurrentProcessId());
+
+    std::wstring path = directory + fileName;
+    std::string json = "{\"command\":\"" + JsonEscapeUtf8(command) + "\"";
+    if (!accountId.empty()) {
+        json += ",\"accountId\":\"" + JsonEscapeUtf8(accountId) + "\"";
+    }
+    json += "}\n";
+
+    HANDLE file = CreateFile(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                             nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL,
+                             nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        Wh_Log(L"Failed to create command file: %u", GetLastError());
+        return;
+    }
+
+    DWORD written = 0;
+    WriteFile(file, json.data(), static_cast<DWORD>(json.size()), &written,
+              nullptr);
+    CloseHandle(file);
 }
 
 HMODULE GetCurrentModuleHandle() {
@@ -218,6 +326,13 @@ wuxm::SolidColorBrush MakeBrush(BYTE a, BYTE r, BYTE g, BYTE b) {
 
 std::vector<std::wstring> GetAntigravityProjectTitles();
 void SetExpandedMode(wux::UIElement const& root, bool expanded);
+void ShowAccountMenu(wux::FrameworkElement const& root);
+
+struct CodexAccountInfo {
+    std::wstring id;
+    std::wstring label;
+    bool active{};
+};
 
 wuxc::FontIcon MakeNamedStateIcon(PCWSTR name) {
     wuxc::FontIcon icon;
@@ -405,6 +520,10 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
     root.PointerExited([root](auto const&, auto const&) {
         SetExpandedMode(root.as<wux::UIElement>(), false);
     });
+    root.Tapped([root](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+        ShowAccountMenu(root);
+        args.Handled(true);
+    });
 
     return root;
 }
@@ -500,6 +619,100 @@ bool ExtractJsonString(const std::string& json,
     MultiByteToWideChar(CP_UTF8, 0, raw.c_str(), static_cast<int>(raw.size()),
                         value.data(), wideLength);
     return true;
+}
+
+std::vector<CodexAccountInfo> ReadCodexAccounts() {
+    std::vector<CodexAccountInfo> accounts;
+    std::wstring settingsPath = GetTaskbarStatsPath(L"settings.json");
+    std::string json = ReadUtf8File(settingsPath);
+    std::wstring activeAccountId;
+    ExtractJsonString(json, "activeAccountId", activeAccountId);
+
+    size_t accountsKey = json.find("\"accounts\"");
+    size_t arrayStart = accountsKey == std::string::npos
+                            ? std::string::npos
+                            : json.find('[', accountsKey);
+    size_t arrayEnd = arrayStart == std::string::npos
+                          ? std::string::npos
+                          : json.find(']', arrayStart);
+    if (arrayStart != std::string::npos && arrayEnd != std::string::npos) {
+        size_t cursor = arrayStart;
+        while (cursor < arrayEnd && accounts.size() < 5) {
+            size_t objectStart = json.find('{', cursor);
+            if (objectStart == std::string::npos || objectStart >= arrayEnd) {
+                break;
+            }
+
+            size_t objectEnd = json.find('}', objectStart);
+            if (objectEnd == std::string::npos || objectEnd > arrayEnd) {
+                break;
+            }
+
+            std::string object = json.substr(objectStart, objectEnd - objectStart + 1);
+            CodexAccountInfo account;
+            ExtractJsonString(object, "id", account.id);
+            ExtractJsonString(object, "label", account.label);
+            if (!account.id.empty()) {
+                if (account.label.empty()) {
+                    account.label = account.id;
+                }
+                account.active =
+                    _wcsicmp(account.id.c_str(), activeAccountId.c_str()) == 0;
+                accounts.push_back(account);
+            }
+
+            cursor = objectEnd + 1;
+        }
+    }
+
+    if (accounts.empty()) {
+        accounts.push_back({L"default", L"Default", true});
+    } else if (std::none_of(accounts.begin(), accounts.end(),
+                            [](const CodexAccountInfo& account) {
+                                return account.active;
+                            })) {
+        accounts[0].active = true;
+    }
+
+    return accounts;
+}
+
+void ShowAccountMenu(wux::FrameworkElement const& root) {
+    try {
+        auto flyout = wuxc::MenuFlyout();
+        auto accounts = ReadCodexAccounts();
+
+        for (const auto& account : accounts) {
+            auto item = wuxc::MenuFlyoutItem();
+            std::wstring label = account.active ? L"* " : L"";
+            label += account.label;
+            item.Text(label);
+
+            std::wstring accountId = account.id;
+            item.Click([accountId](auto const&, auto const&) {
+                WriteTaskbarStatsCommand(L"switchAccount", accountId);
+            });
+            flyout.Items().Append(item);
+        }
+
+        auto separator = wuxc::MenuFlyoutSeparator();
+        flyout.Items().Append(separator);
+
+        auto addItem = wuxc::MenuFlyoutItem();
+        addItem.Text(L"Add Codex account");
+        addItem.Click([](auto const&, auto const&) {
+            WriteTaskbarStatsCommand(L"addAccount");
+        });
+        flyout.Items().Append(addItem);
+
+        wuxcp::FlyoutBase::SetAttachedFlyout(root, flyout);
+        wuxcp::FlyoutBase::ShowAttachedFlyout(root);
+    } catch (winrt::hresult_error const& ex) {
+        Wh_Log(L"ShowAccountMenu failed: 0x%08X %s", ex.code(),
+               ex.message().c_str());
+    } catch (...) {
+        Wh_Log(L"ShowAccountMenu failed with unknown exception");
+    }
 }
 
 bool ExtractJsonDouble(const std::string& json, const char* key, double& value) {

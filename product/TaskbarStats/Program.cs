@@ -93,12 +93,16 @@ internal static class Program
 
         var hookPath = ExtractHookDll();
         Log($"Runtime hook path: {hookPath}");
+        AccountManager.Initialize();
 
         var agentTask = Task.Run(
             () => CodexStatusWorker.RunAsync(args, cancellation.Token),
             cancellation.Token);
         var watchdogTask = Task.Run(
             () => RunExplorerWatchdogAsync(hookPath, cancellation.Token),
+            cancellation.Token);
+        var accountCommandsTask = Task.Run(
+            () => AccountManager.RunCommandWatcherAsync(cancellation.Token),
             cancellation.Token);
         if (!args.Any(arg => string.Equals(arg, "--no-update-check", StringComparison.OrdinalIgnoreCase)))
         {
@@ -111,7 +115,7 @@ internal static class Program
 
         try
         {
-            await Task.WhenAll(agentTask, watchdogTask);
+            await Task.WhenAll(agentTask, watchdogTask, accountCommandsTask);
         }
         catch (OperationCanceledException)
         {
