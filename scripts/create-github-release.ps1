@@ -90,11 +90,12 @@ function Publish-WithGitHubRest {
             }
         }
 
-        $UploadBase = ($Release.upload_url -replace "\{\?name,label\}", "")
+        $UploadBase = [string]($Release.upload_url -replace "\{\?name,label\}", "")
         $EscapedName = [System.Uri]::EscapeDataString($FileName)
+        $UploadUri = "{0}?name={1}" -f $UploadBase, $EscapedName
         Invoke-RestMethod `
             -Method Post `
-            -Uri "$UploadBase?name=$EscapedName" `
+            -Uri $UploadUri `
             -Headers $Headers `
             -ContentType "application/octet-stream" `
             -InFile $File | Out-Null
