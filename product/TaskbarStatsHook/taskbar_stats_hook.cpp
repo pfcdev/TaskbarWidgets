@@ -410,6 +410,7 @@ HWND g_widgetLibraryWindow = nullptr;
 std::vector<WidgetLibraryHitItem> g_widgetLibraryHitItems;
 int g_widgetLibraryHoveredIndex = -1;
 HWND g_weatherMenuWindow = nullptr;
+int g_weatherMenuHoveredIndex = -1;
 
 wuxc::FontIcon MakeNamedStateIcon(PCWSTR name) {
     wuxc::FontIcon icon;
@@ -2056,6 +2057,19 @@ void DrawWeatherIcon(HDC dc,
     }
 }
 
+RECT GetWeatherSettingsButtonRect(RECT clientRect) {
+    return RECT{clientRect.right - 46, 10, clientRect.right - 14, 42};
+}
+
+int HitTestWeatherMenuItem(POINT point, RECT clientRect) {
+    RECT settingsRect = GetWeatherSettingsButtonRect(clientRect);
+    if (PtInRect(&settingsRect, point)) {
+        return 0;
+    }
+
+    return -1;
+}
+
 void DrawWeatherMenuPopup(HDC dc, RECT clientRect) {
     HBRUSH background = CreateSolidBrush(RGB(17, 17, 17));
     FillRect(dc, &clientRect, background);
@@ -2075,6 +2089,19 @@ void DrawWeatherMenuPopup(HDC dc, RECT clientRect) {
         -13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT iconFont = CreateFontW(
+        -15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+
+    RECT settingsRect = GetWeatherSettingsButtonRect(clientRect);
+    if (g_weatherMenuHoveredIndex == 0) {
+        HBRUSH hoverBrush = CreateSolidBrush(RGB(34, 34, 34));
+        FillRect(dc, &settingsRect, hoverBrush);
+        DeleteObject(hoverBrush);
+    }
+    DrawPopupText(dc, L"\xE713", settingsRect, RGB(218, 218, 224), iconFont,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     WeatherSnapshot weather = ReadWeatherSnapshot();
     std::vector<WeatherDaySnapshot> days = weather.days;
@@ -2088,8 +2115,8 @@ void DrawWeatherMenuPopup(HDC dc, RECT clientRect) {
     }
 
     constexpr int paddingX = 30;
-    constexpr int rowHeight = 54;
-    int y = 30;
+    constexpr int rowHeight = 51;
+    int y = 50;
     for (size_t i = 0; i < days.size() && i < 7; ++i) {
         const auto& day = days[i];
         RECT dayRect{paddingX, y, paddingX + 90, y + rowHeight};
@@ -2120,6 +2147,7 @@ void DrawWeatherMenuPopup(HDC dc, RECT clientRect) {
     DeleteObject(dayFont);
     DeleteObject(tempFont);
     DeleteObject(detailFont);
+    DeleteObject(iconFont);
 }
 
 LRESULT CALLBACK WeatherMenuWindowProc(HWND window,
@@ -2137,6 +2165,43 @@ LRESULT CALLBACK WeatherMenuWindowProc(HWND window,
             GetClientRect(window, &rect);
             DrawWeatherMenuPopup(dc, rect);
             EndPaint(window, &ps);
+            return 0;
+        }
+
+        case WM_MOUSEMOVE: {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT client{};
+            GetClientRect(window, &client);
+            int hoveredIndex = HitTestWeatherMenuItem(point, client);
+            if (hoveredIndex != g_weatherMenuHoveredIndex) {
+                g_weatherMenuHoveredIndex = hoveredIndex;
+                InvalidateRect(window, nullptr, FALSE);
+
+                TRACKMOUSEEVENT track{};
+                track.cbSize = sizeof(track);
+                track.dwFlags = TME_LEAVE;
+                track.hwndTrack = window;
+                TrackMouseEvent(&track);
+            }
+            return 0;
+        }
+
+        case WM_MOUSELEAVE:
+            if (g_weatherMenuHoveredIndex != -1) {
+                g_weatherMenuHoveredIndex = -1;
+                InvalidateRect(window, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_LBUTTONUP: {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT client{};
+            GetClientRect(window, &client);
+            if (HitTestWeatherMenuItem(point, client) == 0) {
+                DestroyWindow(window);
+                ShowWidgetLibraryWindow();
+                return 0;
+            }
             return 0;
         }
 
@@ -2180,6 +2245,7 @@ LRESULT CALLBACK WeatherMenuWindowProc(HWND window,
             if (GetCapture() == window) {
                 ReleaseCapture();
             }
+            g_weatherMenuHoveredIndex = -1;
             return 0;
     }
 
