@@ -2,7 +2,7 @@
 
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Button, CentralPanel, Color32, CornerRadius, FontId, Frame,
-    Layout, Margin, RichText, Sense, Stroke, Ui, Vec2,
+    Layout, Margin, RichText, ScrollArea, Sense, Stroke, Ui, Vec2,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -105,13 +105,18 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::SidePanel::left("taskbar_stats_sidebar")
+            .exact_width(270.0)
+            .resizable(false)
+            .frame(Frame::new().fill(Color32::from_rgb(20, 22, 25)))
+            .show(ctx, |ui| {
+                sidebar(ui, &self.active_design);
+            });
+
         CentralPanel::default()
             .frame(Frame::new().fill(bg()))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    sidebar(ui, &self.active_design);
-                    content(ui, self);
-                });
+                content(ui, self);
             });
     }
 }
@@ -129,28 +134,29 @@ fn configure_style(ctx: &egui::Context) {
 }
 
 fn sidebar(ui: &mut Ui, active_design: &str) {
-    Frame::new()
-        .fill(Color32::from_rgb(20, 22, 25))
-        .inner_margin(Margin::symmetric(22, 24))
-        .show(ui, |ui| {
-            ui.set_width(232.0);
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("TaskbarStats")
-                        .color(text())
-                        .font(FontId::proportional(23.0)),
-                );
-                ui.add_space(4.0);
-                ui.label(RichText::new("Widget Studio").color(muted()).size(12.0));
-                ui.add_space(28.0);
-                nav_item(ui, "Library", true);
-                nav_item(ui, "Packs", false);
-                nav_item(ui, "Runtime", false);
+    ui.set_min_height(ui.available_height());
+    ui.add_space(24.0);
+    ui.vertical_centered_justified(|ui| {
+        ui.label(
+            RichText::new("TaskbarStats")
+                .color(text())
+                .font(FontId::proportional(23.0)),
+        );
+        ui.label(RichText::new("Widget Studio").color(muted()).size(12.0));
+    });
 
-                ui.add_space(28.0);
-                side_status(ui, active_design);
-            });
-        });
+    ui.add_space(30.0);
+    ui.vertical(|ui| {
+        ui.add_space(0.0);
+        nav_item(ui, "Library", true);
+        nav_item(ui, "Packs", false);
+        nav_item(ui, "Runtime", false);
+    });
+
+    ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+        ui.add_space(24.0);
+        side_status(ui, active_design);
+    });
 }
 
 fn side_status(ui: &mut Ui, active_design: &str) {
@@ -195,25 +201,22 @@ fn nav_item(ui: &mut Ui, label: &str, active: bool) {
 fn content(ui: &mut Ui, app: &mut SettingsApp) {
     Frame::new()
         .fill(bg())
-        .inner_margin(Margin::symmetric(34, 28))
+        .inner_margin(Margin::symmetric(36, 28))
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                top_bar(ui, app);
-                ui.add_space(20.0);
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    top_bar(ui, app);
+                    ui.add_space(22.0);
 
-                ui.horizontal_wrapped(|ui| {
-                    for card in design_cards() {
-                        design_card(ui, app, card);
-                    }
-                });
+                    design_grid(ui, app);
 
-                ui.add_space(14.0);
-                lower_bar(ui, app);
+                    ui.add_space(18.0);
+                    lower_bar(ui, app);
 
-                ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+                    ui.add_space(18.0);
                     ui.label(RichText::new(&app.status).color(muted()).size(12.0));
                 });
-            });
         });
 }
 
@@ -262,63 +265,146 @@ fn lower_bar(ui: &mut Ui, app: &mut SettingsApp) {
         });
 }
 
-fn design_card(ui: &mut Ui, app: &mut SettingsApp, card: DesignCard) {
-    let selected = app.active_design == card.id;
-    let stroke = if selected {
-        Stroke::new(1.5, card.accent)
+fn design_grid(ui: &mut Ui, app: &mut SettingsApp) {
+    let cards = design_cards();
+    let available = ui.available_width().max(320.0);
+    let gap = 18.0;
+    let columns = if available >= 1180.0 {
+        3
+    } else if available >= 720.0 {
+        2
     } else {
-        Stroke::new(1.0, Color32::from_rgb(45, 49, 56))
+        1
     };
+    let card_width =
+        ((available - gap * (columns as f32 - 1.0)) / columns as f32).clamp(320.0, 520.0);
+    let card_height = 250.0;
+
+    for row in cards.chunks(columns) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for card in row {
+                design_card(ui, app, *card, vec2(card_width, card_height));
+            }
+        });
+        ui.add_space(gap);
+    }
+}
+
+fn design_card(ui: &mut Ui, app: &mut SettingsApp, card: DesignCard, size: Vec2) {
+    let selected = app.active_design == card.id;
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let painter = ui.painter_at(rect);
+    let hovered = response.hovered();
     let fill = if selected {
         Color32::from_rgb(30, 34, 38)
+    } else if hovered {
+        Color32::from_rgb(29, 33, 38)
     } else {
         surface()
     };
+    let stroke = if selected {
+        Stroke::new(1.6, card.accent)
+    } else {
+        Stroke::new(1.0, Color32::from_rgb(45, 49, 56))
+    };
 
-    Frame::new()
-        .fill(fill)
-        .stroke(stroke)
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(326.0, 252.0));
-            ui.set_max_width(356.0);
+    painter.rect_filled(rect, CornerRadius::same(8), fill);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        stroke,
+        egui::StrokeKind::Inside,
+    );
 
-            widget_preview(ui, card);
-            ui.add_space(14.0);
+    let preview = egui::Rect::from_min_size(
+        rect.left_top() + vec2(18.0, 18.0),
+        vec2(rect.width() - 36.0, 104.0),
+    );
+    paint_widget_preview(ui, preview, card);
 
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(card.title).color(text()).size(18.0));
-                    ui.label(RichText::new(card.tag).color(muted()).size(12.0));
-                });
-                ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                    if selected {
-                        pill(ui, "Active", card.accent);
-                    }
-                });
-            });
+    painter.text(
+        rect.left_top() + vec2(20.0, 142.0),
+        Align2::LEFT_TOP,
+        card.title,
+        FontId::proportional(18.0),
+        text(),
+    );
+    painter.text(
+        rect.left_top() + vec2(20.0, 169.0),
+        Align2::LEFT_TOP,
+        card.tag,
+        FontId::proportional(12.0),
+        muted(),
+    );
 
-            ui.add_space(10.0);
-            metric_row(ui, "Surface", card.metric, card.accent);
-            ui.add_space(12.0);
+    if selected {
+        let badge =
+            egui::Rect::from_min_size(rect.right_top() + vec2(-88.0, 142.0), vec2(68.0, 26.0));
+        painter.rect_filled(
+            badge,
+            CornerRadius::same(8),
+            Color32::from_rgba_unmultiplied(card.accent.r(), card.accent.g(), card.accent.b(), 42),
+        );
+        painter.rect_stroke(
+            badge,
+            CornerRadius::same(8),
+            Stroke::new(1.0, card.accent),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            "Active",
+            FontId::proportional(12.0),
+            text(),
+        );
+    }
 
-            let button_text = if selected { "Selected" } else { "Use this" };
-            if ui
-                .add_sized(
-                    [ui.available_width(), 34.0],
-                    Button::new(button_text).fill(if selected { surface_2() } else { card.accent }),
-                )
-                .clicked()
-            {
-                app.select_design(card.id);
-            }
-        });
+    let meta = egui::Rect::from_min_size(
+        rect.left_top() + vec2(20.0, 194.0),
+        vec2(rect.width() - 40.0, 30.0),
+    );
+    painter.rect_filled(meta, CornerRadius::same(6), Color32::from_rgb(25, 28, 32));
+    painter.text(
+        meta.left_center() + vec2(12.0, 0.0),
+        Align2::LEFT_CENTER,
+        "Surface",
+        FontId::proportional(12.0),
+        muted(),
+    );
+    painter.text(
+        meta.right_center() + vec2(-12.0, 0.0),
+        Align2::RIGHT_CENTER,
+        card.metric,
+        FontId::proportional(12.0),
+        card.accent,
+    );
+
+    let button = egui::Rect::from_min_size(
+        rect.left_bottom() + vec2(20.0, -44.0),
+        vec2(rect.width() - 40.0, 28.0),
+    );
+    let button_fill = if selected { surface_2() } else { card.accent };
+    painter.rect_filled(button, CornerRadius::same(6), button_fill);
+    painter.text(
+        button.center(),
+        Align2::CENTER_CENTER,
+        if selected { "Selected" } else { "Use this" },
+        FontId::proportional(12.0),
+        if selected {
+            muted()
+        } else {
+            Color32::from_rgb(8, 12, 16)
+        },
+    );
+
+    if response.clicked() {
+        app.select_design(card.id);
+    }
 }
 
-fn widget_preview(ui: &mut Ui, card: DesignCard) {
-    let width = ui.available_width().min(324.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 96.0), Sense::hover());
+fn paint_widget_preview(ui: &Ui, rect: egui::Rect, card: DesignCard) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(14, 16, 18));
 
@@ -390,21 +476,6 @@ fn draw_weather_preview(ui: &Ui, rect: egui::Rect, accent: Color32) {
         FontId::proportional(15.0),
         text(),
     );
-}
-
-fn metric_row(ui: &mut Ui, left: &str, right: &str, accent: Color32) {
-    Frame::new()
-        .fill(Color32::from_rgb(25, 28, 32))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(left).color(muted()).size(12.0));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(right).color(accent).size(12.0));
-                });
-            });
-        });
 }
 
 fn pill(ui: &mut Ui, label: &str, accent: Color32) {
