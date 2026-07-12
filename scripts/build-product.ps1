@@ -82,5 +82,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Loader publish failed with exit code $LASTEXITCODE."
 }
 
+$ExePath = Join-Path $PublishDir "TaskbarStats.exe"
+$HashPath = Join-Path $PublishDir "TaskbarStats.exe.sha256"
+if (Test-Path $ExePath) {
+    $Hash = (Get-FileHash $ExePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path $HashPath -Value "$Hash  TaskbarStats.exe" -Encoding ASCII
+}
+
 Write-Host "Product output:"
 Get-ChildItem $PublishDir | Select-Object Name, Length, LastWriteTime

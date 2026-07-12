@@ -259,6 +259,7 @@ internal static class AccountManager
         }
 
         TerminateRemainingAntigravityHelpers(idePath);
+        TerminateCodexAppServersForAccountSwitch();
 
         if (!MaterializeCodexAccount(activeAccount))
         {
@@ -357,6 +358,92 @@ internal static class AccountManager
         }
 
         DisposeProcesses(helpers);
+    }
+
+    private static void TerminateCodexAppServersForAccountSwitch()
+    {
+        var processes = Process.GetProcessesByName("codex");
+        if (processes.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var process in processes)
+        {
+            try
+            {
+                if (process.HasExited)
+                {
+                    continue;
+                }
+
+                var path = TryGetProcessPath(process);
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !IsAccountScopedCodexAppServer(path))
+                {
+                    continue;
+                }
+
+                Log($"Terminating Codex app-server before account restart: pid={process.Id}; path={path}");
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited.
+            }
+            catch (Exception ex)
+            {
+                Log($"Failed to terminate Codex process pid={process.Id}: {ex.Message}");
+            }
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        foreach (var process in processes)
+        {
+            try
+            {
+                var path = TryGetProcessPath(process);
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !IsAccountScopedCodexAppServer(path))
+                {
+                    continue;
+                }
+
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining > TimeSpan.Zero && !process.HasExited)
+                {
+                    process.WaitForExit((int)Math.Min(remaining.TotalMilliseconds, int.MaxValue));
+                }
+            }
+            catch
+            {
+                // Best effort. A newly launched IDE will start a fresh Codex
+                // app-server against the materialized account.
+            }
+        }
+
+        DisposeProcesses(processes);
+    }
+
+    private static string? TryGetProcessPath(Process process)
+    {
+        try
+        {
+            return process.MainModule?.FileName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsAccountScopedCodexAppServer(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\.antigravity-ide\\extensions\\openai.chatgpt-",
+                   StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("\\npm\\node_modules\\@openai\\codex\\",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static void DisposeProcesses(IEnumerable<Process> processes)
