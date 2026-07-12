@@ -347,6 +347,7 @@ struct AccountMenuHitItem {
 HWND g_accountMenuWindow = nullptr;
 std::vector<CodexAccountInfo> g_accountMenuAccounts;
 std::vector<AccountMenuHitItem> g_accountMenuHitItems;
+int g_accountMenuHoveredIndex = -1;
 
 wuxc::FontIcon MakeNamedStateIcon(PCWSTR name) {
     wuxc::FontIcon icon;
@@ -872,12 +873,22 @@ void DrawAccountMenuPopup(HDC dc, RECT clientRect) {
     constexpr int actionHeight = 36;
 
     int y = padding;
+    int hitIndex = 0;
     for (const auto& account : g_accountMenuAccounts) {
         RECT row{padding, y, width - padding, y + accountHeight};
+        if (account.active || g_accountMenuHoveredIndex == hitIndex) {
+            COLORREF rowColor = account.active ? RGB(39, 47, 58)
+                                               : RGB(36, 41, 49);
+            if (account.active && g_accountMenuHoveredIndex == hitIndex) {
+                rowColor = RGB(45, 55, 68);
+            }
+
+            HBRUSH rowBrush = CreateSolidBrush(rowColor);
+            FillRect(dc, &row, rowBrush);
+            DeleteObject(rowBrush);
+        }
+
         if (account.active) {
-            HBRUSH activeBrush = CreateSolidBrush(RGB(39, 47, 58));
-            FillRect(dc, &row, activeBrush);
-            DeleteObject(activeBrush);
 
             RECT stripe{row.left, row.top + 6, row.left + 3, row.bottom - 6};
             HBRUSH stripeBrush = CreateSolidBrush(RGB(56, 189, 248));
@@ -906,6 +917,7 @@ void DrawAccountMenuPopup(HDC dc, RECT clientRect) {
                                      : RGB(100, 116, 139),
                       iconFont, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         y += accountHeight;
+        ++hitIndex;
     }
 
     RECT separator{padding + 4, y + 5, width - padding - 4, y + 6};
@@ -926,12 +938,19 @@ void DrawAccountMenuPopup(HDC dc, RECT clientRect) {
 
     for (const auto& action : actions) {
         RECT row{padding, y, width - padding, y + actionHeight};
+        if (g_accountMenuHoveredIndex == hitIndex) {
+            HBRUSH hoverBrush = CreateSolidBrush(RGB(36, 41, 49));
+            FillRect(dc, &row, hoverBrush);
+            DeleteObject(hoverBrush);
+        }
+
         RECT iconRect{row.left + 8, row.top, row.left + 28, row.bottom};
         RECT textRect{row.left + 36, row.top, row.right - 8, row.bottom};
         DrawPopupText(dc, action.glyph, iconRect, RGB(203, 213, 225), iconFont,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         DrawPopupText(dc, action.label, textRect, RGB(241, 245, 249), detailFont);
         y += actionHeight;
+        ++hitIndex;
     }
 
     DeleteObject(titleFont);
@@ -970,6 +989,16 @@ void RebuildAccountMenuHitItems(int width) {
     }
 }
 
+int HitTestAccountMenuItem(POINT point) {
+    for (size_t i = 0; i < g_accountMenuHitItems.size(); ++i) {
+        if (PtInRect(&g_accountMenuHitItems[i].rect, point)) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
 LRESULT CALLBACK AccountMenuWindowProc(HWND window,
                                        UINT message,
                                        WPARAM wParam,
@@ -988,25 +1017,86 @@ LRESULT CALLBACK AccountMenuWindowProc(HWND window,
             return 0;
         }
 
-        case WM_LBUTTONUP: {
+        case WM_MOUSEMOVE: {
             POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            for (const auto& item : g_accountMenuHitItems) {
-                if (PtInRect(&item.rect, point)) {
-                    WriteTaskbarStatsCommand(item.command, item.accountId);
-                    DestroyWindow(window);
-                    return 0;
-                }
+            int hoveredIndex = HitTestAccountMenuItem(point);
+            if (hoveredIndex != g_accountMenuHoveredIndex) {
+                g_accountMenuHoveredIndex = hoveredIndex;
+                InvalidateRect(window, nullptr, FALSE);
+
+                TRACKMOUSEEVENT track{};
+                track.cbSize = sizeof(track);
+                track.dwFlags = TME_LEAVE;
+                track.hwndTrack = window;
+                TrackMouseEvent(&track);
             }
             return 0;
         }
 
+        case WM_MOUSELEAVE:
+            if (g_accountMenuHoveredIndex != -1) {
+                g_accountMenuHoveredIndex = -1;
+                InvalidateRect(window, nullptr, FALSE);
+            }
+            return 0;
+
+        case WM_LBUTTONUP: {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            int hitIndex = HitTestAccountMenuItem(point);
+            if (hitIndex >= 0 &&
+                hitIndex < static_cast<int>(g_accountMenuHitItems.size())) {
+                const auto& item = g_accountMenuHitItems[hitIndex];
+                WriteTaskbarStatsCommand(item.command, item.accountId);
+                DestroyWindow(window);
+                return 0;
+            }
+            return 0;
+        }
+
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN: {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT client{};
+            GetClientRect(window, &client);
+            if (!PtInRect(&client, point)) {
+                DestroyWindow(window);
+            }
+            return 0;
+        }
+
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) == WA_INACTIVE) {
+                DestroyWindow(window);
+            }
+            return 0;
+
+        case WM_KILLFOCUS:
+            DestroyWindow(window);
+            return 0;
+
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
+
+        case WM_CANCELMODE:
+            DestroyWindow(window);
+            return 0;
+
+        case WM_CAPTURECHANGED:
+            if (g_accountMenuWindow == window &&
+                reinterpret_cast<HWND>(lParam) != window) {
+                DestroyWindow(window);
+            }
+            return 0;
 
         case WM_DESTROY:
             if (g_accountMenuWindow == window) {
                 g_accountMenuWindow = nullptr;
             }
+            if (GetCapture() == window) {
+                ReleaseCapture();
+            }
+            g_accountMenuHoveredIndex = -1;
             return 0;
     }
 
@@ -1092,6 +1182,7 @@ void ShowAccountMenu(wux::FrameworkElement const& root) {
         SetWindowPos(g_accountMenuWindow, HWND_TOPMOST, popupRect.left,
                      popupRect.top, width, height,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetCapture(g_accountMenuWindow);
         InvalidateRect(g_accountMenuWindow, nullptr, TRUE);
         Wh_Log(L"Account menu popup shown at %d,%d %dx%d",
                popupRect.left, popupRect.top, width, height);
