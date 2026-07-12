@@ -450,37 +450,35 @@ internal static class AccountManager
         {
             var targetStorage = GetStoredCodexHome(targetAccount);
             Directory.CreateDirectory(targetStorage);
+            Directory.CreateDirectory(RealCodexHome);
 
             var currentAccountId = ReadMaterializedAccountId();
-            if (string.Equals(currentAccountId, targetAccount.Id,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                Log($"Codex account already materialized: {targetAccount.Id}");
-                return true;
-            }
-
+            var currentAuth = Path.Combine(RealCodexHome, "auth.json");
             if (!string.IsNullOrWhiteSpace(currentAccountId))
             {
                 var currentStorage = GetStoredCodexHome(currentAccountId);
-                if (!PathsEqual(currentStorage, RealCodexHome) &&
-                    Directory.Exists(RealCodexHome))
+                var currentStoredAuth = Path.Combine(currentStorage, "auth.json");
+                if (File.Exists(currentAuth))
                 {
                     Directory.CreateDirectory(currentStorage);
-                    if (!MirrorDirectory(RealCodexHome, currentStorage))
-                    {
-                        return false;
-                    }
+                    File.Copy(currentAuth, currentStoredAuth, overwrite: true);
                 }
             }
 
-            if (!MirrorDirectory(targetStorage, RealCodexHome))
+            var targetAuth = Path.Combine(targetStorage, "auth.json");
+            if (!File.Exists(targetAuth))
             {
+                Log($"Codex account auth file is missing: {targetAccount.Id} ({targetAuth})");
                 return false;
             }
 
+            var tempAuth = $"{currentAuth}.tmp";
+            File.Copy(targetAuth, tempAuth, overwrite: true);
+            File.Move(tempAuth, currentAuth, overwrite: true);
+
             File.WriteAllText(MaterializedAccountPath, targetAccount.Id,
                 Encoding.UTF8);
-            Log($"Codex account materialized: {targetAccount.Id} -> {RealCodexHome}");
+            Log($"Codex account auth materialized: {targetAccount.Id} -> {currentAuth}");
             return true;
         }
         catch (Exception ex)
@@ -527,65 +525,6 @@ internal static class AccountManager
                           Path.Combine(AccountsDirectory,
                               SanitizePathSegment(accountId), "codex"));
     }
-
-    private static bool MirrorDirectory(string source, string destination)
-    {
-        if (PathsEqual(source, destination))
-        {
-            return true;
-        }
-
-        Directory.CreateDirectory(source);
-        Directory.CreateDirectory(destination);
-
-        var info = new ProcessStartInfo
-        {
-            FileName = "robocopy.exe",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        info.ArgumentList.Add(source);
-        info.ArgumentList.Add(destination);
-        info.ArgumentList.Add("/MIR");
-        info.ArgumentList.Add("/FFT");
-        info.ArgumentList.Add("/R:2");
-        info.ArgumentList.Add("/W:1");
-        info.ArgumentList.Add("/NFL");
-        info.ArgumentList.Add("/NDL");
-        info.ArgumentList.Add("/NP");
-
-        try
-        {
-            using var process = Process.Start(info);
-            if (process == null)
-            {
-                Log($"robocopy failed to start: {source} -> {destination}");
-                return false;
-            }
-
-            process.WaitForExit();
-            if (process.ExitCode >= 8)
-            {
-                Log($"robocopy failed with exit code {process.ExitCode}: {source} -> {destination}");
-                return false;
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log($"robocopy error: {source} -> {destination}: {ex.Message}");
-            return false;
-        }
-    }
-
-    private static bool PathsEqual(string left, string right) =>
-        string.Equals(
-            Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar),
-            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar),
-            StringComparison.OrdinalIgnoreCase);
 
     private static string GetIdeProfilePath(AccountSnapshot account)
     {
