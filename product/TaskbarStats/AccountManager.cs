@@ -55,6 +55,8 @@ internal static class AccountManager
             RefreshAccountEmailsUnlocked(settings);
             WriteSettingsUnlocked(settings);
         }
+
+        SanitizeCodexConfig(RealCodexHome);
     }
 
     public static long GetChangeVersion() => Interlocked.Read(ref s_changeVersion);
@@ -900,6 +902,7 @@ internal static class AccountManager
             var tempAuth = $"{currentAuth}.tmp";
             File.Copy(targetAuth, tempAuth, overwrite: true);
             File.Move(tempAuth, currentAuth, overwrite: true);
+            SanitizeCodexConfig(RealCodexHome);
 
             File.WriteAllText(MaterializedAccountPath, targetAccount.Id,
                 Encoding.UTF8);
@@ -912,6 +915,37 @@ internal static class AccountManager
         {
             Log($"Failed to materialize Codex account {targetAccount.Id}: {ex.Message}");
             return false;
+        }
+    }
+
+    private static void SanitizeCodexConfig(string codexHome)
+    {
+        try
+        {
+            var configPath = Path.Combine(codexHome, "config.toml");
+            if (!File.Exists(configPath))
+            {
+                return;
+            }
+
+            var lines = File.ReadAllLines(configPath, Encoding.UTF8);
+            var filtered = lines
+                .Where(line => !line.TrimStart().StartsWith("skills =",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (filtered.Length == lines.Length)
+            {
+                return;
+            }
+
+            var backupPath = $"{configPath}.bak-taskbarstats";
+            File.Copy(configPath, backupPath, overwrite: true);
+            File.WriteAllLines(configPath, filtered, Encoding.UTF8);
+            Log($"Removed unsupported Codex config feature from {configPath}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to sanitize Codex config in {codexHome}: {ex.Message}");
         }
     }
 
