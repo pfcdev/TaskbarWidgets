@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 
 namespace TaskbarStatsProduct;
 
@@ -56,8 +55,6 @@ internal static class AccountManager
             RefreshAccountEmailsUnlocked(settings);
             WriteSettingsUnlocked(settings);
         }
-
-        SanitizeCodexConfig(RealCodexHome);
     }
 
     public static long GetChangeVersion() => Interlocked.Read(ref s_changeVersion);
@@ -378,49 +375,12 @@ internal static class AccountManager
             return;
         }
 
-        TerminateCodexAppServersForAccountSwitch();
         if (TryReloadRunningIdeWindow(idePath, activeAccount))
         {
             return;
         }
 
-        var mainWindows = GetAntigravityProcesses()
-            .Where(process => process.MainWindowHandle != IntPtr.Zero)
-            .ToArray();
-
-        if (mainWindows.Length > 0)
-        {
-            foreach (var process in mainWindows)
-            {
-                try
-                {
-                    Log($"Requesting Antigravity close: pid={process.Id}");
-                    process.CloseMainWindow();
-                }
-                catch (Exception ex)
-                {
-                    Log($"Failed to request Antigravity close for pid={process.Id}: {ex.Message}");
-                }
-            }
-
-            DisposeProcesses(mainWindows);
-
-            if (!WaitForAntigravityMainWindowsToClose(TimeSpan.FromSeconds(45)))
-            {
-                Log("Antigravity main window did not close cleanly; terminating remaining processes before relaunch");
-                TerminateAllAntigravityProcesses("main-window-timeout");
-            }
-        }
-        else
-        {
-            DisposeProcesses(mainWindows);
-        }
-
-        TerminateRemainingAntigravityHelpers();
-        TerminateCodexAppServersForAccountSwitch();
-
-        Thread.Sleep(1500);
-        StartAntigravity(idePath, activeAccount);
+        Log($"Restart IDE skipped: no running Antigravity window to reload for account {activeAccount.Id}");
     }
 
     private static bool TryReloadRunningIdeWindow(string idePath, AccountSnapshot account)
@@ -444,7 +404,6 @@ internal static class AccountManager
         }
 
         var ideProfile = GetIdeProfilePath(account);
-        EnsureAntigravityUsesSnapshotCompatibleShell(ideProfile);
         if (LaunchIdeCommand(idePath, account, ideProfile,
                 "workbench.action.reloadWindow", "reload-window"))
         {
@@ -595,71 +554,6 @@ internal static class AccountManager
         DisposeProcesses(processes);
     }
 
-    private static void TerminateCodexAppServersForAccountSwitch()
-    {
-        var processes = Process.GetProcessesByName("codex");
-        if (processes.Length == 0)
-        {
-            return;
-        }
-
-        foreach (var process in processes)
-        {
-            try
-            {
-                if (process.HasExited)
-                {
-                    continue;
-                }
-
-                var path = TryGetProcessPath(process);
-                if (string.IsNullOrWhiteSpace(path) ||
-                    !IsAccountScopedCodexAppServer(path))
-                {
-                    continue;
-                }
-
-                Log($"Terminating Codex app-server before account restart: pid={process.Id}; path={path}");
-                process.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // Process already exited.
-            }
-            catch (Exception ex)
-            {
-                Log($"Failed to terminate Codex process pid={process.Id}: {ex.Message}");
-            }
-        }
-
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-        foreach (var process in processes)
-        {
-            try
-            {
-                var path = TryGetProcessPath(process);
-                if (string.IsNullOrWhiteSpace(path) ||
-                    !IsAccountScopedCodexAppServer(path))
-                {
-                    continue;
-                }
-
-                var remaining = deadline - DateTimeOffset.UtcNow;
-                if (remaining > TimeSpan.Zero && !process.HasExited)
-                {
-                    process.WaitForExit((int)Math.Min(remaining.TotalMilliseconds, int.MaxValue));
-                }
-            }
-            catch
-            {
-                // Best effort. A newly launched IDE will start a fresh Codex
-                // app-server against the materialized account.
-            }
-        }
-
-        DisposeProcesses(processes);
-    }
-
     private static string? TryGetProcessPath(Process process)
     {
         try
@@ -737,7 +631,6 @@ internal static class AccountManager
         var ideProfile = GetIdeProfilePath(account);
         Directory.CreateDirectory(RealCodexHome);
         Directory.CreateDirectory(ideProfile);
-        EnsureAntigravityUsesSnapshotCompatibleShell(ideProfile);
 
         if (LaunchAntigravityWithProfile(idePath, account, ideProfile, "primary") &&
             WaitForAntigravityMainWindowToOpen(idePath, TimeSpan.FromSeconds(20)))
@@ -772,7 +665,6 @@ internal static class AccountManager
         info.ArgumentList.Add(ideProfile);
         info.Environment["CODEX_HOME"] = RealCodexHome;
         info.Environment["CODEX_SQLITE_HOME"] = RealCodexHome;
-        ApplySnapshotCompatibleShellEnvironment(info);
 
         try
         {
@@ -834,7 +726,6 @@ internal static class AccountManager
         info.ArgumentList.Add(command);
         info.Environment["CODEX_HOME"] = RealCodexHome;
         info.Environment["CODEX_SQLITE_HOME"] = RealCodexHome;
-        ApplySnapshotCompatibleShellEnvironment(info);
 
         try
         {
@@ -907,7 +798,6 @@ internal static class AccountManager
             var tempAuth = $"{currentAuth}.tmp";
             File.Copy(targetAuth, tempAuth, overwrite: true);
             File.Move(tempAuth, currentAuth, overwrite: true);
-            SanitizeCodexConfig(RealCodexHome);
 
             File.WriteAllText(MaterializedAccountPath, targetAccount.Id,
                 Encoding.UTF8);
@@ -921,74 +811,6 @@ internal static class AccountManager
             Log($"Failed to materialize Codex account {targetAccount.Id}: {ex.Message}");
             return false;
         }
-    }
-
-    private static void SanitizeCodexConfig(string codexHome)
-    {
-        try
-        {
-            var configPath = Path.Combine(codexHome, "config.toml");
-            if (!File.Exists(configPath))
-            {
-                return;
-            }
-
-            var lines = File.ReadAllLines(configPath, Encoding.UTF8);
-            var filtered = lines
-                .Where(line =>
-                {
-                    var trimmed = line.TrimStart();
-                    return !trimmed.StartsWith("skills =",
-                               StringComparison.OrdinalIgnoreCase) &&
-                           !trimmed.StartsWith("thread_tools =",
-                               StringComparison.OrdinalIgnoreCase) &&
-                           !trimmed.StartsWith("ghost_snapshot =",
-                               StringComparison.OrdinalIgnoreCase);
-                })
-                .ToArray();
-
-            var sanitized = EnsureTopLevelTomlValue(filtered,
-                "ghost_snapshot = false");
-            if (sanitized.SequenceEqual(lines))
-            {
-                return;
-            }
-
-            var backupPath = $"{configPath}.bak-taskbarstats";
-            File.Copy(configPath, backupPath, overwrite: true);
-            File.WriteAllLines(configPath, sanitized, Encoding.UTF8);
-            Log($"Sanitized unsupported Codex config and disabled ghost snapshot in {configPath}");
-        }
-        catch (Exception ex)
-        {
-            Log($"Failed to sanitize Codex config in {codexHome}: {ex.Message}");
-        }
-    }
-
-    private static string[] EnsureTopLevelTomlValue(
-        string[] lines,
-        string valueLine)
-    {
-        var output = new List<string>(lines.Length + 1);
-        var inserted = false;
-
-        foreach (var line in lines)
-        {
-            if (!inserted && line.TrimStart().StartsWith('['))
-            {
-                output.Add(valueLine);
-                inserted = true;
-            }
-
-            output.Add(line);
-        }
-
-        if (!inserted)
-        {
-            output.Add(valueLine);
-        }
-
-        return output.ToArray();
     }
 
     private static string ReadMaterializedAccountId()
@@ -1171,75 +993,6 @@ internal static class AccountManager
         }
 
         return Path.Combine(IdeProfilesDirectory, SanitizePathSegment(account.Id));
-    }
-
-    private static void EnsureAntigravityUsesSnapshotCompatibleShell(string ideProfile)
-    {
-        try
-        {
-            var userDirectory = Path.Combine(ideProfile, "User");
-            Directory.CreateDirectory(userDirectory);
-
-            var settingsPath = Path.Combine(userDirectory, "settings.json");
-            const string settingName = "terminal.integrated.defaultProfile.windows";
-            const string settingLine =
-                "  \"terminal.integrated.defaultProfile.windows\": \"Command Prompt\"";
-
-            if (!File.Exists(settingsPath))
-            {
-                File.WriteAllText(settingsPath,
-                    $"{{{Environment.NewLine}{settingLine}{Environment.NewLine}}}{Environment.NewLine}",
-                    Encoding.UTF8);
-                return;
-            }
-
-            var text = File.ReadAllText(settingsPath, Encoding.UTF8);
-            var replacementPattern =
-                $"\"{Regex.Escape(settingName)}\"\\s*:\\s*\"[^\"]*\"";
-            if (Regex.IsMatch(text, replacementPattern))
-            {
-                var updated = Regex.Replace(text, replacementPattern,
-                    $"\"{settingName}\": \"Command Prompt\"");
-                if (!string.Equals(text, updated, StringComparison.Ordinal))
-                {
-                    File.WriteAllText(settingsPath, updated, Encoding.UTF8);
-                }
-
-                return;
-            }
-
-            var insertIndex = text.LastIndexOf('}');
-            if (insertIndex < 0)
-            {
-                File.Copy(settingsPath, $"{settingsPath}.bak-taskbarstats",
-                    overwrite: true);
-                File.WriteAllText(settingsPath,
-                    $"{{{Environment.NewLine}{settingLine}{Environment.NewLine}}}{Environment.NewLine}",
-                    Encoding.UTF8);
-                return;
-            }
-
-            var prefix = text[..insertIndex].TrimEnd();
-            var suffix = text[insertIndex..];
-            var comma = prefix.TrimEnd().EndsWith('{') ? "" : ",";
-            var merged =
-                $"{prefix}{comma}{Environment.NewLine}{settingLine}{Environment.NewLine}{suffix}";
-            File.WriteAllText(settingsPath, merged, Encoding.UTF8);
-        }
-        catch (Exception ex)
-        {
-            Log($"Failed to update Antigravity terminal shell setting in {ideProfile}: {ex.Message}");
-        }
-    }
-
-    private static void ApplySnapshotCompatibleShellEnvironment(
-        ProcessStartInfo info)
-    {
-        var cmdPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "cmd.exe");
-        info.Environment["ComSpec"] = cmdPath;
-        info.Environment["SHELL"] = cmdPath;
     }
 
     private static void DeleteDirectoryBestEffort(string path)
