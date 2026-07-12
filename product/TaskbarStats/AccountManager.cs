@@ -369,6 +369,18 @@ internal static class AccountManager
             return;
         }
 
+        if (!MaterializeCodexAccount(activeAccount))
+        {
+            Log($"Restart IDE aborted: failed to materialize Codex account {activeAccount.Id}");
+            return;
+        }
+
+        TerminateCodexAppServersForAccountSwitch();
+        if (TryReloadRunningIdeWindow(idePath, activeAccount))
+        {
+            return;
+        }
+
         var mainWindows = GetAntigravityProcesses()
             .Where(process => process.MainWindowHandle != IntPtr.Zero)
             .ToArray();
@@ -392,8 +404,8 @@ internal static class AccountManager
 
             if (!WaitForAntigravityMainWindowsToClose(TimeSpan.FromSeconds(45)))
             {
-                Log("Restart IDE aborted: Antigravity main window did not close cleanly");
-                return;
+                Log("Antigravity main window did not close cleanly; terminating remaining processes before relaunch");
+                TerminateAllAntigravityProcesses("main-window-timeout");
             }
         }
         else
@@ -404,14 +416,40 @@ internal static class AccountManager
         TerminateRemainingAntigravityHelpers();
         TerminateCodexAppServersForAccountSwitch();
 
-        if (!MaterializeCodexAccount(activeAccount))
-        {
-            Log($"Restart IDE aborted: failed to materialize Codex account {activeAccount.Id}");
-            return;
-        }
-
         Thread.Sleep(1500);
         StartAntigravity(idePath, activeAccount);
+    }
+
+    private static bool TryReloadRunningIdeWindow(string idePath, AccountSnapshot account)
+    {
+        if (!GetAntigravityProcesses().Any(process =>
+            {
+                using (process)
+                {
+                    try
+                    {
+                        return !process.HasExited && process.MainWindowHandle != IntPtr.Zero;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+            }))
+        {
+            return false;
+        }
+
+        var ideProfile = GetIdeProfilePath(account);
+        if (LaunchIdeCommand(idePath, account, ideProfile,
+                "workbench.action.reloadWindow", "reload-window"))
+        {
+            Log($"Requested Antigravity/VS Code window reload for Codex account {account.Id}");
+            Thread.Sleep(2500);
+            return true;
+        }
+
+        return false;
     }
 
     private static bool WaitForAntigravityMainWindowsToClose(TimeSpan timeout)
@@ -501,6 +539,56 @@ internal static class AccountManager
         }
 
         DisposeProcesses(helpers);
+    }
+
+    private static void TerminateAllAntigravityProcesses(string reason)
+    {
+        var processes = GetAntigravityProcesses().ToArray();
+        if (processes.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var process in processes)
+        {
+            try
+            {
+                if (process.HasExited)
+                {
+                    continue;
+                }
+
+                Log($"Terminating Antigravity process before relaunch ({reason}): pid={process.Id}");
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited.
+            }
+            catch (Exception ex)
+            {
+                Log($"Failed to terminate Antigravity process pid={process.Id}: {ex.Message}");
+            }
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        foreach (var process in processes)
+        {
+            try
+            {
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining > TimeSpan.Zero && !process.HasExited)
+                {
+                    process.WaitForExit((int)Math.Min(remaining.TotalMilliseconds, int.MaxValue));
+                }
+            }
+            catch
+            {
+                // Best effort. The direct launch fallback below is still attempted.
+            }
+        }
+
+        DisposeProcesses(processes);
     }
 
     private static void TerminateCodexAppServersForAccountSwitch()
@@ -716,6 +804,40 @@ internal static class AccountManager
         catch (Exception ex)
         {
             Log($"Failed to start Antigravity ({attempt}) with account {account.Id}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool LaunchIdeCommand(string idePath,
+                                         AccountSnapshot account,
+                                         string ideProfile,
+                                         string command,
+                                         string attempt)
+    {
+        var info = new ProcessStartInfo
+        {
+            FileName = idePath,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(idePath) ?? AppDirectory,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            CreateNoWindow = true
+        };
+        info.ArgumentList.Add("--user-data-dir");
+        info.ArgumentList.Add(ideProfile);
+        info.ArgumentList.Add("--command");
+        info.ArgumentList.Add(command);
+        info.Environment["CODEX_HOME"] = RealCodexHome;
+        info.Environment["CODEX_SQLITE_HOME"] = RealCodexHome;
+
+        try
+        {
+            var process = Process.Start(info);
+            Log($"Started Antigravity command ({attempt}) for Codex account {account.Id}: pid={process?.Id.ToString() ?? "unknown"}; command={command}; ideProfile={ideProfile}");
+            return process != null;
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to start Antigravity command ({attempt}) for account {account.Id}: {ex.Message}");
             return false;
         }
     }
