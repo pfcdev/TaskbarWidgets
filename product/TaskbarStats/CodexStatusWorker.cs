@@ -20,15 +20,44 @@ internal static class CodexStatusWorker
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var accountChangeVersion = AccountManager.GetChangeVersion();
             var status = await CollectStatusAsync(AccountManager.GetActiveAccount());
             WriteStatus(status);
 
             if (!once)
             {
-                await Task.Delay(interval, cancellationToken);
+                await DelayUntilNextIntervalOrAccountChangeAsync(
+                    interval,
+                    accountChangeVersion,
+                    cancellationToken);
             }
         }
         while (!once && !cancellationToken.IsCancellationRequested);
+    }
+
+    private static async Task DelayUntilNextIntervalOrAccountChangeAsync(
+        TimeSpan interval,
+        long observedAccountChangeVersion,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(interval);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (AccountManager.GetChangeVersion() != observedAccountChangeVersion)
+            {
+                return;
+            }
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            var delay = remaining < TimeSpan.FromSeconds(1)
+                ? remaining
+                : TimeSpan.FromSeconds(1);
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
     }
 static TimeSpan GetInterval(string[] args)
 {

@@ -8,7 +8,13 @@ namespace TaskbarStatsProduct;
 internal static class AccountManager
 {
     private const string DefaultAccountId = "default";
+    private static readonly string[] AntigravityProcessNames =
+    [
+        "Antigravity",
+        "Antigravity IDE"
+    ];
     private static readonly object SyncRoot = new();
+    private static long s_changeVersion;
     private static readonly string LocalAppData =
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     private static readonly string UserProfile =
@@ -50,6 +56,8 @@ internal static class AccountManager
             WriteSettingsUnlocked(settings);
         }
     }
+
+    public static long GetChangeVersion() => Interlocked.Read(ref s_changeVersion);
 
     public static AccountSnapshot GetActiveAccount()
     {
@@ -179,6 +187,7 @@ internal static class AccountManager
             WriteSettingsUnlocked(settings);
         }
 
+        NotifyChanged();
         StartCodexLogin(account);
         Log($"Added Codex account profile: {account.Id}");
     }
@@ -240,6 +249,7 @@ internal static class AccountManager
             accountToDelete.Id,
             accountToDelete.Label,
             ExpandPath(accountToDelete.CodexHome))));
+        NotifyChanged();
         Log($"Deleted Codex account profile: {accountToDelete.Id}");
     }
 
@@ -280,6 +290,7 @@ internal static class AccountManager
             WriteSettingsUnlocked(settings);
         }
 
+        NotifyChanged();
         Log($"Active Codex account switched: {accountId}");
     }
 
@@ -317,7 +328,7 @@ internal static class AccountManager
             return;
         }
 
-        var mainWindows = GetAntigravityProcesses(idePath)
+        var mainWindows = GetAntigravityProcesses()
             .Where(process => process.MainWindowHandle != IntPtr.Zero)
             .ToArray();
 
@@ -338,7 +349,7 @@ internal static class AccountManager
 
             DisposeProcesses(mainWindows);
 
-            if (!WaitForAntigravityMainWindowsToClose(idePath, TimeSpan.FromSeconds(45)))
+            if (!WaitForAntigravityMainWindowsToClose(TimeSpan.FromSeconds(45)))
             {
                 Log("Restart IDE aborted: Antigravity main window did not close cleanly");
                 return;
@@ -349,7 +360,7 @@ internal static class AccountManager
             DisposeProcesses(mainWindows);
         }
 
-        TerminateRemainingAntigravityHelpers(idePath);
+        TerminateRemainingAntigravityHelpers();
         TerminateCodexAppServersForAccountSwitch();
 
         if (!MaterializeCodexAccount(activeAccount))
@@ -362,12 +373,12 @@ internal static class AccountManager
         StartAntigravity(idePath, activeAccount);
     }
 
-    private static bool WaitForAntigravityMainWindowsToClose(string idePath, TimeSpan timeout)
+    private static bool WaitForAntigravityMainWindowsToClose(TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var mainWindows = GetAntigravityProcesses(idePath)
+            var mainWindows = GetAntigravityProcesses()
                 .Where(process => process.MainWindowHandle != IntPtr.Zero)
                 .ToArray();
             if (mainWindows.Length == 0)
@@ -379,7 +390,7 @@ internal static class AccountManager
             Thread.Sleep(500);
         }
 
-        var remainingMainWindows = GetAntigravityProcesses(idePath)
+        var remainingMainWindows = GetAntigravityProcesses()
             .Where(process => process.MainWindowHandle != IntPtr.Zero)
             .ToArray();
         foreach (var process in remainingMainWindows)
@@ -398,9 +409,9 @@ internal static class AccountManager
         return false;
     }
 
-    private static void TerminateRemainingAntigravityHelpers(string idePath)
+    private static void TerminateRemainingAntigravityHelpers()
     {
-        var helpers = GetAntigravityProcesses(idePath)
+        var helpers = GetAntigravityProcesses()
             .Where(process => process.MainWindowHandle == IntPtr.Zero)
             .ToArray();
         if (helpers.Length == 0)
@@ -545,34 +556,28 @@ internal static class AccountManager
         }
     }
 
-    private static IEnumerable<Process> GetAntigravityProcesses(string idePath)
+    private static IEnumerable<Process> GetAntigravityProcesses()
     {
-        foreach (var process in Process.GetProcessesByName("Antigravity IDE"))
+        foreach (var processName in AntigravityProcessNames)
         {
-            string? path = null;
-            try
-            {
-                path = process.MainModule?.FileName;
-            }
-            catch
-            {
-                // Ignore inaccessible helper processes.
-            }
-
-            if (string.Equals(path, idePath, StringComparison.OrdinalIgnoreCase))
+            foreach (var process in Process.GetProcessesByName(processName))
             {
                 yield return process;
-            }
-            else
-            {
-                process.Dispose();
             }
         }
     }
 
     private static string? FindAntigravityExecutable()
     {
-        foreach (var process in Process.GetProcessesByName("Antigravity IDE"))
+        foreach (var path in GetKnownAntigravityExecutablePaths())
+        {
+            if (File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        foreach (var process in GetAntigravityProcesses())
         {
             using (process)
             {
@@ -591,12 +596,7 @@ internal static class AccountManager
             }
         }
 
-        var defaultPath = Path.Combine(
-            LocalAppData,
-            "Programs",
-            "Antigravity IDE",
-            "Antigravity IDE.exe");
-        return File.Exists(defaultPath) ? defaultPath : null;
+        return null;
     }
 
     private static void StartAntigravity(string idePath, AccountSnapshot account)
@@ -685,7 +685,7 @@ internal static class AccountManager
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var mainWindows = GetAntigravityProcesses(idePath)
+            var mainWindows = GetAntigravityProcesses()
                 .Where(process => process.MainWindowHandle != IntPtr.Zero)
                 .ToArray();
             if (mainWindows.Length > 0)
@@ -741,6 +741,7 @@ internal static class AccountManager
             File.WriteAllText(MaterializedAccountPath, targetAccount.Id,
                 Encoding.UTF8);
             RefreshAccountEmails();
+            NotifyChanged();
             Log($"Codex account auth materialized: {targetAccount.Id} -> {currentAuth}");
             return true;
         }
@@ -787,6 +788,14 @@ internal static class AccountManager
         return ExpandPath(codexHome ??
                           Path.Combine(AccountsDirectory,
                               SanitizePathSegment(accountId), "codex"));
+    }
+
+    private static IEnumerable<string> GetKnownAntigravityExecutablePaths()
+    {
+        yield return Path.Combine(LocalAppData, "Programs", "Antigravity",
+            "Antigravity.exe");
+        yield return Path.Combine(LocalAppData, "Programs", "Antigravity IDE",
+            "Antigravity IDE.exe");
     }
 
     private static void RefreshAccountEmails()
@@ -918,6 +927,11 @@ internal static class AccountManager
         {
             Log($"Failed to delete directory {path}: {ex.Message}");
         }
+    }
+
+    private static void NotifyChanged()
+    {
+        Interlocked.Increment(ref s_changeVersion);
     }
 
     private static string SanitizePathSegment(string value)
