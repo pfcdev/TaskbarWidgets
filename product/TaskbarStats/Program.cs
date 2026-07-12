@@ -289,12 +289,11 @@ internal static class Program
                         $"WriteProcessMemory failed: {Marshal.GetLastWin32Error()}");
                 }
 
-                var kernel32 = GetModuleHandle("kernel32.dll");
-                var loadLibrary = GetProcAddress(kernel32, "LoadLibraryW");
+                var loadLibrary = GetRemoteKernel32ProcAddress(process, "LoadLibraryW");
                 if (loadLibrary == IntPtr.Zero)
                 {
                     throw new InvalidOperationException(
-                        $"GetProcAddress(LoadLibraryW) failed: {Marshal.GetLastWin32Error()}");
+                        $"GetRemoteKernel32ProcAddress(LoadLibraryW) failed");
                 }
 
                 var thread = CreateRemoteThread(
@@ -313,7 +312,22 @@ internal static class Program
 
                 try
                 {
-                    WaitForSingleObject(thread, 10000);
+                    var waitResult = WaitForSingleObject(thread, 10000);
+                    if (waitResult != 0)
+                    {
+                        Log($"LoadLibraryW remote thread wait returned {waitResult} for explorer {process.Id}");
+                    }
+                    else if (GetExitCodeThread(thread, out var exitCode))
+                    {
+                        if (exitCode == 0)
+                        {
+                            Log($"LoadLibraryW failed in explorer {process.Id}; remote thread exit code was 0");
+                        }
+                    }
+                    else
+                    {
+                        Log($"GetExitCodeThread failed for explorer {process.Id}: {Marshal.GetLastWin32Error()}");
+                    }
                 }
                 finally
                 {
@@ -366,6 +380,30 @@ internal static class Program
 
     private static string GetShutdownEventName(int processId) =>
         $@"Local\TaskbarStatsHookShutdown_{processId}";
+
+    private static IntPtr GetRemoteKernel32ProcAddress(Process process, string procName)
+    {
+        var localKernel32 = GetModuleHandle("kernel32.dll");
+        var localProc = GetProcAddress(localKernel32, procName);
+        if (localKernel32 == IntPtr.Zero || localProc == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        var offset = localProc.ToInt64() - localKernel32.ToInt64();
+        foreach (ProcessModule module in process.Modules)
+        {
+            using (module)
+            {
+                if (string.Equals(module.ModuleName, "kernel32.dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new IntPtr(module.BaseAddress.ToInt64() + offset);
+                }
+            }
+        }
+
+        return IntPtr.Zero;
+    }
 
     private static void InstallStartup()
     {
@@ -501,6 +539,9 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeThread(IntPtr thread, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);

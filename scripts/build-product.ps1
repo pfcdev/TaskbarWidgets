@@ -58,6 +58,8 @@ $CompileArgs += @(
     "-loleaut32",
     "-lruntimeobject",
     "-lgdi32",
+    "-static-libstdc++",
+    "-static-libgcc",
     "-Wl,--export-all-symbols"
 )
 
