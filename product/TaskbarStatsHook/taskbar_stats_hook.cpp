@@ -470,12 +470,20 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
     titleLine.Children().Append(stateIcon.as<wux::UIElement>());
     titleLine.Children().Append(stateText.as<wux::UIElement>());
 
-    wuxc::Border separator;
-    separator.Height(1);
-    separator.Width(126);
-    separator.HorizontalAlignment(wux::HorizontalAlignment::Center);
-    separator.Background(wuxm::SolidColorBrush(winrt::Windows::UI::Color{
-        0x34, 0xF8, 0xFA, 0xFC}));
+    wuxc::Grid limitBar;
+    limitBar.Name(L"TaskbarStatsLimitBarTrack");
+    limitBar.Height(1);
+    limitBar.Width(126);
+    limitBar.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    limitBar.Background(MakeBrush(0x34, 0x94, 0xA3, 0xB8));
+
+    wuxc::Border limitBarFill;
+    limitBarFill.Name(L"TaskbarStatsLimitBarFill");
+    limitBarFill.Height(1);
+    limitBarFill.Width(0);
+    limitBarFill.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    limitBarFill.Background(MakeBrush(0xFF, 0x94, 0xA3, 0xB8));
+    limitBar.Children().Append(limitBarFill.as<wux::UIElement>());
 
     wuxc::StackPanel metrics;
     metrics.Orientation(wuxc::Orientation::Horizontal);
@@ -487,10 +495,10 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
     metrics.Children().Append(MakeSmallMetric(L"\xE8D4", L"TaskbarStatsTokens", L"--"));
 
     wuxc::Grid::SetRow(titleLine, 0);
-    wuxc::Grid::SetRow(separator, 1);
+    wuxc::Grid::SetRow(limitBar, 1);
     wuxc::Grid::SetRow(metrics, 2);
     compact.Children().Append(titleLine.as<wux::UIElement>());
-    compact.Children().Append(separator.as<wux::UIElement>());
+    compact.Children().Append(limitBar.as<wux::UIElement>());
     compact.Children().Append(metrics.as<wux::UIElement>());
 
     wuxc::Grid expanded;
@@ -1521,6 +1529,39 @@ wux::FrameworkElement FindNamedFrameworkElement(
     return nullptr;
 }
 
+winrt::Windows::UI::Color GetRateLimitColor(double remainingPercent) {
+    if (remainingPercent < 0) {
+        return {0xF0, 0xF8, 0xFA, 0xFC};
+    }
+
+    if (remainingPercent >= 60) {
+        return {0xFF, 0x22, 0xC5, 0x5E};
+    }
+
+    if (remainingPercent >= 25) {
+        return {0xFF, 0xF5, 0x9E, 0x0B};
+    }
+
+    return {0xFF, 0xEF, 0x44, 0x44};
+}
+
+double GetRemainingPercent(double usedPercent) {
+    if (usedPercent < 0) {
+        return -1;
+    }
+
+    double remaining = 100.0 - usedPercent;
+    if (remaining < 0) {
+        return 0;
+    }
+
+    if (remaining > 100) {
+        return 100;
+    }
+
+    return remaining;
+}
+
 void SetNamedText(wux::UIElement const& root,
                   PCWSTR name,
                   const std::wstring& text) {
@@ -1530,12 +1571,47 @@ void SetNamedText(wux::UIElement const& root,
     }
 }
 
+void SetNamedTextColor(wux::UIElement const& root,
+                       PCWSTR name,
+                       winrt::Windows::UI::Color color) {
+    auto block = FindNamedTextBlock(root, name);
+    if (block) {
+        block.Foreground(wuxm::SolidColorBrush(color));
+    }
+}
+
 void SetNamedVisibility(wux::UIElement const& root,
                         PCWSTR name,
                         wux::Visibility visibility) {
     auto element = FindNamedFrameworkElement(root, name);
     if (element && element.Visibility() != visibility) {
         element.Visibility(visibility);
+    }
+}
+
+void SetRateLimitProgressVisual(wux::UIElement const& root,
+                                double usedPercent) {
+    constexpr double barWidth = 126.0;
+    double remaining = GetRemainingPercent(usedPercent);
+    auto color = GetRateLimitColor(remaining);
+
+    SetNamedTextColor(root, L"TaskbarStatsTitle", color);
+
+    auto fillElement = FindNamedFrameworkElement(root, L"TaskbarStatsLimitBarFill");
+    if (fillElement) {
+        fillElement.Width(remaining < 0 ? 0 : barWidth * remaining / 100.0);
+        auto fill = fillElement.try_as<wuxc::Border>();
+        if (fill) {
+            fill.Background(wuxm::SolidColorBrush(color));
+        }
+    }
+
+    auto trackElement = FindNamedFrameworkElement(root, L"TaskbarStatsLimitBarTrack");
+    if (trackElement) {
+        auto track = trackElement.try_as<wuxc::Grid>();
+        if (track) {
+            track.Background(MakeBrush(0x34, 0x94, 0xA3, 0xB8));
+        }
     }
 }
 
@@ -1655,6 +1731,7 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
     CodexStatusSnapshot snapshot = ReadCodexStatusSnapshot();
     if (!snapshot.loaded) {
         SetNamedText(root, L"TaskbarStatsTitle", L"Antigravity");
+        SetRateLimitProgressVisual(root, -1);
         SetTaskStateVisual(root, L"IDLE", L"IDLE");
         UpdateExpandedTaskRows(root, {}, L"IDLE", L"IDLE");
         SetNamedText(root, L"TaskbarStatsLimit", L"--");
@@ -1681,6 +1758,7 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
     SetTaskStateVisual(root, snapshot.taskState, snapshot.taskLabel);
     UpdateExpandedTaskRows(root, antigravityTitles, snapshot.taskState,
                            snapshot.taskLabel);
+    SetRateLimitProgressVisual(root, snapshot.primaryUsedPercent);
 
     SetNamedText(root, L"TaskbarStatsLimit",
                  FormatRemainingPercent(snapshot.primaryUsedPercent));
