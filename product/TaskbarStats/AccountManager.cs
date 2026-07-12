@@ -70,17 +70,58 @@ internal static class AccountManager
                 string.Equals(item.Id, settings.ActiveAccountId, StringComparison.OrdinalIgnoreCase)) ??
                           settings.Accounts.FirstOrDefault() ??
                           CreateDefaultAccount();
-            var codexHome = ExpandPath(account.CodexHome);
-            if (string.Equals(ReadMaterializedAccountId(), account.Id,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                codexHome = RealCodexHome;
-            }
+            var codexHome = ResolveCodexHome(account, ReadMaterializedAccountId());
 
             return new AccountSnapshot(
                 account.Id,
                 account.Label,
                 codexHome);
+        }
+    }
+
+    public static IReadOnlyList<AccountSnapshot> GetAccounts()
+    {
+        Initialize();
+
+        lock (SyncRoot)
+        {
+            var settings = ReadSettingsUnlocked();
+            var materializedAccountId = ReadMaterializedAccountId();
+            return settings.Accounts
+                .Select(account =>
+                {
+                    return new AccountSnapshot(
+                        account.Id,
+                        account.Label,
+                        ResolveCodexHome(account, materializedAccountId));
+                })
+                .ToArray();
+        }
+    }
+
+    public static void SetAccountRateLimitText(string accountId, string rateLimitText)
+    {
+        Directory.CreateDirectory(AppDirectory);
+
+        lock (SyncRoot)
+        {
+            var settings = ReadSettingsUnlocked();
+            var account = settings.Accounts.FirstOrDefault(item =>
+                string.Equals(item.Id, accountId, StringComparison.OrdinalIgnoreCase));
+            if (account is null)
+            {
+                return;
+            }
+
+            rateLimitText = rateLimitText.Trim();
+            if (string.Equals(account.RateLimitText, rateLimitText,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            account.RateLimitText = rateLimitText;
+            WriteSettingsUnlocked(settings);
         }
     }
 
@@ -777,6 +818,26 @@ internal static class AccountManager
     private static string GetStoredCodexHome(AccountSnapshot account) =>
         GetStoredCodexHome(account.Id, account.CodexHome);
 
+    private static string ResolveCodexHome(
+        AccountSettings.Account account,
+        string materializedAccountId)
+    {
+        if (string.Equals(materializedAccountId, account.Id,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return RealCodexHome;
+        }
+
+        var storedCodexHome = GetStoredCodexHome(account.Id, account.CodexHome);
+        if (Directory.Exists(storedCodexHome) ||
+            File.Exists(Path.Combine(storedCodexHome, "auth.json")))
+        {
+            return storedCodexHome;
+        }
+
+        return ExpandPath(account.CodexHome);
+    }
+
     private static string GetStoredCodexHome(string accountId, string? codexHome = null)
     {
         if (string.Equals(accountId, DefaultAccountId,
@@ -1021,6 +1082,7 @@ internal static class AccountManager
             public string Label { get; set; } = "";
             public string Email { get; set; } = "";
             public string CodexHome { get; set; } = "";
+            public string RateLimitText { get; set; } = "";
         }
     }
 }

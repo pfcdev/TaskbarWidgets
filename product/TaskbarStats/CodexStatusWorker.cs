@@ -23,6 +23,7 @@ internal static class CodexStatusWorker
             var accountChangeVersion = AccountManager.GetChangeVersion();
             var status = await CollectStatusAsync(AccountManager.GetActiveAccount());
             WriteStatus(status);
+            await RefreshAccountRateLimitSummariesAsync(status, cancellationToken);
 
             if (!once)
             {
@@ -136,6 +137,114 @@ static async Task<CodexStatus> CollectStatusAsync(AccountSnapshot activeAccount)
     }
 
     return status;
+}
+
+static async Task RefreshAccountRateLimitSummariesAsync(
+    CodexStatus activeStatus,
+    CancellationToken cancellationToken)
+{
+    foreach (var account in AccountManager.GetAccounts())
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var summary = "-- -- -- --";
+        if (string.Equals(account.Id, activeStatus.ActiveAccountId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            summary = FormatRateLimitSummary(
+                activeStatus.PrimaryUsedPercent,
+                activeStatus.PrimaryResetsAtUnix,
+                activeStatus.SecondaryUsedPercent,
+                activeStatus.Tokens30d);
+        }
+        else
+        {
+            try
+            {
+                var appServer = await ReadRateLimitsFromAppServerAsync(account.CodexHome);
+                var usage = ReadLocalUsage30d(account.CodexHome);
+                summary = FormatRateLimitSummary(
+                    appServer.PrimaryUsedPercent,
+                    appServer.PrimaryResetsAtUnix,
+                    appServer.SecondaryUsedPercent,
+                    usage.Tokens);
+            }
+            catch
+            {
+                // Keep the menu readable even when a side account is logged out
+                // or Codex cannot provide rate limits for that profile.
+            }
+        }
+
+        AccountManager.SetAccountRateLimitText(account.Id, summary);
+    }
+}
+
+static string FormatRateLimitSummary(double? primaryUsedPercent,
+                                     long? primaryResetsAtUnix,
+                                     double? secondaryUsedPercent,
+                                     long tokens30d) =>
+    $"{FormatRemainingPercent(primaryUsedPercent)} " +
+    $"{FormatReset(primaryResetsAtUnix)} " +
+    $"{FormatRemainingPercent(secondaryUsedPercent)} " +
+    $"{FormatTokenCount(tokens30d)}";
+
+static string FormatRemainingPercent(double? usedPercent)
+{
+    if (usedPercent is null)
+    {
+        return "--";
+    }
+
+    var remaining = Math.Clamp(100.0 - usedPercent.Value, 0.0, 100.0);
+    return $"{remaining:0}%";
+}
+
+static string FormatReset(long? unixTime)
+{
+    if (unixTime is null || unixTime <= 0)
+    {
+        return "--";
+    }
+
+    var seconds = unixTime.Value - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    if (seconds <= 0)
+    {
+        return "NOW";
+    }
+
+    var minutes = (seconds + 59) / 60;
+    if (minutes < 60)
+    {
+        return $"{minutes}M";
+    }
+
+    if (minutes < 60 * 24)
+    {
+        return $"{(minutes + 59) / 60}H";
+    }
+
+    return $"{(minutes + 60 * 24 - 1) / (60 * 24)}D";
+}
+
+static string FormatTokenCount(long value)
+{
+    if (value >= 1_000_000_000)
+    {
+        return $"{value / 1_000_000_000.0:0.0}B";
+    }
+
+    if (value >= 1_000_000)
+    {
+        return $"{value / 1_000_000.0:0}M";
+    }
+
+    if (value >= 1_000)
+    {
+        return $"{value / 1_000.0:0}K";
+    }
+
+    return value.ToString();
 }
 
 static void PreservePreviousRateLimitFields(CodexStatus status)
