@@ -20,5 +20,8 @@
     <EmbeddedResource Include="Resources\TaskbarStatsHook.dll"
                       Condition="Exists('Resources\TaskbarStatsHook.dll')"
                       LogicalName="TaskbarStatsHook.dll" />
+    <EmbeddedResource Include="Resources\TaskbarStatsSettings.exe"
+                      Condition="Exists('Resources\TaskbarStatsSettings.exe')"
+                      LogicalName="TaskbarStatsSettings.exe" />
   </ItemGroup>
 </Project>

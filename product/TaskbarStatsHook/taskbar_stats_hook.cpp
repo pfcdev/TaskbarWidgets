@@ -1749,55 +1749,8 @@ RECT CalculateWidgetLibraryRect() {
 }
 
 void ShowWidgetLibraryWindow() {
-    try {
-        if (g_widgetLibraryWindow && IsWindow(g_widgetLibraryWindow)) {
-            DestroyWindow(g_widgetLibraryWindow);
-            return;
-        }
-
-        constexpr PCWSTR className = L"TaskbarStatsWidgetLibrary";
-        static bool classRegistered = false;
-        if (!classRegistered) {
-            WNDCLASS windowClass{};
-            windowClass.lpfnWndProc = WidgetLibraryWindowProc;
-            windowClass.hInstance = g_hookModule ? g_hookModule : GetModuleHandle(nullptr);
-            windowClass.lpszClassName = className;
-            windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            if (!RegisterClass(&windowClass) &&
-                GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-                Wh_Log(L"RegisterClass failed for widget library: %u",
-                       GetLastError());
-                return;
-            }
-            classRegistered = true;
-        }
-
-        RECT rect = CalculateWidgetLibraryRect();
-        int width = rect.right - rect.left;
-        int height = rect.bottom - rect.top;
-        RebuildWidgetLibraryHitItems(width, height);
-
-        g_widgetLibraryWindow = CreateWindowEx(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            className, L"TaskbarStats Widget Library", WS_POPUP,
-            rect.left, rect.top, width, height,
-            FindCurrentProcessTaskbarWindow(), nullptr,
-            g_hookModule ? g_hookModule : GetModuleHandle(nullptr), nullptr);
-        if (!g_widgetLibraryWindow) {
-            Wh_Log(L"CreateWindowEx failed for widget library: %u",
-                   GetLastError());
-            return;
-        }
-
-        SetWindowPos(g_widgetLibraryWindow, HWND_TOPMOST, rect.left, rect.top,
-                     width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        SetCapture(g_widgetLibraryWindow);
-        InvalidateRect(g_widgetLibraryWindow, nullptr, TRUE);
-        Wh_Log(L"Widget library shown at %d,%d %dx%d",
-               rect.left, rect.top, width, height);
-    } catch (...) {
-        Wh_Log(L"ShowWidgetLibraryWindow failed with unknown exception");
-    }
+    WriteTaskbarStatsCommand(L"openSettings");
+    Wh_Log(L"Settings app open command queued");
 }
 
 bool ExtractJsonDouble(const std::string& json, const char* key, double& value) {

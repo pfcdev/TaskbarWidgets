@@ -28,6 +28,7 @@ internal static class AccountManager
     private static readonly string LogsDirectory = Path.Combine(AppDirectory, "Logs");
     private static readonly string SettingsPath = Path.Combine(AppDirectory, "settings.json");
     private static readonly string LogPath = Path.Combine(LogsDirectory, "loader.log");
+    private static readonly string SettingsAppPath = Path.Combine(AppDirectory, "TaskbarStatsSettings.exe");
     private static readonly string RealCodexHome = Path.Combine(UserProfile, ".codex");
     private static readonly string MaterializedAccountPath =
         Path.Combine(AppDirectory, "active-codex-account.txt");
@@ -189,6 +190,10 @@ internal static class AccountManager
             {
                 OpenWidgetLibrariesFolder();
             }
+            else if (string.Equals(command, "openSettings", StringComparison.OrdinalIgnoreCase))
+            {
+                OpenSettingsApp();
+            }
             else
             {
                 Log($"Unknown account command ignored: {command}");
@@ -263,6 +268,23 @@ internal static class AccountManager
             UseShellExecute = true
         });
         Log($"Opened widget libraries folder: {WidgetLibrariesDirectory}");
+    }
+
+    private static void OpenSettingsApp()
+    {
+        if (!File.Exists(SettingsAppPath))
+        {
+            Log($"Settings app was not found: {SettingsAppPath}");
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = SettingsAppPath,
+            WorkingDirectory = AppDirectory,
+            UseShellExecute = true
+        });
+        Log($"Opened settings app: {SettingsAppPath}");
     }
 
     private static void DeleteActiveAccount()

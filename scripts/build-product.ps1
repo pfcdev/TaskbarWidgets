@@ -8,8 +8,10 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $HookSource = Join-Path $RepoRoot "product\TaskbarStatsHook\taskbar_stats_hook.cpp"
 $LoaderProject = Join-Path $RepoRoot "product\TaskbarStats\TaskbarStats.csproj"
+$SettingsProject = Join-Path $RepoRoot "product\TaskbarStatsSettings"
 $ResourceDir = Join-Path $RepoRoot "product\TaskbarStats\Resources"
 $HookOutput = Join-Path $ResourceDir "TaskbarStatsHook.dll"
+$SettingsResourceOutput = Join-Path $ResourceDir "TaskbarStatsSettings.exe"
 $PublishDir = Join-Path $RepoRoot "artifacts\TaskbarStats"
 
 New-Item -ItemType Directory -Force $ResourceDir | Out-Null
@@ -69,6 +71,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "Native hook build failed with exit code $LASTEXITCODE."
 }
 
+Write-Host "Building settings app..."
+cargo build --manifest-path (Join-Path $SettingsProject "Cargo.toml") --release -j 1
+if ($LASTEXITCODE -ne 0) {
+    throw "Settings app build failed with exit code $LASTEXITCODE."
+}
+
+$SettingsBuildOutput = Join-Path $SettingsProject "target\release\TaskbarStatsSettings.exe"
+if (-not (Test-Path $SettingsBuildOutput)) {
+    throw "Settings app output was not found: $SettingsBuildOutput"
+}
+Copy-Item -Force $SettingsBuildOutput $SettingsResourceOutput
+
 Write-Host "Publishing loader..."
 dotnet publish $LoaderProject `
     -c $Configuration `
@@ -81,6 +95,8 @@ dotnet publish $LoaderProject `
 if ($LASTEXITCODE -ne 0) {
     throw "Loader publish failed with exit code $LASTEXITCODE."
 }
+
+Copy-Item -Force $SettingsBuildOutput (Join-Path $PublishDir "TaskbarStatsSettings.exe")
 
 $ExePath = Join-Path $PublishDir "TaskbarStats.exe"
 $HashPath = Join-Path $PublishDir "TaskbarStats.exe.sha256"

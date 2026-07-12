@@ -91,6 +91,7 @@ internal static class Program
 
         var hookPath = ExtractHookDll();
         Log($"Runtime hook path: {hookPath}");
+        ExtractSettingsApp();
         AccountManager.Initialize();
 
         var agentTask = Task.Run(
@@ -223,6 +224,47 @@ internal static class Program
         catch (Exception ex)
         {
             Log($"Runtime cleanup skipped: {ex.Message}");
+        }
+    }
+
+    private static void ExtractSettingsApp()
+    {
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = assembly.GetManifestResourceNames()
+                .FirstOrDefault(name => name.EndsWith(
+                    "TaskbarStatsSettings.exe",
+                    StringComparison.OrdinalIgnoreCase));
+            if (resourceName is null)
+            {
+                Log("Embedded TaskbarStatsSettings.exe resource was not found");
+                return;
+            }
+
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+            {
+                Log("Embedded TaskbarStatsSettings.exe resource could not be opened");
+                return;
+            }
+
+            var path = Path.Combine(AppDirectory, "TaskbarStatsSettings.exe");
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            var bytes = memory.ToArray();
+
+            if (File.Exists(path) && new FileInfo(path).Length == bytes.Length)
+            {
+                return;
+            }
+
+            File.WriteAllBytes(path, bytes);
+            Log($"Settings app extracted: {path}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Settings app extraction skipped: {ex.Message}");
         }
     }
 
