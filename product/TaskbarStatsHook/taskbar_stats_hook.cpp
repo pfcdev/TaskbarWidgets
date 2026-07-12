@@ -439,7 +439,7 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
     wuxc::RowDefinition titleRow;
     titleRow.Height(wux::GridLengthHelper::FromPixels(14));
     wuxc::RowDefinition lineRow;
-    lineRow.Height(wux::GridLengthHelper::FromPixels(1));
+    lineRow.Height(wux::GridLengthHelper::FromPixels(2));
     wuxc::RowDefinition metricsRow;
     metricsRow.Height(wux::GridLengthHelper::FromPixels(17));
     compact.RowDefinitions().Append(titleRow);
@@ -472,14 +472,14 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
 
     wuxc::Grid limitBar;
     limitBar.Name(L"TaskbarStatsLimitBarTrack");
-    limitBar.Height(1);
+    limitBar.Height(2);
     limitBar.Width(126);
     limitBar.HorizontalAlignment(wux::HorizontalAlignment::Center);
     limitBar.Background(MakeBrush(0x34, 0x94, 0xA3, 0xB8));
 
     wuxc::Border limitBarFill;
     limitBarFill.Name(L"TaskbarStatsLimitBarFill");
-    limitBarFill.Height(1);
+    limitBarFill.Height(2);
     limitBarFill.Width(0);
     limitBarFill.HorizontalAlignment(wux::HorizontalAlignment::Left);
     limitBarFill.Background(MakeBrush(0xFF, 0x94, 0xA3, 0xB8));
@@ -1788,15 +1788,31 @@ wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root) {
     return timer;
 }
 
-bool HasTaskbarStatsChild(wuxc::Grid const& parent) {
+bool FindTaskbarStatsChild(wuxc::Grid const& parent,
+                           wux::UIElement& root,
+                           uint32_t& childIndex) {
+    childIndex = 0;
     for (auto const& child : parent.Children()) {
         auto element = child.try_as<wux::FrameworkElement>();
         if (element && element.Name() == L"TaskbarStatsRoot") {
+            root = child;
             return true;
         }
+
+        ++childIndex;
     }
 
     return false;
+}
+
+bool HasCurrentTaskbarStatsChild(wux::UIElement const& root) {
+    return FindNamedFrameworkElement(root, L"TaskbarStatsLimitBarFill") != nullptr;
+}
+
+bool HasTaskbarStatsChild(wuxc::Grid const& parent) {
+    wux::UIElement root{nullptr};
+    uint32_t childIndex = 0;
+    return FindTaskbarStatsChild(parent, root, childIndex);
 }
 
 void RemoveInsertedModule(InsertedModule& module) {
@@ -1875,8 +1891,44 @@ bool TryInsertNextToSystemTray(InstanceHandle handle,
         return false;
     }
 
-    if (HasTaskbarStatsChild(parent)) {
-        Wh_Log(L"TaskbarStatsRoot already exists for this taskbar parent");
+    wux::UIElement existingRoot{nullptr};
+    uint32_t existingRootIndex = 0;
+    if (FindTaskbarStatsChild(parent, existingRoot, existingRootIndex)) {
+        if (HasCurrentTaskbarStatsChild(existingRoot)) {
+            Wh_Log(L"TaskbarStatsRoot already exists for this taskbar parent");
+            return true;
+        }
+
+        auto existingElement = existingRoot.try_as<wux::FrameworkElement>();
+        auto replacementRoot = MakeTaskbarStatsRoot();
+        if (existingElement) {
+            wuxc::Grid::SetColumn(replacementRoot,
+                                  wuxc::Grid::GetColumn(existingElement));
+            wuxc::Grid::SetRow(replacementRoot,
+                               wuxc::Grid::GetRow(existingElement));
+            replacementRoot.Margin(existingElement.Margin());
+        }
+
+        wuxc::Canvas::SetZIndex(replacementRoot, 10000);
+
+        auto children = parent.Children();
+        children.RemoveAt(existingRootIndex);
+        children.InsertAt(existingRootIndex, replacementRoot.as<wux::UIElement>());
+        auto timer = StartTaskbarStatsTimer(replacementRoot.as<wux::UIElement>());
+
+        g_insertedModules.push_back(InsertedModule{
+            .anchorHandle = handle,
+            .parent = parent,
+            .root = replacementRoot.as<wux::UIElement>(),
+            .timer = timer,
+            .insertedColumn = existingElement
+                                  ? static_cast<uint32_t>(std::max(
+                                        0, wuxc::Grid::GetColumn(existingElement)))
+                                  : 0,
+            .insertedGridColumn = false,
+        });
+
+        Wh_Log(L"Replaced stale TaskbarStatsRoot with current layout");
         return true;
     }
 
