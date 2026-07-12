@@ -15,6 +15,7 @@ internal static class AccountManager
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private static readonly string AppDirectory = Path.Combine(LocalAppData, "TaskbarStats");
     private static readonly string AccountsDirectory = Path.Combine(AppDirectory, "Accounts");
+    private static readonly string IdeProfilesDirectory = Path.Combine(AppDirectory, "IdeProfiles");
     private static readonly string CommandsDirectory = Path.Combine(AppDirectory, "Commands");
     private static readonly string LogsDirectory = Path.Combine(AppDirectory, "Logs");
     private static readonly string SettingsPath = Path.Combine(AppDirectory, "settings.json");
@@ -24,6 +25,7 @@ internal static class AccountManager
     {
         Directory.CreateDirectory(AppDirectory);
         Directory.CreateDirectory(AccountsDirectory);
+        Directory.CreateDirectory(IdeProfilesDirectory);
         Directory.CreateDirectory(CommandsDirectory);
         Directory.CreateDirectory(LogsDirectory);
 
@@ -324,7 +326,9 @@ internal static class AccountManager
     private static void StartAntigravity(string idePath, AccountSnapshot account)
     {
         var codexHome = ExpandPath(account.CodexHome);
+        var ideProfile = GetIdeProfilePath(account);
         Directory.CreateDirectory(codexHome);
+        Directory.CreateDirectory(ideProfile);
 
         var info = new ProcessStartInfo
         {
@@ -332,18 +336,39 @@ internal static class AccountManager
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(idePath) ?? AppDirectory
         };
+        info.ArgumentList.Add("--user-data-dir");
+        info.ArgumentList.Add(ideProfile);
         info.Environment["CODEX_HOME"] = codexHome;
         info.Environment["CODEX_SQLITE_HOME"] = codexHome;
 
         try
         {
             Process.Start(info);
-            Log($"Started Antigravity with Codex account {account.Id}: {codexHome}");
+            Log($"Started Antigravity with Codex account {account.Id}: codexHome={codexHome}; ideProfile={ideProfile}");
         }
         catch (Exception ex)
         {
             Log($"Failed to start Antigravity with account {account.Id}: {ex.Message}");
         }
+    }
+
+    private static string GetIdeProfilePath(AccountSnapshot account)
+    {
+        if (string.Equals(account.Id, DefaultAccountId, StringComparison.OrdinalIgnoreCase))
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            return Path.Combine(appData, "Antigravity IDE");
+        }
+
+        return Path.Combine(IdeProfilesDirectory, SanitizePathSegment(account.Id));
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray();
+        var sanitized = new string(chars).Trim();
+        return string.IsNullOrWhiteSpace(sanitized) ? "account" : sanitized;
     }
 
     private static AccountSettings ReadSettingsUnlocked()
