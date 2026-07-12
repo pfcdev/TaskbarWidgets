@@ -705,6 +705,13 @@ void ShowAccountMenu(wux::FrameworkElement const& root) {
         });
         flyout.Items().Append(addItem);
 
+        auto restartIdeItem = wuxc::MenuFlyoutItem();
+        restartIdeItem.Text(L"Restart IDE with active account");
+        restartIdeItem.Click([](auto const&, auto const&) {
+            WriteTaskbarStatsCommand(L"restartIde");
+        });
+        flyout.Items().Append(restartIdeItem);
+
         wuxcp::FlyoutBase::SetAttachedFlyout(root, flyout);
         wuxcp::FlyoutBase::ShowAttachedFlyout(root);
     } catch (winrt::hresult_error const& ex) {

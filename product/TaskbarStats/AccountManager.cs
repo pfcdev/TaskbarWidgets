@@ -105,6 +105,10 @@ internal static class AccountManager
                     SwitchAccount(accountId);
                 }
             }
+            else if (string.Equals(command, "restartIde", StringComparison.OrdinalIgnoreCase))
+            {
+                RestartAntigravityWithActiveAccount();
+            }
             else
             {
                 Log($"Unknown account command ignored: {command}");
@@ -197,6 +201,148 @@ internal static class AccountManager
         catch (Exception ex)
         {
             Log($"Failed to start codex login for {account.Id}: {ex.Message}");
+        }
+    }
+
+    private static void RestartAntigravityWithActiveAccount()
+    {
+        var activeAccount = GetActiveAccount();
+        var idePath = FindAntigravityExecutable();
+        if (string.IsNullOrWhiteSpace(idePath) || !File.Exists(idePath))
+        {
+            Log("Restart IDE skipped: Antigravity executable was not found");
+            return;
+        }
+
+        var runningIdeProcesses = GetAntigravityProcesses(idePath).ToArray();
+        var mainWindows = runningIdeProcesses
+            .Where(process => process.MainWindowHandle != IntPtr.Zero)
+            .ToArray();
+
+        if (mainWindows.Length > 0)
+        {
+            foreach (var process in mainWindows)
+            {
+                try
+                {
+                    Log($"Requesting Antigravity close: pid={process.Id}");
+                    process.CloseMainWindow();
+                }
+                catch (Exception ex)
+                {
+                    Log($"Failed to request Antigravity close for pid={process.Id}: {ex.Message}");
+                }
+            }
+
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(45);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                if (GetAntigravityProcesses(idePath).All(process =>
+                    {
+                        using (process)
+                        {
+                            return process.HasExited;
+                        }
+                    }))
+                {
+                    break;
+                }
+
+                Thread.Sleep(500);
+            }
+        }
+
+        var survivors = GetAntigravityProcesses(idePath).ToArray();
+        if (survivors.Length > 0)
+        {
+            Log("Restart IDE aborted: Antigravity did not close cleanly");
+            foreach (var process in survivors)
+            {
+                process.Dispose();
+            }
+
+            return;
+        }
+
+        StartAntigravity(idePath, activeAccount);
+    }
+
+    private static IEnumerable<Process> GetAntigravityProcesses(string idePath)
+    {
+        foreach (var process in Process.GetProcessesByName("Antigravity IDE"))
+        {
+            string? path = null;
+            try
+            {
+                path = process.MainModule?.FileName;
+            }
+            catch
+            {
+                // Ignore inaccessible helper processes.
+            }
+
+            if (string.Equals(path, idePath, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return process;
+            }
+            else
+            {
+                process.Dispose();
+            }
+        }
+    }
+
+    private static string? FindAntigravityExecutable()
+    {
+        foreach (var process in Process.GetProcessesByName("Antigravity IDE"))
+        {
+            using (process)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName;
+                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    {
+                        return path;
+                    }
+                }
+                catch
+                {
+                    // Try the default install location below.
+                }
+            }
+        }
+
+        var defaultPath = Path.Combine(
+            LocalAppData,
+            "Programs",
+            "Antigravity IDE",
+            "Antigravity IDE.exe");
+        return File.Exists(defaultPath) ? defaultPath : null;
+    }
+
+    private static void StartAntigravity(string idePath, AccountSnapshot account)
+    {
+        var codexHome = ExpandPath(account.CodexHome);
+        Directory.CreateDirectory(codexHome);
+
+        var info = new ProcessStartInfo
+        {
+            FileName = idePath,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(idePath) ?? AppDirectory
+        };
+        info.Environment["CODEX_HOME"] = codexHome;
+        info.Environment["CODEX_SQLITE_HOME"] = codexHome;
+
+        try
+        {
+            Process.Start(info);
+            Log($"Started Antigravity with Codex account {account.Id}: {codexHome}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to start Antigravity with account {account.Id}: {ex.Message}");
         }
     }
 
