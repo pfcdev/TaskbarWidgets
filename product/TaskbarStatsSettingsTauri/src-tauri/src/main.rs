@@ -12,6 +12,22 @@ const WEATHER_DESIGN: &str = "weather-static";
 const DISCORD_DESIGN: &str = "discord-voice";
 const BTC_DESIGN: &str = "btc-fees";
 const MEDIA_DESIGN: &str = "media-player";
+const STEAM_DESIGN: &str = "steam-download";
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WidgetInstanceSettings {
+    id: String,
+    design: String,
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    move_x: i32,
+    #[serde(default)]
+    position_pct: Option<i32>,
+    #[serde(default)]
+    order: i32,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +39,10 @@ struct WidgetSettings {
     refresh_interval_secs: Option<u32>,
     #[serde(default)]
     widget_offset_px: Option<u32>,
+    #[serde(default)]
+    widget_move_x: Option<i32>,
+    #[serde(default)]
+    widgets: Option<Vec<WidgetInstanceSettings>>,
     #[serde(default)]
     rotation_enabled: Option<bool>,
     #[serde(default)]
@@ -93,6 +113,8 @@ fn default_settings() -> WidgetSettings {
         enabled: Some(true),
         refresh_interval_secs: Some(30),
         widget_offset_px: Some(0),
+        widget_move_x: Some(0),
+        widgets: Some(default_widget_instances()),
         rotation_enabled: Some(false),
         rotation_interval_secs: Some(30),
         rotation_designs: Some(vec![
@@ -101,6 +123,7 @@ fn default_settings() -> WidgetSettings {
             DISCORD_DESIGN.to_owned(),
             BTC_DESIGN.to_owned(),
             MEDIA_DESIGN.to_owned(),
+            STEAM_DESIGN.to_owned(),
         ]),
         codex_api_endpoint: None,
         codex_project_filter: None,
@@ -113,6 +136,28 @@ fn default_settings() -> WidgetSettings {
         discord_client_secret: None,
         discord_redirect_uri: Some("http://127.0.0.1/callback".to_owned()),
     }
+}
+
+fn default_widget_instances() -> Vec<WidgetInstanceSettings> {
+    [
+        CODEX_DESIGN,
+        WEATHER_DESIGN,
+        DISCORD_DESIGN,
+        BTC_DESIGN,
+        MEDIA_DESIGN,
+        STEAM_DESIGN,
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, design)| WidgetInstanceSettings {
+        id: (*design).to_owned(),
+        design: (*design).to_owned(),
+        enabled: *design == CODEX_DESIGN,
+        move_x: 0,
+        position_pct: Some(100),
+        order: index as i32,
+    })
+    .collect()
 }
 
 fn app_dir() -> Result<PathBuf, String> {
@@ -131,6 +176,15 @@ fn read_settings_from(app_dir: &Path) -> WidgetSettings {
     settings.active_design = normalize_design(&settings.active_design).to_owned();
     settings.rotation_designs = Some(normalize_rotation_designs(settings.rotation_designs));
     settings.widget_offset_px = Some(settings.widget_offset_px.unwrap_or(0).min(480));
+    settings.widget_move_x = Some(settings.widget_move_x.unwrap_or_else(|| {
+        -(settings.widget_offset_px.unwrap_or(0).min(480) as i32)
+    }).clamp(-640, 640));
+    settings.widgets = Some(normalize_widget_instances(
+        settings.widgets,
+        &settings.active_design,
+        settings.enabled.unwrap_or(true),
+        settings.widget_move_x.unwrap_or(0),
+    ));
     settings.rotation_interval_secs = Some(settings.rotation_interval_secs.unwrap_or(30).clamp(5, 3600));
     settings.refresh_interval_secs = Some(settings.refresh_interval_secs.unwrap_or(30).clamp(1, 3600));
     settings
@@ -156,6 +210,7 @@ fn normalize_design(id: &str) -> &str {
         DISCORD_DESIGN => DISCORD_DESIGN,
         BTC_DESIGN => BTC_DESIGN,
         MEDIA_DESIGN => MEDIA_DESIGN,
+        STEAM_DESIGN => STEAM_DESIGN,
         _ => CODEX_DESIGN,
     }
 }
@@ -168,6 +223,7 @@ fn normalize_rotation_designs(saved: Option<Vec<String>>) -> Vec<String> {
             DISCORD_DESIGN.to_owned(),
             BTC_DESIGN.to_owned(),
             MEDIA_DESIGN.to_owned(),
+            STEAM_DESIGN.to_owned(),
         ]
     });
 
@@ -182,6 +238,64 @@ fn normalize_rotation_designs(saved: Option<Vec<String>>) -> Vec<String> {
         designs.push(CODEX_DESIGN.to_owned());
     }
     designs
+}
+
+fn normalize_widget_instances(
+    saved: Option<Vec<WidgetInstanceSettings>>,
+    active_design: &str,
+    legacy_enabled: bool,
+    legacy_move_x: i32,
+) -> Vec<WidgetInstanceSettings> {
+    let mut widgets = saved.unwrap_or_else(|| {
+        let mut defaults = default_widget_instances();
+        for widget in &mut defaults {
+            widget.enabled = widget.design == active_design && legacy_enabled;
+            widget.move_x = if widget.design == active_design {
+                legacy_move_x
+            } else {
+                0
+            };
+        }
+        defaults
+    });
+
+    let known = [
+        CODEX_DESIGN,
+        WEATHER_DESIGN,
+        DISCORD_DESIGN,
+        BTC_DESIGN,
+        MEDIA_DESIGN,
+        STEAM_DESIGN,
+    ];
+
+    for widget in &mut widgets {
+        widget.design = normalize_design(&widget.design).to_owned();
+        if widget.id.is_empty() {
+            widget.id = widget.design.clone();
+        }
+        widget.move_x = widget.move_x.clamp(-640, 640);
+        widget.position_pct = Some(widget.position_pct.unwrap_or(100).clamp(0, 100));
+    }
+
+    widgets.sort_by_key(|widget| widget.order);
+    for (index, design) in known.iter().enumerate() {
+        if !widgets.iter().any(|widget| widget.design == *design) {
+            widgets.push(WidgetInstanceSettings {
+                id: (*design).to_owned(),
+                design: (*design).to_owned(),
+                enabled: false,
+                move_x: 0,
+                position_pct: Some(100),
+                order: index as i32,
+            });
+        }
+    }
+
+    for (index, widget) in widgets.iter_mut().enumerate() {
+        widget.order = index as i32;
+    }
+
+    widgets
 }
 
 #[tauri::command]
@@ -202,6 +316,13 @@ fn save_settings(settings: WidgetSettings) -> Result<(), String> {
     normalized.active_design = normalize_design(&normalized.active_design).to_owned();
     normalized.rotation_designs = Some(normalize_rotation_designs(normalized.rotation_designs));
     normalized.widget_offset_px = Some(normalized.widget_offset_px.unwrap_or(0).min(480));
+    normalized.widget_move_x = Some(normalized.widget_move_x.unwrap_or(0).clamp(-640, 640));
+    normalized.widgets = Some(normalize_widget_instances(
+        normalized.widgets,
+        &normalized.active_design,
+        normalized.enabled.unwrap_or(true),
+        normalized.widget_move_x.unwrap_or(0),
+    ));
     normalized.rotation_interval_secs = Some(normalized.rotation_interval_secs.unwrap_or(30).clamp(5, 3600));
 
     let json = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
@@ -225,19 +346,24 @@ fn open_widget_libraries() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn run_loader_command(arg: String) -> Result<(), String> {
+fn run_loader_command(arg: String) -> Result<AppState, String> {
     let allowed = ["--check-updates", "--update"];
     if !allowed.iter().any(|item| *item == arg) {
         return Err("Unsupported loader command.".to_owned());
     }
 
     let dir = app_dir()?;
-    Command::new(dir.join("TaskbarStats.exe"))
+    let status = Command::new(dir.join("TaskbarStats.exe"))
         .current_dir(&dir)
         .arg(arg)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if !status.success() {
+        return Err(format!("Loader command exited with {status}"));
+    }
+
+    load_state()
 }
 
 fn main() {

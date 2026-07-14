@@ -105,11 +105,14 @@ function Publish-WithGitHubRest {
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BuildScript = Join-Path $RepoRoot "scripts\build-product.ps1"
 $InstallerBuildScript = Join-Path $RepoRoot "scripts\build-installer.ps1"
+$MsiBuildScript = Join-Path $RepoRoot "scripts\build-msi.ps1"
 $ArtifactDir = Join-Path $RepoRoot "artifacts\TaskbarStats"
 $Exe = Join-Path $ArtifactDir "TaskbarStats.exe"
 $Sha = Join-Path $ArtifactDir "TaskbarStats.exe.sha256"
 $InstallerExe = Join-Path $RepoRoot "artifacts\TaskbarStatsSetup.exe"
 $InstallerSha = Join-Path $RepoRoot "artifacts\TaskbarStatsSetup.exe.sha256"
+$Msi = Join-Path $RepoRoot "artifacts\TaskbarStats.msi"
+$MsiSha = Join-Path $RepoRoot "artifacts\TaskbarStats.msi.sha256"
 
 $ReleaseVersion = $Tag.TrimStart("v", "V")
 if ($ReleaseVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
@@ -118,6 +121,7 @@ if ($ReleaseVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
 
 powershell -ExecutionPolicy Bypass -File $BuildScript -Configuration Release -Version $ReleaseVersion
 powershell -ExecutionPolicy Bypass -File $InstallerBuildScript -Configuration Release -Version $ReleaseVersion -SkipProductBuild
+powershell -ExecutionPolicy Bypass -File $MsiBuildScript -Configuration Release -Version $ReleaseVersion -SkipProductBuild
 
 if (-not (Test-Path $Exe)) {
     throw "Expected artifact not found: $Exe"
@@ -125,13 +129,18 @@ if (-not (Test-Path $Exe)) {
 if (-not (Test-Path $InstallerExe)) {
     throw "Expected installer artifact not found: $InstallerExe"
 }
+if (-not (Test-Path $Msi)) {
+    throw "Expected MSI artifact not found: $Msi"
+}
 
 $Hash = (Get-FileHash $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -Path $Sha -Value "$Hash  TaskbarStats.exe" -Encoding ASCII
 $InstallerHash = (Get-FileHash $InstallerExe -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -Path $InstallerSha -Value "$InstallerHash  TaskbarStatsSetup.exe" -Encoding ASCII
+$MsiHash = (Get-FileHash $Msi -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -Path $MsiSha -Value "$MsiHash  TaskbarStats.msi" -Encoding ASCII
 
-$ReleaseFiles = @($Exe, $Sha, $InstallerExe, $InstallerSha)
+$ReleaseFiles = @($Exe, $Sha, $Msi, $MsiSha, $InstallerExe, $InstallerSha)
 
 if (Get-Command gh -ErrorAction SilentlyContinue) {
     $ReleaseExists = $false
@@ -147,10 +156,10 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
     } else {
         $Args = @(
             "release", "create", $Tag,
-            $Exe, $Sha, $InstallerExe, $InstallerSha,
+            $Exe, $Sha, $Msi, $MsiSha, $InstallerExe, $InstallerSha,
             "--repo", $Repo,
             "--title", "TaskbarStats $Tag",
-            "--notes", "TaskbarStats product build. Use TaskbarStatsSetup.exe for normal installation."
+            "--notes", "TaskbarStats product build. Use TaskbarStatsSetup.exe for normal Windows installation/update."
         )
         if ($Draft) {
             $Args += "--draft"

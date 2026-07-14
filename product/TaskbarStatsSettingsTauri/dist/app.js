@@ -41,13 +41,32 @@ const designs = [
     description:
       "Reads Windows media sessions and shows title, artist, cover, and play/pause state.",
   },
+  {
+    id: "steam-download",
+    title: "Steam Downloads",
+    subtitle: "Download Progress",
+    accentClass: "blue",
+    description:
+      "Shows the active Steam download with game art, progress, speed, and remaining time.",
+  },
 ];
+
+const defaultWidgets = designs.map((design, index) => ({
+  id: design.id,
+  design: design.id,
+  enabled: design.id === "codex-status",
+  moveX: 0,
+  positionPct: 100,
+  order: index,
+}));
 
 const defaults = {
   activeDesign: "codex-status",
   enabled: true,
   refreshIntervalSecs: 30,
   widgetOffsetPx: 0,
+  widgetMoveX: 0,
+  widgets: defaultWidgets,
   rotationEnabled: false,
   rotationIntervalSecs: 30,
   rotationDesigns: designs.map((item) => item.id),
@@ -72,6 +91,7 @@ let state = {
   dirty: false,
   status: "",
 };
+let autosaveTimer = 0;
 
 function designById(id) {
   return designs.find((item) => item.id === id) || designs[0];
@@ -82,9 +102,56 @@ function mergeSettings(settings) {
   merged.activeDesign = designById(merged.activeDesign).id;
   merged.rotationDesigns = normalizeRotation(merged.rotationDesigns);
   merged.widgetOffsetPx = clampNumber(merged.widgetOffsetPx, 0, 480, 0);
+  if (settings && Object.prototype.hasOwnProperty.call(settings, "widgetMoveX")) {
+    merged.widgetMoveX = clampNumber(merged.widgetMoveX, -640, 640, 0);
+  } else {
+    merged.widgetMoveX = -clampNumber(merged.widgetOffsetPx, 0, 480, 0);
+  }
+  merged.widgets = normalizeWidgets(merged.widgets, merged.activeDesign, merged.enabled, merged.widgetMoveX);
   merged.refreshIntervalSecs = clampNumber(merged.refreshIntervalSecs, 1, 3600, 30);
   merged.rotationIntervalSecs = clampNumber(merged.rotationIntervalSecs, 5, 3600, 30);
   return merged;
+}
+
+function normalizeWidgets(list, activeDesign, legacyEnabled = true, legacyMoveX = 0) {
+  const source = Array.isArray(list) && list.length
+    ? list
+    : defaultWidgets.map((widget) => ({
+        ...widget,
+        enabled: widget.design === activeDesign ? Boolean(legacyEnabled) : false,
+        moveX: widget.design === activeDesign ? clampNumber(legacyMoveX, -640, 640, 0) : 0,
+        positionPct: 100,
+      }));
+  const result = [];
+  for (const item of source) {
+    const design = designById(item.design || item.designId || item.id).id;
+    if (result.some((widget) => widget.design === design)) continue;
+    result.push({
+      id: item.id || design,
+      design,
+      enabled: Boolean(item.enabled),
+      moveX: clampNumber(item.moveX ?? item.widgetMoveX ?? 0, -640, 640, 0),
+      positionPct: clampNumber(item.positionPct ?? 100, 0, 100, 100),
+      order: clampNumber(item.order ?? result.length, 0, 1000, result.length),
+    });
+  }
+  for (const widget of defaultWidgets) {
+    if (!result.some((item) => item.design === widget.design)) {
+      result.push({ ...widget, enabled: false, moveX: 0, positionPct: 100, order: result.length });
+    }
+  }
+  return result
+    .sort((left, right) => left.order - right.order)
+    .map((widget, index) => ({ ...widget, order: index }));
+}
+
+function currentWidget() {
+  let widget = state.settings.widgets.find((item) => item.design === state.settings.activeDesign);
+  if (!widget) {
+    widget = { id: state.settings.activeDesign, design: state.settings.activeDesign, enabled: false, moveX: 0, positionPct: 100, order: state.settings.widgets.length };
+    state.settings.widgets.push(widget);
+  }
+  return widget;
 }
 
 function normalizeRotation(list) {
@@ -155,7 +222,7 @@ function renderWidgetList() {
       <span class="dot ${design.accentClass}"></span>
       <span>
         <strong>${escapeHtml(design.title)}</strong>
-        <small>${escapeHtml(design.subtitle)}</small>
+        <small>${currentWidgetState(design.id)} - ${escapeHtml(design.subtitle)}</small>
       </span>
     `;
     button.onclick = () => {
@@ -166,6 +233,11 @@ function renderWidgetList() {
     };
     list.appendChild(button);
   }
+}
+
+function currentWidgetState(designId) {
+  const widget = state.settings.widgets.find((item) => item.design === designId);
+  return widget?.enabled ? "On" : "Off";
 }
 
 function renderPage() {
@@ -197,10 +269,11 @@ function renderPage() {
 function pageLabel() {
   if (state.page === "rotation") return "Slider Rotation";
   if (state.page === "updates") return "Release Management";
-  return "Widget Library";
+  return "Widget Settings";
 }
 
 function libraryTemplate(design) {
+  const widget = currentWidget();
   return `
     <div class="grid">
       <div class="stack">
@@ -216,9 +289,9 @@ function libraryTemplate(design) {
       <div class="stack">
         <section class="panel">
           <h3>General Settings</h3>
-          ${switchField("enabled", "Widget Enabled", "Show this widget on the taskbar", state.settings.enabled)}
+          ${widgetSwitchField("enabled", "Widget Enabled", "Show this widget on the taskbar", widget.enabled)}
           ${numberField("refreshIntervalSecs", "Refresh Interval", "Update frequency in seconds", state.settings.refreshIntervalSecs, 1, 3600)}
-          ${rangeField("widgetOffsetPx", "Move Left", "Avoid Windows widgets and crowded tray areas", state.settings.widgetOffsetPx, 0, 480)}
+          ${widgetRangeField("positionPct", "Move", "0% is taskbar left, 100% is before the system tray", widget.positionPct ?? 100, 0, 100, "%")}
         </section>
 
         <section class="panel">
@@ -241,6 +314,9 @@ function previewMarkup(id) {
   }
   if (id === "media-player") {
     return `<div class="capsule media-capsule"><span class="cover"></span><span><strong>Now Playing</strong><small>System media</small></span><span class="play">></span></div>`;
+  }
+  if (id === "steam-download") {
+    return `<div class="capsule steam-capsule"><span class="cover steam-cover"></span><span><strong>Game Download</strong><small>8dk kaldi</small></span><span class="steam-progress"><strong>42%</strong><i></i></span></div>`;
   }
   if (id === "btc-fees") {
     return `<div class="capsule"><strong>ETH Fees</strong><small>Base 12 gwei - Priority 2</small></div>`;
@@ -270,6 +346,14 @@ function widgetSpecificFields(id) {
       ${mediaDiagnosticsTemplate()}
     `;
   }
+  if (id === "steam-download") {
+    return `
+      <div class="field">
+        <label>Steam Source</label>
+        <small>Reads Steam library manifests and content logs from the local Steam installation.</small>
+      </div>
+    `;
+  }
   return `
     ${textField("codexApiEndpoint", "API Endpoint", "Custom API endpoint URL", state.settings.codexApiEndpoint, "https://api.example.com")}
     ${textField("codexProjectFilter", "Project Filter", "Filter displayed projects by name", state.settings.codexProjectFilter, "my-project")}
@@ -291,6 +375,21 @@ function switchField(key, label, hint, checked) {
   `;
 }
 
+function widgetSwitchField(key, label, hint, checked) {
+  return `
+    <div class="field row">
+      <div>
+        <label>${escapeHtml(label)}</label>
+        <small>${escapeHtml(hint)}</small>
+      </div>
+      <label class="switch">
+        <input type="checkbox" data-widget-setting="${key}" ${checked ? "checked" : ""} />
+        <span></span>
+      </label>
+    </div>
+  `;
+}
+
 function numberField(key, label, hint, value, min, max) {
   return `
     <div class="field">
@@ -301,7 +400,8 @@ function numberField(key, label, hint, value, min, max) {
   `;
 }
 
-function rangeField(key, label, hint, value, min, max) {
+function rangeField(key, label, hint, value, min, max, unit = "") {
+  const suffix = unit ? ` ${unit}` : "";
   return `
     <div class="field">
       <div class="row">
@@ -309,9 +409,25 @@ function rangeField(key, label, hint, value, min, max) {
           <label>${escapeHtml(label)}</label>
           <small>${escapeHtml(hint)}</small>
         </div>
-        <strong id="${key}-value">${value} px</strong>
+        <strong id="${key}-value">${value}${suffix}</strong>
       </div>
-      <input type="range" min="${min}" max="${max}" step="4" data-setting="${key}" value="${escapeAttr(value)}" />
+      <input type="range" min="${min}" max="${max}" step="4" data-setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" />
+    </div>
+  `;
+}
+
+function widgetRangeField(key, label, hint, value, min, max, unit = "") {
+  const suffix = unit ? ` ${unit}` : "";
+  return `
+    <div class="field">
+      <div class="row">
+        <div>
+          <label>${escapeHtml(label)}</label>
+          <small>${escapeHtml(hint)}</small>
+        </div>
+        <strong id="widget-${key}-value">${value}${suffix}</strong>
+      </div>
+      <input type="range" min="${min}" max="${max}" step="4" data-widget-setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" />
     </div>
   `;
 }
@@ -380,7 +496,8 @@ function bindSettingInputs() {
         state.settings[key] = clampNumber(input.value, Number(input.min || 0), Number(input.max || 3600), defaults[key] || 0);
         if (input.type === "range") {
           const value = document.getElementById(`${key}-value`);
-          if (value) value.textContent = `${state.settings[key]} px`;
+          const unit = input.dataset.unit ? ` ${input.dataset.unit}` : "";
+          if (value) value.textContent = `${state.settings[key]}${unit}`;
         }
       } else {
         state.settings[key] = input.value;
@@ -389,11 +506,40 @@ function bindSettingInputs() {
       setStatus("");
     });
   });
+  document.querySelectorAll("[data-widget-setting]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const widget = currentWidget();
+      const key = input.dataset.widgetSetting;
+      if (input.type === "checkbox") {
+        widget[key] = input.checked;
+      } else if (input.type === "number" || input.type === "range") {
+        widget[key] = clampNumber(input.value, Number(input.min || -640), Number(input.max || 640), widget[key] || 0);
+        if (input.type === "range") {
+          const value = document.getElementById(`widget-${key}-value`);
+          const unit = input.dataset.unit ? ` ${input.dataset.unit}` : "";
+          if (value) value.textContent = `${widget[key]}${unit}`;
+        }
+      } else {
+        widget[key] = input.value;
+      }
+      setDirty(true);
+      setStatus("");
+      renderWidgetList();
+      scheduleAutosave();
+    });
+  });
+}
+
+function scheduleAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(async () => {
+    await saveSettings("Applied");
+  }, 350);
 }
 
 function bindActions() {
   const save = document.getElementById("save");
-  if (save) save.onclick = saveSettings;
+  if (save) save.onclick = () => saveSettings();
   const reset = document.getElementById("reset");
   if (reset) reset.onclick = async () => {
     const loaded = await invoke("load_state");
@@ -415,12 +561,17 @@ function bindActions() {
   };
 }
 
-async function saveSettings() {
+async function saveSettings(successMessage = "Settings saved") {
   try {
     state.settings.rotationDesigns = normalizeRotation(state.settings.rotationDesigns);
+    state.settings.widgets = normalizeWidgets(state.settings.widgets, state.settings.activeDesign, state.settings.enabled, state.settings.widgetMoveX);
+    const widget = currentWidget();
+    state.settings.enabled = widget.enabled;
+    state.settings.widgetMoveX = widget.moveX;
+    state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
     await invoke("save_settings", { settings: state.settings });
     setDirty(false);
-    setStatus("Settings saved");
+    setStatus(successMessage);
   } catch (error) {
     setStatus(`Save failed: ${error}`);
   }
@@ -497,6 +648,7 @@ function bindRotation() {
 
 function updatesTemplate() {
   const update = state.updateStatus || {};
+  const busy = update.state === "checking" || update.state === "downloading" || update.state === "installing";
   return `
     <div class="grid">
       <section class="panel">
@@ -505,15 +657,15 @@ function updatesTemplate() {
           ${statusRow("Current version", update.currentVersion || "0.1.0")}
           ${statusRow("Latest release", update.latestVersion || "Not checked")}
           ${statusRow("State", update.state || "idle")}
-          ${statusRow("Updated", update.updatedAtUnix ? String(update.updatedAtUnix) : "Not checked")}
+          ${statusRow("Updated", update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked")}
         </div>
-        <p>${escapeHtml(update.message || "Run a check to refresh update status.")}</p>
+        <p class="${busy ? "pulse" : ""}">${escapeHtml(update.message || "Run a check to refresh update status.")}</p>
       </section>
       <section class="panel">
         <h3>Actions</h3>
         <div class="actions">
-          <button class="btn primary" id="check-updates">Check Updates</button>
-          <button class="btn ${update.updateAvailable ? "success" : ""}" id="install-update">Install Update</button>
+          <button class="btn primary" id="check-updates" ${busy ? "disabled" : ""}>${busy ? "Checking..." : "Check Updates"}</button>
+          <button class="btn ${update.updateAvailable ? "success" : ""}" id="install-update" ${!update.updateAvailable || busy ? "disabled" : ""}>Install Update</button>
         </div>
         <p id="inline-status">${escapeHtml(state.status)}</p>
       </section>
@@ -537,7 +689,7 @@ function mediaDiagnosticsTemplate() {
         ${statusRow("Source app", media.sourceApp || "Not available")}
         ${statusRow("Title", media.title || "Not available")}
         ${statusRow("Artist", media.artist || "Not available")}
-        ${statusRow("Updated", media.updatedAtUnix ? String(media.updatedAtUnix) : "Not available")}
+        ${statusRow("Updated", media.updatedAtUnix ? formatUnixTime(media.updatedAtUnix) : "Not available")}
         ${media.error ? statusRow("Error", media.error) : ""}
       </div>
     </div>
@@ -557,22 +709,38 @@ function statusRow(label, value) {
 function bindUpdates() {
   document.getElementById("check-updates").onclick = async () => {
     try {
-      await invoke("run_loader_command", { arg: "--check-updates" });
       setStatus("Checking for updates...");
-      setTimeout(refreshState, 1600);
+      state.updateStatus = { ...state.updateStatus, state: "checking", message: "Checking GitHub latest release..." };
+      render();
+      const loaded = await invoke("run_loader_command", { arg: "--check-updates" });
+      state.updateStatus = loaded.updateStatus || {};
+      setStatus(state.updateStatus.message || "Update check finished");
+      render();
     } catch (error) {
       setStatus(`Update check failed: ${error}`);
+      await refreshState();
     }
   };
   document.getElementById("install-update").onclick = async () => {
     try {
-      await invoke("run_loader_command", { arg: "--update" });
       setStatus("Downloading update...");
-      setTimeout(refreshState, 1600);
+      state.updateStatus = { ...state.updateStatus, state: "downloading", message: "Downloading update..." };
+      render();
+      const loaded = await invoke("run_loader_command", { arg: "--update" });
+      state.updateStatus = loaded.updateStatus || {};
+      setStatus(state.updateStatus.message || "Update command finished");
+      render();
     } catch (error) {
       setStatus(`Update install failed: ${error}`);
+      await refreshState();
     }
   };
+}
+
+function formatUnixTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "Not checked";
+  return new Date(seconds * 1000).toLocaleString();
 }
 
 async function refreshState() {

@@ -48,6 +48,8 @@ internal static class Program
         {
             SignalLoaderShutdown();
             DetachFromAllExplorers();
+            WaitForProcessesToExit("TaskbarStats", TimeSpan.FromSeconds(6));
+            WaitForProcessesToExit("TaskbarStatsMediaHelper", TimeSpan.FromSeconds(4));
             return 0;
         }
 
@@ -107,6 +109,9 @@ internal static class Program
         var mediaTask = Task.Run(
             () => MediaWorker.RunAsync(cancellation.Token),
             cancellation.Token);
+        var steamDownloadTask = Task.Run(
+            () => SteamDownloadWorker.RunAsync(cancellation.Token),
+            cancellation.Token);
         var watchdogTask = Task.Run(
             () => RunExplorerWatchdogAsync(hookPath, cancellation.Token),
             cancellation.Token);
@@ -131,6 +136,7 @@ internal static class Program
                 weatherTask,
                 discordTask,
                 mediaTask,
+                steamDownloadTask,
                 watchdogTask,
                 accountCommandsTask);
         }
@@ -522,6 +528,44 @@ internal static class Program
         {
             Log($"Failed to signal loader shutdown: {ex.Message}");
         }
+    }
+
+    private static void WaitForProcessesToExit(string processName, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        int currentId = Environment.ProcessId;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var processes = Process.GetProcessesByName(processName)
+                .Where(process => process.Id != currentId)
+                .ToArray();
+            if (processes.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (var process in processes)
+                {
+                    using (process)
+                    {
+                        int remaining = Math.Max(
+                            100,
+                            (int)(deadline - DateTime.UtcNow).TotalMilliseconds);
+                        process.WaitForExit(Math.Min(500, remaining));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Wait for {processName} shutdown skipped: {ex.Message}");
+                return;
+            }
+        }
+
+        Log($"Timed out waiting for {processName} shutdown");
     }
 
     [Flags]

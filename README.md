@@ -105,13 +105,28 @@ The latest release must include these assets:
 ```text
 TaskbarStats.exe
 TaskbarStats.exe.sha256
+TaskbarStatsSetup.exe
+TaskbarStatsSetup.exe.sha256
 ```
+
+`TaskbarStatsSetup.exe` is the primary update package. The loader prefers it
+over raw executable assets so updates use the same NSIS install/uninstall flow as
+normal distribution.
 
 Create or update a release from a shell where GitHub CLI is authenticated:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\create-github-release.ps1 -Tag v0.1.0
 ```
+
+GitHub Actions can also build and publish the release on GitHub-hosted Windows
+runners:
+
+```powershell
+gh workflow run release.yml --repo pfcdev/TaskWidgets -f version=0.1.0
+```
+
+Pushing a numeric version tag such as `v0.1.0` runs the same release workflow.
 
 Normal startup checks for updates in the background. Use `--no-update-check`
 to disable the startup check for development runs.

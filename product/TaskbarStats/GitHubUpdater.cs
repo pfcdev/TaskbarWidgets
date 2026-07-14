@@ -12,6 +12,8 @@ internal static class GitHubUpdater
     private const string Repo = "TaskWidgets";
     private const string ExeAssetName = "TaskbarStats.exe";
     private const string ExeShaAssetName = "TaskbarStats.exe.sha256";
+    private const string MsiAssetName = "TaskbarStats.msi";
+    private const string MsiShaAssetName = "TaskbarStats.msi.sha256";
     private const string SetupAssetName = "TaskbarStatsSetup.exe";
     private const string SetupShaAssetName = "TaskbarStatsSetup.exe.sha256";
     private static readonly string AppDirectory = AppPaths.AppDirectory;
@@ -24,6 +26,8 @@ internal static class GitHubUpdater
     {
         try
         {
+            WriteStatus("checking", CurrentVersion().ToString(), "", false,
+                "Checking GitHub latest release...");
             var release = await GetLatestReleaseAsync(cancellationToken);
             if (release is null || !release.IsNewerThan(CurrentVersion()))
             {
@@ -41,7 +45,7 @@ internal static class GitHubUpdater
                 "Applying update...");
             StartUpdateScriptAndExit(downloaded);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -56,6 +60,8 @@ internal static class GitHubUpdater
     {
         try
         {
+            WriteStatus("checking", CurrentVersion().ToString(), "", false,
+                "Checking GitHub latest release...");
             var release = await GetLatestReleaseAsync(cancellationToken);
             if (release is null)
             {
@@ -101,6 +107,19 @@ internal static class GitHubUpdater
 
     private static async Task<ReleaseInfo?> GetLatestReleaseAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            return await GetLatestReleaseFromGitHubApiAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Log($"GitHub API latest release lookup failed, using redirect fallback: {ex.Message}");
+            return await GetLatestReleaseFromRedirectAsync(cancellationToken);
+        }
+    }
+
+    private static async Task<ReleaseInfo?> GetLatestReleaseFromGitHubApiAsync(CancellationToken cancellationToken)
+    {
         using var client = CreateHttpClient();
         var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
         using var response = await client.GetAsync(url, cancellationToken);
@@ -120,6 +139,8 @@ internal static class GitHubUpdater
 
         string? exeUrl = null;
         string? exeShaUrl = null;
+        string? msiUrl = null;
+        string? msiShaUrl = null;
         string? setupUrl = null;
         string? setupShaUrl = null;
         foreach (var asset in json["assets"]?.AsArray() ?? [])
@@ -131,7 +152,15 @@ internal static class GitHubUpdater
                 continue;
             }
 
-            if (string.Equals(name, SetupAssetName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, MsiAssetName, StringComparison.OrdinalIgnoreCase))
+            {
+                msiUrl = downloadUrl;
+            }
+            else if (string.Equals(name, MsiShaAssetName, StringComparison.OrdinalIgnoreCase))
+            {
+                msiShaUrl = downloadUrl;
+            }
+            else if (string.Equals(name, SetupAssetName, StringComparison.OrdinalIgnoreCase))
             {
                 setupUrl = downloadUrl;
             }
@@ -151,12 +180,46 @@ internal static class GitHubUpdater
 
         if (!string.IsNullOrWhiteSpace(setupUrl))
         {
-            return new ReleaseInfo(tag, SetupAssetName, setupUrl, setupShaUrl, IsInstaller: true);
+            return new ReleaseInfo(tag, SetupAssetName, setupUrl, setupShaUrl, UpdatePackageKind.Setup);
+        }
+
+        if (!string.IsNullOrWhiteSpace(msiUrl))
+        {
+            return new ReleaseInfo(tag, MsiAssetName, msiUrl, msiShaUrl, UpdatePackageKind.Msi);
         }
 
         return string.IsNullOrWhiteSpace(exeUrl)
             ? null
-            : new ReleaseInfo(tag, ExeAssetName, exeUrl, exeShaUrl, IsInstaller: false);
+            : new ReleaseInfo(tag, ExeAssetName, exeUrl, exeShaUrl, UpdatePackageKind.Exe);
+    }
+
+    private static async Task<ReleaseInfo?> GetLatestReleaseFromRedirectAsync(CancellationToken cancellationToken)
+    {
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var client = CreateHttpClient(handler);
+        using var response = await client.GetAsync(
+            $"https://github.com/{Owner}/{Repo}/releases/latest",
+            cancellationToken);
+        var location = response.Headers.Location?.ToString();
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            throw new InvalidOperationException(
+                $"GitHub latest release redirect failed: {(int)response.StatusCode} {response.ReasonPhrase}");
+        }
+
+        var tag = location.TrimEnd('/').Split('/').LastOrDefault();
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return null;
+        }
+
+        var baseUrl = $"https://github.com/{Owner}/{Repo}/releases/download/{tag}";
+        return new ReleaseInfo(
+            tag,
+            SetupAssetName,
+            $"{baseUrl}/{SetupAssetName}",
+            $"{baseUrl}/{SetupShaAssetName}",
+            UpdatePackageKind.Setup);
     }
 
     private static async Task<DownloadedUpdate> DownloadReleaseAsync(
@@ -193,7 +256,7 @@ internal static class GitHubUpdater
         }
 
         Log($"Downloaded update {release.TagName} to {filePath}");
-        return new DownloadedUpdate(filePath, release.IsInstaller);
+        return new DownloadedUpdate(filePath, release.Kind);
     }
 
     private static void StartUpdateScriptAndExit(DownloadedUpdate update)
@@ -203,8 +266,9 @@ internal static class GitHubUpdater
                          throw new InvalidOperationException("Current executable path could not be resolved");
         var scriptPath = Path.Combine(Path.GetDirectoryName(update.Path)!, "apply-update.cmd");
         var currentPid = Environment.ProcessId;
-        var script = update.IsInstaller
-            ? $"""
+        var script = update.Kind switch
+        {
+            UpdatePackageKind.Msi => $"""
 @echo off
 setlocal
 set "SRC={update.Path}"
@@ -216,10 +280,29 @@ if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto wait
 )
-start /wait "" "%SRC%" /quiet "/dir=%DIR%"
+taskkill /IM TaskbarStatsMediaHelper.exe /F >nul 2>nul
+taskkill /IM TaskbarStatsSettings.exe /F >nul 2>nul
+msiexec.exe /i "%SRC%" /qn /norestart
+if exist "%DIR%\TaskbarStats.exe" start "" "%DIR%\TaskbarStats.exe"
 del "%~f0"
-"""
-            : $"""
+""",
+            UpdatePackageKind.Setup => $"""
+@echo off
+setlocal
+set "SRC={update.Path}"
+set "DIR={AppDirectory}"
+set "PID={currentPid}"
+:wait
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto wait
+)
+start /wait "" "%SRC%" /S
+if exist "%DIR%\TaskbarStats.exe" start "" "%DIR%\TaskbarStats.exe"
+del "%~f0"
+""",
+            _ => $"""
 @echo off
 setlocal
 set "SRC={update.Path}"
@@ -234,7 +317,8 @@ if not errorlevel 1 (
 copy /Y "%SRC%" "%DST%" >nul
 start "" "%DST%"
 del "%~f0"
-""";
+"""
+        };
         File.WriteAllText(scriptPath, script);
 
         Process.Start(new ProcessStartInfo
@@ -249,9 +333,10 @@ del "%~f0"
         Environment.Exit(0);
     }
 
-    private static HttpClient CreateHttpClient()
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler = null)
     {
-        var client = new HttpClient();
+        var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        client.Timeout = TimeSpan.FromSeconds(12);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("TaskbarStats/0.1");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
@@ -283,8 +368,20 @@ del "%~f0"
         }
     }
 
-    private static Version CurrentVersion() =>
-        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+    private static Version CurrentVersion()
+    {
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath))
+        {
+            var fileVersion = FileVersionInfo.GetVersionInfo(processPath).FileVersion;
+            if (Version.TryParse(fileVersion, out var version))
+            {
+                return version;
+            }
+        }
+
+        return Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+    }
 
     private static void Log(string message)
     {
@@ -331,14 +428,21 @@ del "%~f0"
         }
     }
 
-    private sealed record DownloadedUpdate(string Path, bool IsInstaller);
+    private enum UpdatePackageKind
+    {
+        Exe,
+        Setup,
+        Msi
+    }
+
+    private sealed record DownloadedUpdate(string Path, UpdatePackageKind Kind);
 
     private sealed record ReleaseInfo(
         string TagName,
         string AssetName,
         string DownloadUrl,
         string? Sha256Url,
-        bool IsInstaller)
+        UpdatePackageKind Kind)
     {
         public bool IsNewerThan(Version current)
         {

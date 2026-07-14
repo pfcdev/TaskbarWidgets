@@ -1,0 +1,9 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <OutputName>TaskbarStats</OutputName>
+    <Platform>x64</Platform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+    <PackageRoot Condition="'$(PackageRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\msi\package</PackageRoot>
+  </PropertyGroup>
+</Project>

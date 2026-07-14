@@ -11,6 +11,7 @@
   --muted-2: #94a3b8;
   --accent: #6c5ce7;
   --cyan: #38bdf8;
+  --blue: #66c0f4;
   --amber: #f59e0b;
   --green: #22c55e;
   --pink: #c669ff;
@@ -27,7 +28,7 @@ body {
   min-height: 480px;
   background: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  overflow: auto;
 }
 
 button,
@@ -38,7 +39,7 @@ select {
 
 .shell {
   height: 100vh;
-  min-height: 480px;
+  min-height: 0;
   display: grid;
   grid-template-columns: clamp(230px, 26vw, 310px) 1fr;
   border-top: 2px solid var(--accent);
@@ -158,6 +159,7 @@ select {
 }
 
 .cyan { --item-color: var(--cyan); background: var(--cyan); }
+.blue { --item-color: var(--blue); background: var(--blue); }
 .violet { --item-color: var(--accent); background: var(--accent); }
 .green { --item-color: var(--green); background: var(--green); }
 .amber { --item-color: var(--amber); background: var(--amber); }
@@ -318,11 +320,46 @@ select {
   color: #111;
 }
 
+.steam-capsule {
+  min-width: 230px;
+  grid-template-columns: 49px 1fr 44px;
+  gap: 10px;
+  overflow: hidden;
+  background: linear-gradient(90deg, #081323, #1b2838);
+  border-color: #24455f;
+}
+
 .cover {
   width: 26px;
   height: 26px;
   border-radius: 7px;
   background: linear-gradient(135deg, #3b82f6, #f97316);
+}
+
+.steam-cover {
+  width: 49px;
+  height: 30px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #66c0f4, #1b2838);
+}
+
+.steam-progress {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.steam-progress strong {
+  font-size: 11px;
+  color: #66c0f4;
+}
+
+.steam-progress i {
+  width: 38px;
+  height: 3px;
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #66c0f4 42%, rgba(203, 213, 225, .35) 42%);
 }
 
 .play {
@@ -456,6 +493,11 @@ select {
   cursor: pointer;
 }
 
+.btn:disabled {
+  cursor: default;
+  opacity: .52;
+}
+
 .btn.primary {
   border-color: #8070f1;
   background: var(--accent);
@@ -466,6 +508,16 @@ select {
   border-color: #10b981;
   background: #10b981;
   color: white;
+}
+
+.pulse {
+  color: var(--muted-2);
+  animation: pulse-text 1.15s ease-in-out infinite;
+}
+
+@keyframes pulse-text {
+  0%, 100% { opacity: .62; }
+  50% { opacity: 1; }
 }
 
 .queue {
@@ -785,6 +837,7 @@ select {
 
   .weather-capsule,
   .media-capsule,
+  .steam-capsule,
   .discord-capsule {
     min-width: 0;
     width: 100%;

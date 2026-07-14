@@ -74,7 +74,7 @@ std::atomic_bool g_uninitializing = false;
 thread_local bool g_initializedForThread = false;
 bool g_inInjectTaskbarStatsTap = false;
 constexpr PCWSTR kTaskbarStatsLayoutMarkerName =
-    L"TaskbarStatsLayoutV20260713Position";
+    L"TaskbarStatsLayoutV20260714PercentMove";
 constexpr double kTaskbarStatsExplicitColumnRightGap = 10.0;
 constexpr double kTaskbarStatsOverlayTrayGap = 28.0;
 constexpr double kTaskbarStatsOverlayMinRightReserve = 220.0;
@@ -85,6 +85,8 @@ HMODULE g_hookModule = nullptr;
 ULONG_PTR g_gdiplusToken = 0;
 
 HMODULE GetCurrentModuleHandle();
+wuxm::Brush MakeMediaGradientBrush(const winrt::Windows::UI::Color& left,
+                                   const winrt::Windows::UI::Color& right);
 
 std::wstring ParentDirectory(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
@@ -428,6 +430,15 @@ struct WidgetLibraryHitItem {
     RECT rect{};
     std::wstring command;
     std::wstring designId;
+};
+
+struct WidgetInstanceRuntime {
+    std::wstring id;
+    std::wstring designId;
+    bool enabled = true;
+    long long moveX = 0;
+    long long positionPct = -1;
+    long long order = 0;
 };
 
 HWND g_accountMenuWindow = nullptr;
@@ -866,6 +877,176 @@ wux::FrameworkElement MakeMediaPanel() {
     return panel;
 }
 
+wux::FrameworkElement MakeSteamDownloadPanel() {
+    wuxc::Border panel;
+    panel.Name(L"TaskbarStatsSteamPanel");
+    panel.Width(220);
+    panel.Height(44);
+    panel.Visibility(wux::Visibility::Collapsed);
+    panel.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(9));
+    panel.Background(MakeBrush(0xFF, 0x0B, 0x12, 0x20));
+    panel.Padding(wux::ThicknessHelper::FromUniformLength(0));
+
+    wuxc::Grid layout;
+    layout.Width(220);
+    layout.Height(44);
+
+    wuxc::Border backdrop;
+    backdrop.Name(L"TaskbarStatsSteamBackdrop");
+    backdrop.Width(220);
+    backdrop.Height(44);
+    backdrop.Opacity(0.42);
+    backdrop.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(9));
+    backdrop.Background(MakeBrush(0xFF, 0x0B, 0x12, 0x20));
+
+    wuxc::Border shade;
+    shade.Width(220);
+    shade.Height(44);
+    shade.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(9));
+    shade.Background(MakeMediaGradientBrush(
+        winrt::Windows::UI::Color{0xEC, 0x08, 0x13, 0x23},
+        winrt::Windows::UI::Color{0xD8, 0x1B, 0x28, 0x38}));
+
+    wuxc::Grid content;
+    content.Width(197);
+    content.Height(32);
+    content.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    content.VerticalAlignment(wux::VerticalAlignment::Center);
+    content.Margin(wux::ThicknessHelper::FromLengths(12, 0, 11, 0));
+
+    wuxc::ColumnDefinition coverColumn;
+    coverColumn.Width(wux::GridLengthHelper::FromPixels(49));
+    wuxc::ColumnDefinition textColumn;
+    textColumn.Width(wux::GridLengthHelper::FromPixels(104));
+    wuxc::ColumnDefinition metricColumn;
+    metricColumn.Width(wux::GridLengthHelper::FromPixels(44));
+    content.ColumnDefinitions().Append(coverColumn);
+    content.ColumnDefinitions().Append(textColumn);
+    content.ColumnDefinitions().Append(metricColumn);
+
+    wuxc::Border cover;
+    cover.Name(L"TaskbarStatsSteamCover");
+    cover.Width(49);
+    cover.Height(30);
+    cover.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(4));
+    cover.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    cover.VerticalAlignment(wux::VerticalAlignment::Center);
+    cover.Background(MakeMediaGradientBrush(
+        winrt::Windows::UI::Color{0xFF, 0x1B, 0x28, 0x38},
+        winrt::Windows::UI::Color{0xFF, 0x2A, 0x47, 0x5E}));
+    wuxc::Grid::SetColumn(cover, 0);
+
+    wuxc::Grid textGrid;
+    textGrid.Width(93);
+    textGrid.Height(30);
+    textGrid.Margin(wux::ThicknessHelper::FromLengths(12, 0, 0, 0));
+    textGrid.VerticalAlignment(wux::VerticalAlignment::Center);
+    wuxc::RowDefinition titleRow;
+    titleRow.Height(wux::GridLengthHelper::FromPixels(16));
+    wuxc::RowDefinition detailRow;
+    detailRow.Height(wux::GridLengthHelper::FromPixels(14));
+    textGrid.RowDefinitions().Append(titleRow);
+    textGrid.RowDefinitions().Append(detailRow);
+    wuxc::Grid::SetColumn(textGrid, 1);
+
+    wuxc::Grid titleViewport;
+    titleViewport.Width(93);
+    titleViewport.Height(16);
+    wuxm::RectangleGeometry titleClip;
+    titleClip.Rect(wf::Rect{0, 0, 93, 16});
+    titleViewport.Clip(titleClip);
+    wuxc::Grid::SetRow(titleViewport, 0);
+
+    wuxc::StackPanel titleMarquee;
+    titleMarquee.Name(L"TaskbarStatsSteamTitleMarquee");
+    titleMarquee.Orientation(wuxc::Orientation::Horizontal);
+    titleMarquee.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    titleMarquee.VerticalAlignment(wux::VerticalAlignment::Center);
+    wuxm::TranslateTransform titleTransform;
+    titleMarquee.RenderTransform(titleTransform);
+
+    auto title = MakeNamedText(L"TaskbarStatsSteamTitle", L"Steam", 11, 0xFF);
+    title.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    title.TextAlignment(wux::TextAlignment::Left);
+    title.Foreground(MakeBrush(0xFF, 0xF8, 0xFA, 0xFC));
+    title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    title.Width(93);
+
+    auto titleClone = MakeNamedText(L"TaskbarStatsSteamTitleClone", L"", 11, 0xFF);
+    titleClone.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    titleClone.TextAlignment(wux::TextAlignment::Left);
+    titleClone.Foreground(MakeBrush(0xFF, 0xF8, 0xFA, 0xFC));
+    titleClone.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    titleClone.Width(0);
+
+    titleMarquee.Children().Append(title.as<wux::UIElement>());
+    titleMarquee.Children().Append(titleClone.as<wux::UIElement>());
+    titleViewport.Children().Append(titleMarquee.as<wux::UIElement>());
+
+    auto detail = MakeNamedText(L"TaskbarStatsSteamDetail", L"Indirme yok", 9, 0xF0);
+    detail.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    detail.TextAlignment(wux::TextAlignment::Left);
+    detail.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+    detail.Foreground(MakeBrush(0xF0, 0xCB, 0xD5, 0xE1));
+    detail.Width(93);
+    wuxc::Grid::SetRow(detail, 1);
+
+    textGrid.Children().Append(titleViewport.as<wux::UIElement>());
+    textGrid.Children().Append(detail.as<wux::UIElement>());
+
+    wuxc::Grid metricGrid;
+    metricGrid.Width(44);
+    metricGrid.Height(30);
+    metricGrid.VerticalAlignment(wux::VerticalAlignment::Center);
+    metricGrid.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    wuxc::RowDefinition metricTextRow;
+    metricTextRow.Height(wux::GridLengthHelper::FromPixels(17));
+    wuxc::RowDefinition metricBarRow;
+    metricBarRow.Height(wux::GridLengthHelper::FromPixels(13));
+    metricGrid.RowDefinitions().Append(metricTextRow);
+    metricGrid.RowDefinitions().Append(metricBarRow);
+    wuxc::Grid::SetColumn(metricGrid, 2);
+
+    auto metric = MakeNamedText(L"TaskbarStatsSteamMetric", L"--", 11, 0xFF);
+    metric.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    metric.TextAlignment(wux::TextAlignment::Right);
+    metric.Foreground(MakeBrush(0xFF, 0xF8, 0xFA, 0xFC));
+    metric.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    metric.Width(44);
+    wuxc::Grid::SetRow(metric, 0);
+
+    wuxc::Grid progressTrack;
+    progressTrack.Name(L"TaskbarStatsSteamProgressTrack");
+    progressTrack.Width(38);
+    progressTrack.Height(3);
+    progressTrack.Margin(wux::ThicknessHelper::FromLengths(0, 5, 0, 0));
+    progressTrack.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    progressTrack.VerticalAlignment(wux::VerticalAlignment::Top);
+    progressTrack.Background(MakeBrush(0x48, 0xCB, 0xD5, 0xE1));
+    wuxc::Grid::SetRow(progressTrack, 1);
+
+    wuxc::Border progressFill;
+    progressFill.Name(L"TaskbarStatsSteamProgressFill");
+    progressFill.Width(0);
+    progressFill.Height(3);
+    progressFill.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    progressFill.Background(MakeBrush(0xFF, 0x66, 0xC0, 0xF4));
+    progressTrack.Children().Append(progressFill.as<wux::UIElement>());
+
+    metricGrid.Children().Append(metric.as<wux::UIElement>());
+    metricGrid.Children().Append(progressTrack.as<wux::UIElement>());
+
+    content.Children().Append(cover.as<wux::UIElement>());
+    content.Children().Append(textGrid.as<wux::UIElement>());
+    content.Children().Append(metricGrid.as<wux::UIElement>());
+    layout.Children().Append(backdrop.as<wux::UIElement>());
+    layout.Children().Append(shade.as<wux::UIElement>());
+    layout.Children().Append(content.as<wux::UIElement>());
+
+    panel.Child(layout);
+    return panel;
+}
+
 void ShowWidgetContextMenu() {
     constexpr UINT_PTR kSettingsCommand = 1001;
     constexpr UINT_PTR kQuitCommand = 1002;
@@ -904,9 +1085,29 @@ void ShowWidgetContextMenu() {
     }
 }
 
-wux::FrameworkElement MakeTaskbarStatsRoot() {
+std::wstring GetWidgetDesignFromRoot(wux::UIElement const& root) {
+    auto frameworkElement = root.try_as<wux::FrameworkElement>();
+    if (!frameworkElement) {
+        return ReadActiveWidgetDesign();
+    }
+
+    auto tag = frameworkElement.Tag();
+    if (!tag) {
+        return ReadActiveWidgetDesign();
+    }
+
+    auto designId = winrt::unbox_value_or<winrt::hstring>(tag, L"");
+    if (designId.empty()) {
+        return ReadActiveWidgetDesign();
+    }
+
+    return std::wstring(designId.c_str());
+}
+
+wux::FrameworkElement MakeTaskbarStatsWidgetRoot(const WidgetInstanceRuntime& instance) {
     wuxc::Grid root;
-    root.Name(L"TaskbarStatsRoot");
+    root.Name(L"TaskbarStatsWidget");
+    root.Tag(winrt::box_value(winrt::hstring(instance.designId)));
     root.VerticalAlignment(wux::VerticalAlignment::Center);
     root.HorizontalAlignment(wux::HorizontalAlignment::Right);
     root.Height(36);
@@ -1023,6 +1224,7 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
     root.Children().Append(MakeDiscordPanel().as<wux::UIElement>());
     root.Children().Append(MakeBtcPanel().as<wux::UIElement>());
     root.Children().Append(MakeMediaPanel().as<wux::UIElement>());
+    root.Children().Append(MakeSteamDownloadPanel().as<wux::UIElement>());
 
     wuxc::Border layoutMarker;
     layoutMarker.Name(kTaskbarStatsLayoutMarkerName);
@@ -1036,7 +1238,7 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
         SetExpandedMode(root.as<wux::UIElement>(), false);
     });
     root.Tapped([root](auto const&, wuxi::TappedRoutedEventArgs const& args) {
-        std::wstring activeDesign = ReadActiveWidgetDesign();
+        std::wstring activeDesign = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
         if (activeDesign == L"weather-static") {
             ShowWeatherMenu(root);
         } else if (activeDesign == L"discord-voice") {
@@ -1048,6 +1250,8 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
             } else {
                 ShowWidgetLibraryWindow();
             }
+        } else if (activeDesign == L"steam-download") {
+            ShowWidgetLibraryWindow();
         } else if (activeDesign == L"btc-fees") {
             ShowWidgetLibraryWindow();
         } else {
@@ -1059,6 +1263,31 @@ wux::FrameworkElement MakeTaskbarStatsRoot() {
         ShowWidgetContextMenu();
         args.Handled(true);
     });
+
+    return root;
+}
+
+wux::FrameworkElement MakeTaskbarStatsRoot() {
+    wuxc::Grid root;
+    root.Name(L"TaskbarStatsRoot");
+    root.VerticalAlignment(wux::VerticalAlignment::Center);
+    root.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    root.Height(48);
+    root.Width(1);
+    root.Margin(wux::ThicknessHelper::FromLengths(6, 0, 6, 0));
+
+    wuxc::Canvas host;
+    host.Name(L"TaskbarStatsWidgetHost");
+    host.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    host.VerticalAlignment(wux::VerticalAlignment::Center);
+    host.Height(48);
+    host.Width(1);
+    root.Children().Append(host.as<wux::UIElement>());
+
+    wuxc::Border layoutMarker;
+    layoutMarker.Name(kTaskbarStatsLayoutMarkerName);
+    layoutMarker.Visibility(wux::Visibility::Collapsed);
+    root.Children().Append(layoutMarker.as<wux::UIElement>());
 
     return root;
 }
@@ -1077,6 +1306,10 @@ std::wstring GetDiscordStatusPath() {
 
 std::wstring GetMediaStatusPath() {
     return GetTaskbarStatsPath(L"media-status.json");
+}
+
+std::wstring GetSteamDownloadStatusPath() {
+    return GetTaskbarStatsPath(L"steam-download-status.json");
 }
 
 std::wstring GetWidgetSettingsPath() {
@@ -1240,7 +1473,8 @@ bool IsKnownWidgetDesign(const std::wstring& designId) {
            _wcsicmp(designId.c_str(), L"weather-static") == 0 ||
            _wcsicmp(designId.c_str(), L"discord-voice") == 0 ||
            _wcsicmp(designId.c_str(), L"btc-fees") == 0 ||
-           _wcsicmp(designId.c_str(), L"media-player") == 0;
+           _wcsicmp(designId.c_str(), L"media-player") == 0 ||
+           _wcsicmp(designId.c_str(), L"steam-download") == 0;
 }
 
 std::vector<std::wstring> ExtractJsonStringArray(const std::string& json,
@@ -1307,12 +1541,14 @@ std::vector<std::wstring> ExtractJsonStringArray(const std::string& json,
 
 struct WidgetRuntimeSettings {
     std::wstring activeDesign = L"codex-status";
+    bool enabled = true;
     bool rotationEnabled{};
     long long rotationIntervalSecs = 30;
     std::vector<std::wstring> rotationDesigns;
     bool discordBackgroundEnabled = true;
     bool mediaDarkMode = true;
     long long widgetOffsetPx = 0;
+    long long widgetMoveX = 0;
 };
 
 WidgetRuntimeSettings ReadWidgetRuntimeSettings() {
@@ -1322,6 +1558,11 @@ WidgetRuntimeSettings ReadWidgetRuntimeSettings() {
     if (!json.empty() && ExtractJsonString(json, "activeDesign", activeDesign) &&
         IsKnownWidgetDesign(activeDesign)) {
         settings.activeDesign = activeDesign;
+    }
+
+    bool enabled = true;
+    if (ExtractJsonBool(json, "enabled", enabled)) {
+        settings.enabled = enabled;
     }
 
     bool rotationEnabled = false;
@@ -1347,6 +1588,12 @@ WidgetRuntimeSettings ReadWidgetRuntimeSettings() {
     long long widgetOffset = 0;
     if (ExtractJsonInt64(json, "widgetOffsetPx", widgetOffset)) {
         settings.widgetOffsetPx = std::clamp(widgetOffset, 0LL, 480LL);
+        settings.widgetMoveX = -settings.widgetOffsetPx;
+    }
+
+    long long widgetMove = 0;
+    if (ExtractJsonInt64(json, "widgetMoveX", widgetMove)) {
+        settings.widgetMoveX = std::clamp(widgetMove, -640LL, 640LL);
     }
 
     settings.rotationDesigns = ExtractJsonStringArray(json, "rotationDesigns");
@@ -1382,7 +1629,9 @@ bool WriteActiveWidgetDesign(const std::wstring& designId) {
     }
 
     std::string json = "{\n  \"activeDesign\": \"" + JsonEscapeUtf8(designId) +
-                       "\",\n  \"rotationEnabled\": " +
+                       "\",\n  \"enabled\": " +
+                       (settings.enabled ? "true" : "false") +
+                       ",\n  \"rotationEnabled\": " +
                        (settings.rotationEnabled ? "true" : "false") +
                        ",\n  \"rotationIntervalSecs\": " +
                        std::to_string(settings.rotationIntervalSecs) +
@@ -1392,6 +1641,8 @@ bool WriteActiveWidgetDesign(const std::wstring& designId) {
                        (settings.mediaDarkMode ? "true" : "false") +
                        ",\n  \"widgetOffsetPx\": " +
                        std::to_string(settings.widgetOffsetPx) +
+                       ",\n  \"widgetMoveX\": " +
+                       std::to_string(settings.widgetMoveX) +
                        ",\n  \"rotationDesigns\": [";
     for (size_t i = 0; i < rotationDesigns.size(); ++i) {
         if (i > 0) {
@@ -1401,6 +1652,130 @@ bool WriteActiveWidgetDesign(const std::wstring& designId) {
     }
     json += "]\n}\n";
     return WriteUtf8File(GetWidgetSettingsPath(), json);
+}
+
+std::vector<std::string> ExtractJsonObjectArray(const std::string& json,
+                                                const char* key) {
+    std::vector<std::string> objects;
+    std::string pattern = "\"";
+    pattern += key;
+    pattern += "\"";
+
+    size_t keyPos = json.find(pattern);
+    size_t arrayStart = keyPos == std::string::npos
+                            ? std::string::npos
+                            : json.find('[', keyPos + pattern.size());
+    if (arrayStart == std::string::npos) {
+        return objects;
+    }
+
+    int depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    size_t objectStart = std::string::npos;
+    for (size_t i = arrayStart + 1; i < json.size(); ++i) {
+        char ch = json[i];
+        if (inString) {
+            if (!escaped && ch == '"') {
+                inString = false;
+            }
+            escaped = !escaped && ch == '\\';
+            if (ch != '\\') {
+                escaped = false;
+            }
+            continue;
+        }
+
+        if (ch == '"') {
+            inString = true;
+            escaped = false;
+        } else if (ch == '{') {
+            if (depth == 0) {
+                objectStart = i;
+            }
+            ++depth;
+        } else if (ch == '}') {
+            --depth;
+            if (depth == 0 && objectStart != std::string::npos) {
+                objects.push_back(json.substr(objectStart, i - objectStart + 1));
+                objectStart = std::string::npos;
+            }
+        } else if (ch == ']' && depth == 0) {
+            break;
+        }
+    }
+
+    return objects;
+}
+
+std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
+    std::string json = ReadUtf8File(GetWidgetSettingsPath());
+    std::vector<WidgetInstanceRuntime> widgets;
+
+    auto objects = ExtractJsonObjectArray(json, "widgets");
+    long long order = 0;
+    for (const auto& object : objects) {
+        WidgetInstanceRuntime widget;
+        widget.order = order++;
+        ExtractJsonString(object, "id", widget.id);
+        ExtractJsonString(object, "design", widget.designId);
+        if (widget.designId.empty()) {
+            ExtractJsonString(object, "designId", widget.designId);
+        }
+        if (!IsKnownWidgetDesign(widget.designId)) {
+            continue;
+        }
+
+        bool enabled = true;
+        if (ExtractJsonBool(object, "enabled", enabled)) {
+            widget.enabled = enabled;
+        }
+
+        long long moveX = 0;
+        if (ExtractJsonInt64(object, "moveX", moveX) ||
+            ExtractJsonInt64(object, "widgetMoveX", moveX)) {
+            widget.moveX = std::clamp(moveX, -640LL, 640LL);
+        }
+
+        long long positionPct = -1;
+        if (ExtractJsonInt64(object, "positionPct", positionPct)) {
+            widget.positionPct = std::clamp(positionPct, 0LL, 100LL);
+        }
+
+        long long explicitOrder = widget.order;
+        if (ExtractJsonInt64(object, "order", explicitOrder)) {
+            widget.order = explicitOrder;
+        }
+
+        if (widget.id.empty()) {
+            widget.id = widget.designId;
+        }
+        widgets.push_back(widget);
+    }
+
+    if (objects.empty()) {
+        WidgetRuntimeSettings legacy = ReadWidgetRuntimeSettings();
+        if (legacy.enabled) {
+            WidgetInstanceRuntime widget;
+            widget.id = legacy.activeDesign;
+            widget.designId = ReadActiveWidgetDesign();
+            widget.enabled = true;
+            widget.moveX = legacy.widgetMoveX;
+            widget.positionPct = -1;
+            widget.order = 0;
+            widgets.push_back(widget);
+        }
+    }
+
+    std::sort(widgets.begin(), widgets.end(),
+              [](const WidgetInstanceRuntime& left,
+                 const WidgetInstanceRuntime& right) {
+                  if (left.order != right.order) {
+                      return left.order < right.order;
+                  }
+                  return left.id < right.id;
+              });
+    return widgets;
 }
 
 std::vector<CodexAccountInfo> ReadCodexAccounts() {
@@ -2061,19 +2436,9 @@ RECT GetWidgetLibraryCardRect(int index, int width) {
     int gap = 22;
     int cardWidth = width >= 1080 ? 360 : contentRight - contentLeft;
     int cardHeight = 150;
-    int x = contentLeft;
-    int y = 150;
-
-    if (width >= 1080 && index == 1) {
-        x += cardWidth + gap;
-    } else if (index == 1) {
-        y += cardHeight + gap;
-    } else if (index == 2) {
-        y += cardHeight + gap;
-        if (width < 1080) {
-            y += cardHeight + gap;
-        }
-    }
+    int columns = width >= 1080 ? 2 : 1;
+    int x = contentLeft + (index % columns) * (cardWidth + gap);
+    int y = 150 + (index / columns) * (cardHeight + gap);
 
     return RECT{x, y, x + cardWidth, y + cardHeight};
 }
@@ -2096,6 +2461,11 @@ void RebuildWidgetLibraryHitItems(int width, int height) {
     });
     g_widgetLibraryHitItems.push_back(WidgetLibraryHitItem{
         .rect = GetWidgetLibraryCardRect(2, width),
+        .command = L"selectWidgetDesign",
+        .designId = L"steam-download",
+    });
+    g_widgetLibraryHitItems.push_back(WidgetLibraryHitItem{
+        .rect = GetWidgetLibraryCardRect(3, width),
         .command = L"addWidgetLibrary",
     });
 }
@@ -2243,10 +2613,16 @@ void DrawWidgetLibraryWindow(HDC dc, RECT clientRect) {
         activeDesign == L"weather-static", g_widgetLibraryHoveredIndex == 2,
         titleFont, detailFont, smallFont, iconFont, RGB(248, 197, 85));
     DrawWidgetLibraryCard(
-        dc, GetWidgetLibraryCardRect(2, width), L"\xE710", L"Add Library",
+        dc, GetWidgetLibraryCardRect(2, width), L"\xE896", L"Steam Downloads",
+        L"Active Steam download with capsule art and ETA",
+        L"Game title, progress, speed, and remaining time",
+        activeDesign == L"steam-download", g_widgetLibraryHoveredIndex == 3,
+        titleFont, detailFont, smallFont, iconFont, RGB(102, 192, 244));
+    DrawWidgetLibraryCard(
+        dc, GetWidgetLibraryCardRect(3, width), L"\xE710", L"Add Library",
         L"Reserved for importing your future native design packs",
         L"Design pack loading is the next layer; this action is queued.",
-        false, g_widgetLibraryHoveredIndex == 3, titleFont, detailFont,
+        false, g_widgetLibraryHoveredIndex == 4, titleFont, detailFont,
         smallFont, iconFont, RGB(94, 234, 212));
 
     DeleteObject(heroFont);
@@ -2733,6 +3109,42 @@ MediaSnapshot ReadMediaSnapshot() {
         snapshot.positionSeconds = std::clamp(position, 0LL, 24LL * 60LL * 60LL);
     }
 
+    return snapshot;
+}
+
+struct SteamDownloadSnapshot {
+    bool loaded{};
+    bool steamRunning{};
+    bool active{};
+    std::wstring title;
+    std::wstring subtitle;
+    std::wstring detail;
+    std::wstring status;
+    std::wstring coverPath;
+    double progressPercent{};
+    double speedMbS{};
+    long long remainingSeconds{};
+};
+
+SteamDownloadSnapshot ReadSteamDownloadSnapshot() {
+    SteamDownloadSnapshot snapshot;
+    std::string json = ReadUtf8File(GetSteamDownloadStatusPath());
+    if (json.empty()) {
+        return snapshot;
+    }
+
+    snapshot.loaded = true;
+    ExtractJsonBool(json, "steamRunning", snapshot.steamRunning);
+    ExtractJsonBool(json, "active", snapshot.active);
+    ExtractJsonString(json, "title", snapshot.title);
+    ExtractJsonString(json, "subtitle", snapshot.subtitle);
+    ExtractJsonString(json, "detail", snapshot.detail);
+    ExtractJsonString(json, "status", snapshot.status);
+    ExtractJsonString(json, "coverPath", snapshot.coverPath);
+    ExtractJsonDouble(json, "progressPercent", snapshot.progressPercent);
+    ExtractJsonDouble(json, "speedMbS", snapshot.speedMbS);
+    ExtractJsonInt64(json, "remainingSeconds", snapshot.remainingSeconds);
+    snapshot.progressPercent = std::clamp(snapshot.progressPercent, 0.0, 100.0);
     return snapshot;
 }
 
@@ -3378,6 +3790,69 @@ void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
     transform.X(-offset);
 }
 
+void SetSteamTitleText(wux::UIElement const& root, const std::wstring& text) {
+    auto first = FindNamedTextBlock(root, L"TaskbarStatsSteamTitle");
+    auto second = FindNamedTextBlock(root, L"TaskbarStatsSteamTitleClone");
+    auto marqueeElement =
+        FindNamedFrameworkElement(root, L"TaskbarStatsSteamTitleMarquee");
+    if (!first || !second || !marqueeElement) {
+        return;
+    }
+
+    std::wstring value = Trim(text);
+    if (value.empty()) {
+        value = L"Steam";
+    }
+
+    constexpr double viewportWidth = 93.0;
+    constexpr double averageCharWidth = 6.2;
+    constexpr double separatorWidth = 18.0;
+    constexpr double pixelsPerSecond = 18.0;
+    const std::wstring separator = L"  •";
+
+    double textWidth = static_cast<double>(value.size()) * averageCharWidth;
+    if (textWidth <= viewportWidth) {
+        if (first.Text() != value) {
+            first.Text(value);
+        }
+        if (second.Text() != L"") {
+            second.Text(L"");
+        }
+        first.Width(viewportWidth);
+        second.Width(0);
+        auto transform =
+            marqueeElement.RenderTransform().try_as<wuxm::TranslateTransform>();
+        if (!transform) {
+            transform = wuxm::TranslateTransform();
+            marqueeElement.RenderTransform(transform);
+        }
+        transform.X(0);
+        return;
+    }
+
+    std::wstring item = value + separator;
+    double itemWidth = textWidth + separatorWidth;
+    if (first.Text() != item) {
+        first.Text(item);
+    }
+    if (second.Text() != item) {
+        second.Text(item);
+    }
+    first.Width(itemWidth);
+    second.Width(itemWidth);
+
+    auto transform =
+        marqueeElement.RenderTransform().try_as<wuxm::TranslateTransform>();
+    if (!transform) {
+        transform = wuxm::TranslateTransform();
+        marqueeElement.RenderTransform(transform);
+    }
+
+    double elapsed = static_cast<double>(CurrentUnixMillis() % 600000LL) / 1000.0;
+    double offset = std::fmod(elapsed * pixelsPerSecond, itemWidth);
+    transform.X(-offset);
+}
+
 void SetNamedTextColor(wux::UIElement const& root,
                        PCWSTR name,
                        winrt::Windows::UI::Color color) {
@@ -3505,6 +3980,7 @@ void SetNamedBorderFill(wux::UIElement const& root,
     auto border = element ? element.try_as<wuxc::Border>() : nullptr;
     if (border) {
         border.Background(brush);
+        element.Tag(nullptr);
     }
 }
 
@@ -3632,6 +4108,31 @@ void ApplyMediaTheme(wux::UIElement const& root,
                       winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
 }
 
+void ApplySteamDownloadTheme(wux::UIElement const& root,
+                             bool active,
+                             bool hasCoverArt) {
+    SetNamedBorderFill(root, L"TaskbarStatsSteamPanel",
+                       MakeBrush(0xFF, 0x0B, 0x12, 0x20));
+    if (!hasCoverArt) {
+        SetNamedBorderFill(root, L"TaskbarStatsSteamBackdrop",
+                           MakeBrush(0xFF, 0x0B, 0x12, 0x20));
+        SetNamedBorderFill(root, L"TaskbarStatsSteamCover",
+                           MakeMediaGradientBrush(
+                               winrt::Windows::UI::Color{0xFF, 0x1B, 0x28, 0x38},
+                               winrt::Windows::UI::Color{0xFF, 0x2A, 0x47, 0x5E}));
+    }
+    SetNamedTextColor(root, L"TaskbarStatsSteamTitle",
+                      winrt::Windows::UI::Color{0xFF, 0xF8, 0xFA, 0xFC});
+    SetNamedTextColor(root, L"TaskbarStatsSteamTitleClone",
+                      winrt::Windows::UI::Color{0xFF, 0xF8, 0xFA, 0xFC});
+    SetNamedTextColor(root, L"TaskbarStatsSteamDetail",
+                      active ? winrt::Windows::UI::Color{0xFF, 0xCB, 0xD5, 0xE1}
+                             : winrt::Windows::UI::Color{0xFF, 0x94, 0xA3, 0xB8});
+    SetNamedTextColor(root, L"TaskbarStatsSteamMetric",
+                      active ? winrt::Windows::UI::Color{0xFF, 0x66, 0xC0, 0xF4}
+                             : winrt::Windows::UI::Color{0xFF, 0x94, 0xA3, 0xB8});
+}
+
 void SetDiscordPanelBackground(wux::UIElement const& root, bool enabled) {
     auto element = FindNamedFrameworkElement(root, L"TaskbarStatsDiscordPanel");
     auto border = element ? element.try_as<wuxc::Border>() : nullptr;
@@ -3679,6 +4180,24 @@ void SetRateLimitProgressVisual(wux::UIElement const& root,
             track.Background(MakeBrush(0x34, 0x94, 0xA3, 0xB8));
         }
     }
+}
+
+void SetSteamDownloadProgressVisual(wux::UIElement const& root,
+                                    double progressPercent,
+                                    bool active) {
+    constexpr double barWidth = 38.0;
+    double value = std::clamp(progressPercent, 0.0, 100.0);
+    auto fillElement = FindNamedFrameworkElement(root, L"TaskbarStatsSteamProgressFill");
+    if (fillElement) {
+        fillElement.Width(active ? barWidth * value / 100.0 : 0.0);
+        auto fill = fillElement.try_as<wuxc::Border>();
+        if (fill) {
+            fill.Background(active ? MakeBrush(0xFF, 0x66, 0xC0, 0xF4)
+                                   : MakeBrush(0x77, 0x94, 0xA3, 0xB8));
+        }
+    }
+
+    SetNamedOpacity(root, L"TaskbarStatsSteamProgressTrack", active ? 1.0 : 0.35);
 }
 
 struct TaskVisual {
@@ -3778,22 +4297,21 @@ void UpdateExpandedTaskRows(wux::UIElement const& root,
 void ApplyWidgetOffset(wux::UIElement const& root,
                        const WidgetRuntimeSettings& settings) {
     double offset = static_cast<double>(
-        std::clamp(settings.widgetOffsetPx, 0LL, 480LL));
+        std::clamp(settings.widgetMoveX, -640LL, 640LL));
     wuxm::TranslateTransform transform;
-    transform.X(-offset);
+    transform.X(offset);
     transform.Y(0);
     root.RenderTransform(transform);
 }
 
 void SetExpandedMode(wux::UIElement const& root, bool expanded) {
-    std::wstring activeDesign = ReadActiveWidgetDesign();
+    std::wstring activeDesign = GetWidgetDesignFromRoot(root);
     if (activeDesign != L"codex-status") {
         auto rootElement = root.try_as<wux::FrameworkElement>();
         if (rootElement) {
-            if (activeDesign == L"btc-fees") {
-                rootElement.Width(230);
-                rootElement.Height(44);
-            } else if (activeDesign == L"media-player") {
+            if (activeDesign == L"btc-fees" ||
+                activeDesign == L"media-player" ||
+                activeDesign == L"steam-download") {
                 rootElement.Width(230);
                 rootElement.Height(44);
             } else if (activeDesign == L"discord-voice") {
@@ -3829,10 +4347,19 @@ void SetExpandedMode(wux::UIElement const& root, bool expanded) {
                                  : wux::Visibility::Collapsed);
 }
 
-void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
-    WidgetRuntimeSettings rootSettings = ReadWidgetRuntimeSettings();
-    ApplyWidgetOffset(root, rootSettings);
-    std::wstring activeDesign = ReadActiveWidgetDesign();
+void UpdateTaskbarStatsWidgetRoot(wux::UIElement const& root,
+                                  const WidgetInstanceRuntime& instance) {
+    wuxm::TranslateTransform transform;
+    transform.X(0);
+    transform.Y(0);
+    root.RenderTransform(transform);
+    root.Visibility(wux::Visibility::Visible);
+    auto rootElement = root.try_as<wux::FrameworkElement>();
+    if (rootElement) {
+        rootElement.Tag(winrt::box_value(winrt::hstring(instance.designId)));
+    }
+
+    std::wstring activeDesign = instance.designId;
     if (activeDesign == L"btc-fees") {
         auto rootElement = root.try_as<wux::FrameworkElement>();
         if (rootElement) {
@@ -3849,6 +4376,8 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
         SetNamedVisibility(root, L"TaskbarStatsDiscordPanel",
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsBtcPanel",
                            wux::Visibility::Visible);
@@ -3874,6 +4403,8 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsBtcPanel",
                            wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
+                           wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
                            wux::Visibility::Visible);
         bool hasMediaText = !Trim(media.title).empty() || !Trim(media.artist).empty();
@@ -3891,6 +4422,70 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
                         media.active || hasMediaText, media);
         SetNamedBorderImageBackground(root, L"TaskbarStatsMediaCover",
                                       media.coverPath);
+        return;
+    }
+
+    if (activeDesign == L"steam-download") {
+        SteamDownloadSnapshot steam = ReadSteamDownloadSnapshot();
+        auto rootElement = root.try_as<wux::FrameworkElement>();
+        if (rootElement) {
+            rootElement.Width(230);
+            rootElement.Height(44);
+        }
+
+        SetNamedVisibility(root, L"TaskbarStatsCompactPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsExpandedPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsWeatherPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsDiscordPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsBtcPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
+                           wux::Visibility::Visible);
+
+        std::wstring title = L"Steam Downloads";
+        if (steam.loaded && !Trim(steam.title).empty()) {
+            title = steam.title;
+        }
+
+        std::wstring detail = L"Veri bekleniyor";
+        if (steam.loaded) {
+            if (steam.active) {
+                detail = !Trim(steam.detail).empty()
+                             ? steam.detail
+                             : (!Trim(steam.subtitle).empty() ? steam.subtitle
+                                                              : L"Downloading");
+            } else {
+                detail = steam.steamRunning ? L"Indirme yok" : L"Steam kapali";
+            }
+        }
+
+        std::wstring metric = L"--";
+        if (steam.loaded && steam.active) {
+            int percent = static_cast<int>(std::round(steam.progressPercent));
+            metric = std::to_wstring(std::clamp(percent, 0, 100)) + L"%";
+        }
+
+        SetSteamTitleText(root, title);
+        SetNamedText(root, L"TaskbarStatsSteamDetail", detail);
+        SetNamedText(root, L"TaskbarStatsSteamMetric", metric);
+        bool hasCoverArt = steam.loaded && steam.active &&
+                           !steam.coverPath.empty() &&
+                           FileExists(steam.coverPath);
+        ApplySteamDownloadTheme(root, steam.loaded && steam.active, hasCoverArt);
+        SetSteamDownloadProgressVisual(root, steam.progressPercent,
+                                       steam.loaded && steam.active);
+        if (hasCoverArt) {
+            SetNamedBorderImageBackground(root, L"TaskbarStatsSteamCover",
+                                          steam.coverPath);
+            SetNamedBorderImageBackground(root, L"TaskbarStatsSteamBackdrop",
+                                          steam.coverPath);
+        }
         return;
     }
 
@@ -3912,6 +4507,8 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
         SetNamedVisibility(root, L"TaskbarStatsBtcPanel",
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsDiscordPanel",
                            wux::Visibility::Visible);
@@ -3956,6 +4553,8 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
                            wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
+                           wux::Visibility::Collapsed);
 
         if (!weather.loaded) {
             SetNamedText(root, L"TaskbarStatsWeatherCity", L"Izmir");
@@ -3983,6 +4582,8 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
     SetNamedVisibility(root, L"TaskbarStatsBtcPanel",
                        wux::Visibility::Collapsed);
     SetNamedVisibility(root, L"TaskbarStatsMediaPanel",
+                       wux::Visibility::Collapsed);
+    SetNamedVisibility(root, L"TaskbarStatsSteamPanel",
                        wux::Visibility::Collapsed);
     SetNamedVisibility(root, L"TaskbarStatsCompactPanel",
                        wux::Visibility::Visible);
@@ -4029,6 +4630,213 @@ void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
                  FormatTokenCount(snapshot.tokens30d));
 }
 
+std::wstring BuildWidgetSignature(
+    const std::vector<WidgetInstanceRuntime>& widgets) {
+    std::wstring signature;
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) {
+            continue;
+        }
+        signature += widget.id;
+        signature += L":";
+        signature += widget.designId;
+        signature += L":";
+        signature += std::to_wstring(widget.moveX);
+        signature += L":";
+        signature += std::to_wstring(widget.positionPct);
+        signature += L";";
+    }
+    return signature;
+}
+
+void ClearPanelChildren(wuxc::Panel const& panel) {
+    auto children = panel.Children();
+    while (children.Size() > 0) {
+        children.RemoveAt(children.Size() - 1);
+    }
+}
+
+void RebuildWidgetHostIfNeeded(wux::UIElement const& root,
+                               const std::vector<WidgetInstanceRuntime>& widgets) {
+    auto rootElement = root.try_as<wux::FrameworkElement>();
+    if (!rootElement) {
+        return;
+    }
+
+    std::wstring signature = BuildWidgetSignature(widgets);
+    auto currentTag = rootElement.Tag();
+    auto currentSignature =
+        currentTag ? winrt::unbox_value_or<winrt::hstring>(currentTag, L"") : L"";
+    if (std::wstring(currentSignature.c_str()) == signature) {
+        return;
+    }
+
+    auto hostElement = FindNamedFrameworkElement(root, L"TaskbarStatsWidgetHost");
+    auto host = hostElement.try_as<wuxc::Canvas>();
+    if (!host) {
+        return;
+    }
+
+    ClearPanelChildren(host);
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) {
+            continue;
+        }
+        auto childRoot = MakeTaskbarStatsWidgetRoot(widget);
+        host.Children().Append(childRoot.as<wux::UIElement>());
+    }
+
+    rootElement.Tag(winrt::box_value(winrt::hstring(signature)));
+}
+
+double WidgetDesignWidth(const std::wstring& designId) {
+    if (designId == L"btc-fees" ||
+        designId == L"media-player" ||
+        designId == L"steam-download") {
+        return 230.0;
+    }
+    if (designId == L"discord-voice") {
+        return 196.0;
+    }
+    if (designId == L"weather-static") {
+        return 240.0;
+    }
+    return 184.0;
+}
+
+double WidgetDesignHeight(const std::wstring& designId) {
+    if (designId == L"btc-fees" ||
+        designId == L"media-player" ||
+        designId == L"steam-download") {
+        return 44.0;
+    }
+    return 36.0;
+}
+
+struct WidgetLayoutBounds {
+    double minLeft = 0;
+    double maxRight = 0;
+    double width = 1;
+};
+
+WidgetLayoutBounds ComputeWidgetLayoutBounds(
+    const std::vector<WidgetInstanceRuntime>& widgets) {
+    WidgetLayoutBounds bounds;
+    bool first = true;
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) {
+            continue;
+        }
+        double width = WidgetDesignWidth(widget.designId);
+        double right = static_cast<double>(widget.moveX);
+        double left = right - width;
+        if (first) {
+            bounds.minLeft = std::min(0.0, left);
+            bounds.maxRight = std::max(0.0, right);
+            first = false;
+        } else {
+            bounds.minLeft = std::min(bounds.minLeft, left);
+            bounds.maxRight = std::max(bounds.maxRight, right);
+        }
+    }
+
+    bounds.width = std::max(1.0, bounds.maxRight - bounds.minLeft);
+    return bounds;
+}
+
+void ApplyWidgetCanvasLayout(wux::UIElement const& root,
+                             const std::vector<WidgetInstanceRuntime>& widgets) {
+    auto rootElement = root.try_as<wux::FrameworkElement>();
+    auto hostElement = FindNamedFrameworkElement(root, L"TaskbarStatsWidgetHost");
+    auto host = hostElement.try_as<wuxc::Canvas>();
+    if (!rootElement || !host) {
+        return;
+    }
+
+    WidgetLayoutBounds bounds = ComputeWidgetLayoutBounds(widgets);
+    double canvasWidth = rootElement.ActualWidth();
+    if (canvasWidth < 10.0 && rootElement.Width() > 10.0) {
+        canvasWidth = rootElement.Width();
+    }
+    if (canvasWidth < 10.0) {
+        canvasWidth = bounds.width;
+        rootElement.Width(canvasWidth);
+    }
+    rootElement.Height(48);
+    host.Width(canvasWidth);
+    host.Height(48);
+
+    uint32_t childIndex = 0;
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) {
+            continue;
+        }
+        if (childIndex >= host.Children().Size()) {
+            break;
+        }
+
+        auto child = host.Children().GetAt(childIndex);
+        double width = WidgetDesignWidth(widget.designId);
+        double height = WidgetDesignHeight(widget.designId);
+        double left = 0;
+        if (widget.positionPct >= 0) {
+            double usableWidth = std::max(0.0, canvasWidth - width);
+            left = usableWidth * (static_cast<double>(widget.positionPct) / 100.0);
+        } else {
+            left = canvasWidth + static_cast<double>(widget.moveX) - width;
+        }
+        left = std::clamp(left, 0.0, std::max(0.0, canvasWidth - width));
+        double top = std::max(0.0, (48.0 - height) / 2.0);
+        wuxc::Canvas::SetLeft(child, left);
+        wuxc::Canvas::SetTop(child, top);
+        ++childIndex;
+    }
+}
+
+void UpdateTaskbarStatsRoot(wux::UIElement const& root) {
+    std::vector<WidgetInstanceRuntime> widgets = ReadWidgetInstances();
+    bool hasEnabledWidget = std::any_of(
+        widgets.begin(), widgets.end(),
+        [](const WidgetInstanceRuntime& widget) { return widget.enabled; });
+
+    if (!hasEnabledWidget) {
+        if (auto rootElement = root.try_as<wux::FrameworkElement>()) {
+            rootElement.Tag(nullptr);
+            rootElement.Width(1);
+        }
+        if (auto hostElement = FindNamedFrameworkElement(root, L"TaskbarStatsWidgetHost")) {
+            if (auto host = hostElement.try_as<wuxc::Canvas>()) {
+                ClearPanelChildren(host);
+                host.Width(1);
+            }
+        }
+        root.Visibility(wux::Visibility::Collapsed);
+        return;
+    }
+
+    root.Visibility(wux::Visibility::Visible);
+    RebuildWidgetHostIfNeeded(root, widgets);
+    ApplyWidgetCanvasLayout(root, widgets);
+
+    auto hostElement = FindNamedFrameworkElement(root, L"TaskbarStatsWidgetHost");
+    auto host = hostElement.try_as<wuxc::Canvas>();
+    if (!host) {
+        return;
+    }
+
+    uint32_t childIndex = 0;
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) {
+            continue;
+        }
+        if (childIndex >= host.Children().Size()) {
+            break;
+        }
+        UpdateTaskbarStatsWidgetRoot(host.Children().GetAt(childIndex), widget);
+        ++childIndex;
+    }
+}
+
 void RefreshInsertedTaskbarStatsRoots() {
     for (auto const& module : g_insertedModules) {
         if (module.root) {
@@ -4042,11 +4850,17 @@ void RefreshInsertedTaskbarStatsRoots() {
     }
 }
 
-wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root) {
+wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root,
+                                            wuxc::Grid const& parent,
+                                            wux::FrameworkElement const& trayElement) {
     wux::DispatcherTimer timer;
     timer.Interval(std::chrono::milliseconds(33));
-    timer.Tick([root](auto const&, auto const&) {
+    timer.Tick([root, parent, trayElement](auto const&, auto const&) {
         try {
+            auto rootElement = root.try_as<wux::FrameworkElement>();
+            if (rootElement && parent && trayElement) {
+                ApplyTaskbarStatsAnchorMargin(rootElement, parent, trayElement);
+            }
             UpdateTaskbarStatsRoot(root);
         } catch (winrt::hresult_error const& ex) {
             Wh_Log(L"TaskbarStats update failed: 0x%08X %s", ex.code(),
@@ -4055,6 +4869,10 @@ wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root) {
             Wh_Log(L"TaskbarStats update failed with unknown exception");
         }
     });
+    auto rootElement = root.try_as<wux::FrameworkElement>();
+    if (rootElement && parent && trayElement) {
+        ApplyTaskbarStatsAnchorMargin(rootElement, parent, trayElement);
+    }
     UpdateTaskbarStatsRoot(root);
     timer.Start();
     return timer;
@@ -4177,6 +4995,15 @@ void ApplyTaskbarStatsAnchorMargin(wux::FrameworkElement const& root,
                                    wux::FrameworkElement const& trayElement) {
     if (parent.ColumnDefinitions().Size() == 0) {
         double rightReserve = GetOverlayRightReserve(parent, trayElement);
+        double parentWidth = parent.ActualWidth();
+        double availableWidth = parentWidth > rightReserve + 32.0
+                                    ? parentWidth - rightReserve - 8.0
+                                    : 1.0;
+        availableWidth = std::max(1.0, availableWidth);
+        if (std::fabs(root.Width() - availableWidth) > 0.5) {
+            root.Width(availableWidth);
+            root.Height(48);
+        }
         auto current = root.Margin();
         if (std::fabs(current.Left) > 0.5 ||
             std::fabs(current.Top) > 0.5 ||
@@ -4236,7 +5063,8 @@ bool TryInsertNextToSystemTray(InstanceHandle handle,
         auto children = parent.Children();
         children.RemoveAt(existingRootIndex);
         children.InsertAt(existingRootIndex, replacementRoot.as<wux::UIElement>());
-        auto timer = StartTaskbarStatsTimer(replacementRoot.as<wux::UIElement>());
+        auto timer = StartTaskbarStatsTimer(
+            replacementRoot.as<wux::UIElement>(), parent, element);
 
         g_insertedModules.push_back(InsertedModule{
             .anchorHandle = handle,
@@ -4316,7 +5144,7 @@ bool TryInsertNextToSystemTray(InstanceHandle handle,
     wuxc::Canvas::SetZIndex(root, 10000);
 
     children.InsertAt(trayChildIndex, root.as<wux::UIElement>());
-    auto timer = StartTaskbarStatsTimer(root.as<wux::UIElement>());
+    auto timer = StartTaskbarStatsTimer(root.as<wux::UIElement>(), parent, element);
 
     g_insertedModules.push_back(InsertedModule{
         .anchorHandle = handle,
