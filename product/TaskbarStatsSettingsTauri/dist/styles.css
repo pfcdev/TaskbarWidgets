@@ -439,16 +439,17 @@ button {
 }
 
 .featured-card {
-  width: 400px;
-  min-width: 400px;
-  min-height: 238px;
-  border-radius: 16px;
-  padding: 16px;
+  width: 360px;
+  min-width: 360px;
+  min-height: 168px;
+  border-radius: 10px;
+  padding: 12px;
   scroll-snap-align: center;
 }
 
 .featured-head,
 .tile-foot,
+.library-card-head,
 .widget-title-block,
 .setting-row,
 .setting-head,
@@ -462,6 +463,7 @@ button {
 
 .featured-head,
 .tile-foot,
+.library-card-head,
 .setting-row,
 .setting-head,
 .sequence-head,
@@ -490,6 +492,7 @@ button {
 }
 
 .widget-title-block h4,
+.library-card-head h4,
 .tile-foot h4,
 .update-card h3,
 .channel-card h3,
@@ -502,6 +505,7 @@ button {
 }
 
 .widget-title-block p,
+.library-card-head p,
 .tile-foot p,
 .update-card p,
 .channel-card p,
@@ -513,6 +517,20 @@ button {
   color: var(--on-variant);
   font-size: 12px;
   line-height: 18px;
+}
+
+.library-card-head h4 {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.library-card-head p {
+  margin-top: 0;
+}
+
+.library-card-head .gradient-action {
+  min-height: 32px;
+  padding: 6px 12px;
 }
 
 .gradient-action,
@@ -599,45 +617,46 @@ button {
 
 .widget-live-surface,
 .tile-preview {
-  min-height: 96px;
+  min-height: 72px;
   display: grid;
   place-items: center;
-  margin-top: 22px;
+  margin-top: 12px;
   border: 1px solid rgba(255, 255, 255, .06);
-  border-radius: 12px;
-  background: var(--surface);
+  border-radius: 8px;
+  background: rgba(7, 9, 13, .72);
   overflow: hidden;
 }
 
 .tile-preview {
   width: 100%;
-  margin: 0 0 12px;
+  margin: 12px 0 0;
   cursor: pointer;
 }
 
 .taskbar-demo-strip {
   width: min(100%, 320px);
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 12px;
-  border: 1px solid rgba(255, 255, 255, .06);
-  border-radius: 12px;
-  background: rgba(12, 14, 19, .86);
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(8, 10, 14, .92);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 
 .widget-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(3, minmax(280px, 1fr));
+  gap: 14px;
 }
 
 .widget-tile {
   position: relative;
   min-width: 0;
-  border-radius: 16px;
+  min-height: 142px;
+  border-radius: 10px;
   padding: 12px;
   cursor: pointer;
 }
@@ -1023,29 +1042,43 @@ button {
 
 .taskbar-demo-strip .taskbar-capsule {
   width: auto;
-  min-width: 180px;
+  min-width: 184px;
   max-width: 100%;
 }
 
 .taskbar-demo-strip .taskbar-capsule.codex-status {
-  min-width: 196px;
+  width: 184px;
+  height: 36px;
+  display: grid;
+  grid-template-rows: 14px 6px 12px;
+  gap: 2px;
+  align-content: center;
+  padding: 3px 8px;
+  background: #171d26;
 }
 
 .taskbar-demo-strip .taskbar-capsule.weather-static {
-  min-width: 184px;
-  background: rgba(5, 7, 10, .94);
+  width: 228px;
+  height: 36px;
+  grid-template-columns: 112px 46px 52px;
+  gap: 0;
+  background: rgba(17, 17, 17, .96);
 }
 
 .taskbar-demo-strip .taskbar-capsule.discord-voice {
-  min-width: 158px;
+  width: 184px;
+  height: 36px;
   justify-content: center;
   background: rgba(5, 7, 10, .94);
 }
 
 .taskbar-demo-strip .taskbar-capsule.media-player {
-  min-width: 226px;
+  width: 220px;
+  height: 44px;
   background: linear-gradient(90deg, rgba(244, 244, 245, .96), rgba(226, 232, 240, .94));
   color: #111827;
+  padding: 0 11px 0 12px;
+  gap: 12px;
 }
 
 .taskbar-demo-strip .taskbar-capsule.media-player small {
@@ -1053,18 +1086,24 @@ button {
 }
 
 .taskbar-demo-strip .taskbar-capsule.steam-download {
-  min-width: 238px;
+  width: 220px;
+  height: 44px;
   background: linear-gradient(90deg, rgba(8, 19, 35, .96), rgba(27, 40, 56, .96));
   border-color: rgba(102, 192, 244, .22);
+  padding: 0 11px 0 12px;
+  gap: 12px;
 }
 
 .taskbar-demo-strip .taskbar-capsule.steam-download b {
-  margin-left: auto;
   color: #66c0f4;
 }
 
 .taskbar-demo-strip .taskbar-capsule.btc-fees {
-  min-width: 182px;
+  width: 220px;
+  height: 44px;
+  display: grid;
+  grid-template-columns: 1fr 18px;
+  background: #120718;
 }
 
 .taskbar-capsule strong,
@@ -1078,17 +1117,194 @@ button {
   font-size: 10px;
 }
 
+.codex-line,
+.codex-metrics,
+.weather-text,
+.steam-copy,
+.media-copy,
+.steam-metric {
+  min-width: 0;
+}
+
+.codex-line,
+.codex-metrics {
+  display: flex;
+  align-items: center;
+}
+
+.codex-line {
+  gap: 6px;
+}
+
+.codex-line strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.codex-line .material-symbols-outlined {
+  color: #5fd4ff;
+  font-size: 13px;
+}
+
+.codex-line small {
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.quota-bar {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, .22);
+}
+
+.quota-bar em {
+  display: block;
+  width: 74%;
+  height: 100%;
+  background: #5fd4ff;
+}
+
+.codex-metrics {
+  justify-content: space-between;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.weather-text strong,
+.weather-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weather-temp {
+  justify-self: end;
+  align-self: center;
+  font-size: 21px;
+  line-height: 24px;
+}
+
+.weather-static .material-symbols-outlined {
+  justify-self: center;
+  color: #fbbf24;
+  font-size: 32px;
+}
+
 .avatar-mini {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
+  background: #1f242d;
+  opacity: .38;
+}
+
+.avatar-mini.active {
+  opacity: 1;
   background: #334155;
-  opacity: .52;
 }
 
 .avatar-mini.speaking {
   opacity: 1;
   outline: 2px solid #22c55e;
+  background: #334155;
+}
+
+.album-dot,
+.steam-art.mini {
+  flex: 0 0 auto;
+  width: 49px;
+  height: 30px;
+  border-radius: 4px;
+}
+
+.album-dot {
+  background: linear-gradient(135deg, #3b82f6, #f97316);
+}
+
+.steam-art.mini {
+  background: linear-gradient(135deg, #66c0f4, #1b2838);
+}
+
+.media-copy,
+.steam-copy {
+  flex: 1 1 auto;
+}
+
+.media-copy strong,
+.media-copy small,
+.steam-copy strong,
+.steam-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-play {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #000;
+  color: #fff;
+}
+
+.media-play .material-symbols-outlined {
+  font-size: 11px;
+}
+
+.steam-metric {
+  width: 44px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.steam-metric i {
+  width: 38px;
+  height: 3px;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(203, 213, 225, .28);
+}
+
+.steam-metric em {
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: #66c0f4;
+}
+
+.fees-grid {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  align-items: center;
+  column-gap: 8px;
+  color: #d0bfd8;
+  font-size: 10px;
+}
+
+.fees-grid strong {
+  justify-self: end;
+  color: #fff;
+  font-size: 11px;
+}
+
+.eth-mark {
+  justify-self: end;
+  align-self: center;
+  color: #c669ff;
+  font-size: 18px;
 }
 
 .interval-card {

@@ -1190,11 +1190,11 @@ wux::FrameworkElement MakeTaskbarStatsWidgetRoot(const WidgetInstanceRuntime& in
 
     wuxc::Grid expanded;
     expanded.Name(L"TaskbarStatsExpandedPanel");
-    expanded.Height(44);
+    expanded.Height(72);
     expanded.Width(230);
     expanded.Visibility(wux::Visibility::Collapsed);
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         wuxc::RowDefinition row;
         row.Height(wux::GridLengthHelper::FromPixels(14));
         expanded.RowDefinitions().Append(row);
@@ -1215,12 +1215,26 @@ wux::FrameworkElement MakeTaskbarStatsWidgetRoot(const WidgetInstanceRuntime& in
         L"TaskbarStatsExpandedTitle2",
         L"TaskbarStatsExpandedIcon2",
         L"TaskbarStatsExpandedState2");
+    auto expandedRow3 = MakeExpandedProjectRow(
+        L"TaskbarStatsExpandedRow3",
+        L"TaskbarStatsExpandedTitle3",
+        L"TaskbarStatsExpandedIcon3",
+        L"TaskbarStatsExpandedState3");
+    auto expandedRow4 = MakeExpandedProjectRow(
+        L"TaskbarStatsExpandedRow4",
+        L"TaskbarStatsExpandedTitle4",
+        L"TaskbarStatsExpandedIcon4",
+        L"TaskbarStatsExpandedState4");
     wuxc::Grid::SetRow(expandedRow0, 0);
     wuxc::Grid::SetRow(expandedRow1, 1);
     wuxc::Grid::SetRow(expandedRow2, 2);
+    wuxc::Grid::SetRow(expandedRow3, 3);
+    wuxc::Grid::SetRow(expandedRow4, 4);
     expanded.Children().Append(expandedRow0.as<wux::UIElement>());
     expanded.Children().Append(expandedRow1.as<wux::UIElement>());
     expanded.Children().Append(expandedRow2.as<wux::UIElement>());
+    expanded.Children().Append(expandedRow3.as<wux::UIElement>());
+    expanded.Children().Append(expandedRow4.as<wux::UIElement>());
 
     root.Children().Append(compact.as<wux::UIElement>());
     root.Children().Append(expanded.as<wux::UIElement>());
@@ -1238,8 +1252,7 @@ wux::FrameworkElement MakeTaskbarStatsWidgetRoot(const WidgetInstanceRuntime& in
     root.PointerEntered([root](auto const&, auto const&) {
         auto element = root.as<wux::UIElement>();
         if (GetWidgetDesignFromRoot(element) == L"codex-status") {
-            SetExpandedMode(element, false);
-            ShowCodexHoverPopup();
+            SetExpandedMode(element, true);
         }
     });
     root.PointerExited([root](auto const&, auto const&) {
@@ -2512,10 +2525,28 @@ RECT CalculateAccountMenuRect(int width, int height) {
     monitorInfo.cbSize = sizeof(monitorInfo);
     GetMonitorInfo(monitor, &monitorInfo);
 
-    int x = taskbarRect.right - 540;
+    POINT anchor{};
+    if (!GetCursorPos(&anchor)) {
+        anchor.x = taskbarRect.right - 220;
+        anchor.y = taskbarRect.top + ((taskbarRect.bottom - taskbarRect.top) / 2);
+    }
+
+    int x = anchor.x - (width / 2);
     int y = taskbarRect.top - height - 8;
-    if (taskbarRect.top <= monitorInfo.rcMonitor.top + 4) {
-        y = taskbarRect.bottom + 8;
+    bool horizontalTaskbar =
+        (taskbarRect.right - taskbarRect.left) >=
+        (taskbarRect.bottom - taskbarRect.top);
+    if (horizontalTaskbar) {
+        if (taskbarRect.top <= monitorInfo.rcMonitor.top + 4) {
+            y = taskbarRect.bottom + 8;
+        }
+    } else {
+        y = anchor.y - (height / 2);
+        if (taskbarRect.left <= monitorInfo.rcMonitor.left + 4) {
+            x = taskbarRect.right + 8;
+        } else {
+            x = taskbarRect.left - width - 8;
+        }
     }
 
     x = std::max<int>(monitorInfo.rcWork.left + 8,
@@ -4447,19 +4478,27 @@ void UpdateExpandedTaskRows(wux::UIElement const& root,
     constexpr PCWSTR rowNames[] = {
         L"TaskbarStatsExpandedRow0",
         L"TaskbarStatsExpandedRow1",
-        L"TaskbarStatsExpandedRow2"};
+        L"TaskbarStatsExpandedRow2",
+        L"TaskbarStatsExpandedRow3",
+        L"TaskbarStatsExpandedRow4"};
     constexpr PCWSTR titleNames[] = {
         L"TaskbarStatsExpandedTitle0",
         L"TaskbarStatsExpandedTitle1",
-        L"TaskbarStatsExpandedTitle2"};
+        L"TaskbarStatsExpandedTitle2",
+        L"TaskbarStatsExpandedTitle3",
+        L"TaskbarStatsExpandedTitle4"};
     constexpr PCWSTR iconNames[] = {
         L"TaskbarStatsExpandedIcon0",
         L"TaskbarStatsExpandedIcon1",
-        L"TaskbarStatsExpandedIcon2"};
+        L"TaskbarStatsExpandedIcon2",
+        L"TaskbarStatsExpandedIcon3",
+        L"TaskbarStatsExpandedIcon4"};
     constexpr PCWSTR stateNames[] = {
         L"TaskbarStatsExpandedState0",
         L"TaskbarStatsExpandedState1",
-        L"TaskbarStatsExpandedState2"};
+        L"TaskbarStatsExpandedState2",
+        L"TaskbarStatsExpandedState3",
+        L"TaskbarStatsExpandedState4"};
 
     for (uint32_t i = 0; i < ARRAYSIZE(rowNames); ++i) {
         if (i < titles.size()) {
@@ -4517,7 +4556,7 @@ void SetExpandedMode(wux::UIElement const& root, bool expanded) {
     auto rootElement = root.try_as<wux::FrameworkElement>();
     if (rootElement) {
         rootElement.Width(expanded ? 230 : 184);
-        rootElement.Height(expanded ? 44 : 36);
+        rootElement.Height(expanded ? 72 : 36);
     }
 
     SetNamedVisibility(root, L"TaskbarStatsCompactPanel",

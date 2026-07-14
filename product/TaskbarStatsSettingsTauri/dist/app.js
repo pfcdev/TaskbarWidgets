@@ -370,20 +370,16 @@ function widgetGridCard(widget) {
   const enabled = isWidgetEnabled(widget.id);
   return `
     <article class="glass-card widget-tile ${enabled ? "enabled" : ""}" data-open-widget="${widget.id}" style="--accent:${widget.accent}">
-      <div class="widget-state-pill ${enabled ? "on" : ""}">
-        <span class="material-symbols-outlined">${enabled ? "check_circle" : "radio_button_unchecked"}</span>
-        ${enabled ? "Active" : "Off"}
-      </div>
-      <button class="tile-preview" data-open-widget="${widget.id}" type="button">
-        ${runtime.preview}
-      </button>
-      <div class="tile-foot">
+      <div class="library-card-head">
         <div>
           <h4>${escapeHtml(widget.title)}</h4>
           <p>${escapeHtml(widget.category)}</p>
         </div>
-        ${toggleButton(widget.id, true)}
+        ${toggleButton(widget.id)}
       </div>
+      <button class="tile-preview" data-open-widget="${widget.id}" type="button">
+        ${runtime.preview}
+      </button>
     </article>
   `;
 }
@@ -890,37 +886,37 @@ function runtimeControlPanel() {
 function widgetRuntime(id) {
   if (id === "weather-static") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule weather-static"><span class="material-symbols-outlined filled">light_mode</span><div><strong>26 deg</strong><small>${escapeHtml(state.settings.weatherCity || "Istanbul")}</small></div></div></div>`,
-      taskbar: `<span class="material-symbols-outlined filled">light_mode</span><strong>26 deg</strong>`,
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule weather-static"><div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Istanbul")}</strong><small>21:24 - Clear</small></div><strong class="weather-temp">26 deg</strong><span class="material-symbols-outlined filled">light_mode</span></div></div>`,
+      taskbar: `<div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Istanbul")}</strong><small>21:24 - Clear</small></div><strong class="weather-temp">26 deg</strong><span class="material-symbols-outlined filled">light_mode</span>`,
     };
   }
   if (id === "discord-voice") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule discord-voice"><span class="avatar-mini"></span><span class="avatar-mini speaking"></span><span class="avatar-mini"></span><span class="avatar-mini"></span></div></div>`,
-      taskbar: `<span class="avatar-mini"></span><span class="avatar-mini speaking"></span><span class="avatar-mini"></span>`,
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule discord-voice"><span class="avatar-mini active"></span><span class="avatar-mini speaking"></span><span class="avatar-mini active"></span><span class="avatar-mini"></span><span class="avatar-mini"></span></div></div>`,
+      taskbar: `<span class="avatar-mini active"></span><span class="avatar-mini speaking"></span><span class="avatar-mini active"></span>`,
     };
   }
   if (id === "media-player") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule media-player"><span class="album-dot"></span><div><strong>Now Playing</strong><small>System media</small></div><span class="material-symbols-outlined filled">play_arrow</span></div></div>`,
-      taskbar: `<span class="album-dot"></span><div><strong>Now Playing</strong><small>Media</small></div>`,
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule media-player"><span class="album-dot"></span><div class="media-copy"><strong>Now Playing</strong><small>System media</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span></div></div>`,
+      taskbar: `<span class="album-dot"></span><div class="media-copy"><strong>Now Playing</strong><small>System media</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span>`,
     };
   }
   if (id === "steam-download") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule steam-download"><span class="steam-art mini"></span><div><strong>Steam Download</strong><small>8 min left</small></div><b>42%</b></div></div>`,
-      taskbar: `<span class="steam-art mini"></span><div><strong>42%</strong><small>8 min left</small></div>`,
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule steam-download"><span class="steam-art mini"></span><div class="steam-copy"><strong>Cyberpunk 2077</strong><small>8 min remaining</small></div><div class="steam-metric"><b>42%</b><i><em></em></i></div></div></div>`,
+      taskbar: `<span class="steam-art mini"></span><div class="steam-copy"><strong>Cyberpunk 2077</strong><small>8 min remaining</small></div><div class="steam-metric"><b>42%</b><i><em></em></i></div>`,
     };
   }
   if (id === "btc-fees") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule btc-fees"><span class="material-symbols-outlined">currency_bitcoin</span><div><strong>ETH Fees</strong><small>Base 12 gwei</small></div></div></div>`,
-      taskbar: `<span class="material-symbols-outlined">currency_bitcoin</span><strong>12 gwei</strong>`,
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule btc-fees"><div class="fees-grid"><span>Current date</span><strong>Jul 14, 2026</strong><span>Fees</span><strong>0.00004353 ETH</strong></div><span class="eth-mark">◇</span></div></div>`,
+      taskbar: `<div class="fees-grid"><span>Current date</span><strong>Jul 14, 2026</strong><span>Fees</span><strong>0.00004353 ETH</strong></div><span class="eth-mark">◇</span>`,
     };
   }
   return {
-    preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule codex-status"><span class="material-symbols-outlined">terminal</span><div><strong>Antigravity</strong><small>Quota 74%</small></div></div></div>`,
-    taskbar: `<span class="material-symbols-outlined">terminal</span><div><strong>74%</strong><small>Quota</small></div>`,
+    preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule codex-status"><div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div></div></div>`,
+    taskbar: `<div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div>`,
   };
 }
 
