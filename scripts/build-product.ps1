@@ -30,35 +30,39 @@ New-Item -ItemType Directory -Force $PublishDir | Out-Null
 Get-Process TaskbarStatsMediaHelper -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
+$CompileArgs = @()
+$WindhawkCompiler = "C:\Program Files\Windhawk\Compiler\bin\clang++.exe"
 $Compiler = $env:TASKBARSTATS_CLANGXX
-if (-not $Compiler) {
+$UseWindhawkArgs = $false
+if ($Compiler) {
+    $UseWindhawkArgs = (Resolve-Path $Compiler -ErrorAction SilentlyContinue) -eq
+        (Resolve-Path $WindhawkCompiler -ErrorAction SilentlyContinue)
+} elseif (Test-Path $WindhawkCompiler) {
+    $Compiler = $WindhawkCompiler
+    $UseWindhawkArgs = $true
+} else {
     $clang = Get-Command clang++ -ErrorAction SilentlyContinue
     if ($clang) {
         $Compiler = $clang.Source
     }
 }
 
-$CompileArgs = @()
-if (-not $Compiler) {
-    $WindhawkCompiler = "C:\Program Files\Windhawk\Compiler\bin\clang++.exe"
-    if (Test-Path $WindhawkCompiler) {
-        $Compiler = $WindhawkCompiler
-        $CompileArgs += @(
-            "-x", "c++",
-            "-std=c++23",
-            "-target", "x86_64-w64-mingw32",
-            "-DUNICODE",
-            "-D_UNICODE",
-            "-DWINVER=0x0A00",
-            "-D_WIN32_WINNT=0x0A00",
-            "-D_WIN32_IE=0x0A00",
-            "-DNTDDI_VERSION=0x0A000008",
-            "-D__USE_MINGW_ANSI_STDIO=0",
-            "-I", "C:\Program Files\Windhawk\Compiler\include",
-            "-I", "C:\Program Files\Windhawk\Compiler\include\winrt"
-        )
-        Write-Warning "Using Windhawk bundled clang++ because no system clang++ was found. Install LLVM/C++ WinRT toolchain or set TASKBARSTATS_CLANGXX for a Windhawk-independent build."
-    }
+if ($UseWindhawkArgs) {
+    $CompileArgs += @(
+        "-x", "c++",
+        "-std=c++23",
+        "-target", "x86_64-w64-mingw32",
+        "-DUNICODE",
+        "-D_UNICODE",
+        "-DWINVER=0x0A00",
+        "-D_WIN32_WINNT=0x0A00",
+        "-D_WIN32_IE=0x0A00",
+        "-DNTDDI_VERSION=0x0A000008",
+        "-D__USE_MINGW_ANSI_STDIO=0",
+        "-I", "C:\Program Files\Windhawk\Compiler\include",
+        "-I", "C:\Program Files\Windhawk\Compiler\include\winrt"
+    )
+    Write-Warning "Using Windhawk bundled clang++ for native Explorer hook build."
 }
 
 if (-not $Compiler) {

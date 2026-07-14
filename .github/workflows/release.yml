@@ -83,6 +83,7 @@ jobs:
           if (-not (Test-Path $windhawkCompiler)) {
             throw "Windhawk compiler was not installed at $windhawkCompiler"
           }
+          "TASKBARSTATS_CLANGXX=$windhawkCompiler" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build product
         shell: pwsh
