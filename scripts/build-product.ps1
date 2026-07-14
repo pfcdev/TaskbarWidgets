@@ -17,7 +17,11 @@ $HookSource = Join-Path $RepoRoot "product\TaskbarStatsHook\taskbar_stats_hook.c
 $MediaHelperSource = Join-Path $RepoRoot "product\TaskbarStatsMediaHelper\media_helper.cpp"
 $LoaderProject = Join-Path $RepoRoot "product\TaskbarStats\TaskbarStats.csproj"
 $SettingsProject = Join-Path $RepoRoot "product\TaskbarStatsSettingsTauri\src-tauri"
-$SettingsTargetDir = Join-Path $env:TEMP "taskbarstats-tauri-target"
+$SettingsTargetDir = if ($env:TASKBARSTATS_TAURI_TARGET_DIR) {
+    $env:TASKBARSTATS_TAURI_TARGET_DIR
+} else {
+    Join-Path $env:TEMP "taskbarstats-tauri-target"
+}
 $ResourceDir = Join-Path $RepoRoot "product\TaskbarStats\Resources"
 $HookOutput = Join-Path $ResourceDir "TaskbarStatsHook.dll"
 $MediaHelperOutput = Join-Path $ResourceDir "TaskbarStatsMediaHelper.exe"

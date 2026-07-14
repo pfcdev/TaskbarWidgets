@@ -1,60 +1,63 @@
 const { invoke } = window.__TAURI__.core;
 
-const designs = [
+const widgetCatalog = [
   {
     id: "codex-status",
     title: "Codex Status",
-    subtitle: "API Quota Monitor",
-    accentClass: "cyan",
-    description:
-      "Displays Codex quota, active project state, and account information in a compact taskbar capsule.",
+    category: "System",
+    icon: "terminal",
+    accent: "#5fd4ff",
+    featured: true,
+    description: "Codex quota, active project state, and account status in a compact taskbar capsule.",
   },
   {
     id: "weather-static",
     title: "Static Weather",
-    subtitle: "Weather Capsule",
-    accentClass: "amber",
-    description:
-      "Shows current weather for the selected city with the custom weather taskbar design.",
+    category: "Utility",
+    icon: "partly_cloudy_day",
+    accent: "#f59e0b",
+    featured: true,
+    description: "Current weather and local time for the selected city.",
   },
   {
     id: "discord-voice",
     title: "Discord Voice",
-    subtitle: "Live Voice Avatars",
-    accentClass: "green",
-    description:
-      "Shows Discord voice users with dimmed idle avatars and a green speaking frame.",
+    category: "Social",
+    icon: "forum",
+    accent: "#5865f2",
+    description: "Live voice channel avatars with speaking state.",
   },
   {
     id: "btc-fees",
     title: "Crypto Fees",
-    subtitle: "Fee Capsule",
-    accentClass: "pink",
-    description:
-      "A compact crypto fee design surface for taskbar-sized market and network data.",
+    category: "Market",
+    icon: "currency_bitcoin",
+    accent: "#c669ff",
+    description: "Compact crypto fee and network state surface.",
   },
   {
     id: "media-player",
     title: "Media Player",
-    subtitle: "System Media",
-    accentClass: "violet",
-    description:
-      "Reads Windows media sessions and shows title, artist, cover, and play/pause state.",
+    category: "Media",
+    icon: "play_circle",
+    accent: "#1db954",
+    description: "Windows media sessions with title, artist, cover, and playback state.",
   },
   {
     id: "steam-download",
     title: "Steam Downloads",
-    subtitle: "Download Progress",
-    accentClass: "blue",
-    description:
-      "Shows the active Steam download with game art, progress, speed, and remaining time.",
+    category: "Gaming",
+    icon: "download",
+    accent: "#66c0f4",
+    featured: true,
+    description: "Active Steam download with game art, speed, progress, and remaining time.",
   },
 ];
 
-const defaultWidgets = designs.map((design, index) => ({
-  id: design.id,
-  design: design.id,
-  enabled: design.id === "codex-status",
+const defaultWidgets = widgetCatalog.map((widget, index) => ({
+  id: widget.id,
+  design: widget.id,
+  enabled: widget.id === "codex-status",
   moveX: 0,
   positionPct: 100,
   order: index,
@@ -69,7 +72,7 @@ const defaults = {
   widgets: defaultWidgets,
   rotationEnabled: false,
   rotationIntervalSecs: 30,
-  rotationDesigns: designs.map((item) => item.id),
+  rotationDesigns: widgetCatalog.map((item) => item.id),
   codexApiEndpoint: "",
   codexProjectFilter: "",
   weatherCity: "Istanbul",
@@ -82,32 +85,62 @@ const defaults = {
   discordRedirectUri: "http://127.0.0.1/callback",
 };
 
+const pageMeta = {
+  library: {
+    title: "Widget Library",
+    description: "Browse TaskbarStats widgets, enable taskbar surfaces, and tune per-widget behavior.",
+  },
+  rotation: {
+    title: "Slider Rotation",
+    description: "Configure the active queue, timing, and taskbar preview for rotating widgets.",
+  },
+  updates: {
+    title: "System Updates",
+    description: "Manage the Stable release channel, check GitHub releases, and install updates.",
+  },
+  settings: {
+    title: "Settings",
+    description: "Manage TaskbarStats behavior, widget settings, and system integrations.",
+  },
+};
+
 let state = {
   appDir: "",
   page: "library",
   settings: { ...defaults },
   updateStatus: {},
   mediaStatus: {},
+  releaseTimeline: [],
+  releaseTimelineState: "idle",
+  search: "",
   dirty: false,
   status: "",
+  previewMode: "bottom",
+  previewIndex: 0,
+  modalWidgetId: "",
 };
-let autosaveTimer = 0;
 
-function designById(id) {
-  return designs.find((item) => item.id === id) || designs[0];
+let autosaveTimer = 0;
+let previewTimer = 0;
+
+function widgetById(id) {
+  return widgetCatalog.find((item) => item.id === id) || widgetCatalog[0];
 }
 
 function mergeSettings(settings) {
   const merged = { ...defaults, ...settings };
-  merged.activeDesign = designById(merged.activeDesign).id;
+  merged.activeDesign = widgetById(merged.activeDesign).id;
   merged.rotationDesigns = normalizeRotation(merged.rotationDesigns);
   merged.widgetOffsetPx = clampNumber(merged.widgetOffsetPx, 0, 480, 0);
-  if (settings && Object.prototype.hasOwnProperty.call(settings, "widgetMoveX")) {
-    merged.widgetMoveX = clampNumber(merged.widgetMoveX, -640, 640, 0);
-  } else {
-    merged.widgetMoveX = -clampNumber(merged.widgetOffsetPx, 0, 480, 0);
-  }
-  merged.widgets = normalizeWidgets(merged.widgets, merged.activeDesign, merged.enabled, merged.widgetMoveX);
+  merged.widgetMoveX = Object.prototype.hasOwnProperty.call(settings || {}, "widgetMoveX")
+    ? clampNumber(merged.widgetMoveX, -640, 640, 0)
+    : -merged.widgetOffsetPx;
+  merged.widgets = normalizeWidgets(
+    merged.widgets,
+    merged.activeDesign,
+    merged.enabled,
+    merged.widgetMoveX,
+  );
   merged.refreshIntervalSecs = clampNumber(merged.refreshIntervalSecs, 1, 3600, 30);
   merged.rotationIntervalSecs = clampNumber(merged.rotationIntervalSecs, 5, 3600, 30);
   return merged;
@@ -122,9 +155,10 @@ function normalizeWidgets(list, activeDesign, legacyEnabled = true, legacyMoveX 
         moveX: widget.design === activeDesign ? clampNumber(legacyMoveX, -640, 640, 0) : 0,
         positionPct: 100,
       }));
+
   const result = [];
   for (const item of source) {
-    const design = designById(item.design || item.designId || item.id).id;
+    const design = widgetById(item.design || item.designId || item.id).id;
     if (result.some((widget) => widget.design === design)) continue;
     result.push({
       id: item.id || design,
@@ -135,51 +169,69 @@ function normalizeWidgets(list, activeDesign, legacyEnabled = true, legacyMoveX 
       order: clampNumber(item.order ?? result.length, 0, 1000, result.length),
     });
   }
+
   for (const widget of defaultWidgets) {
     if (!result.some((item) => item.design === widget.design)) {
       result.push({ ...widget, enabled: false, moveX: 0, positionPct: 100, order: result.length });
     }
   }
+
   return result
     .sort((left, right) => left.order - right.order)
     .map((widget, index) => ({ ...widget, order: index }));
 }
 
-function currentWidget() {
-  let widget = state.settings.widgets.find((item) => item.design === state.settings.activeDesign);
+function normalizeRotation(list) {
+  const source = Array.isArray(list) && list.length ? list : defaults.rotationDesigns;
+  const result = [];
+  for (const id of source) {
+    const normalized = widgetById(id).id;
+    if (!result.includes(normalized)) result.push(normalized);
+  }
+  return result.length ? result : ["codex-status"];
+}
+
+function activeWidget() {
+  return widgetState(state.settings.activeDesign);
+}
+
+function widgetState(id) {
+  const design = widgetById(id).id;
+  let widget = state.settings.widgets.find((item) => item.design === design);
   if (!widget) {
-    widget = { id: state.settings.activeDesign, design: state.settings.activeDesign, enabled: false, moveX: 0, positionPct: 100, order: state.settings.widgets.length };
+    widget = {
+      id: design,
+      design,
+      enabled: false,
+      moveX: 0,
+      positionPct: 100,
+      order: state.settings.widgets.length,
+    };
     state.settings.widgets.push(widget);
   }
   return widget;
 }
 
-function normalizeRotation(list) {
-  const result = [];
-  const source = Array.isArray(list) && list.length ? list : defaults.rotationDesigns;
-  for (const id of source) {
-    const normalized = designById(id).id;
-    if (!result.includes(normalized)) result.push(normalized);
-  }
-  return result.length ? result : ["codex-status"];
+function enabledWidgets() {
+  return state.settings.widgets
+    .filter((widget) => widget.enabled)
+    .sort((left, right) => left.order - right.order)
+    .map((widget) => widget.design);
+}
+
+function currentPreviewDesign() {
+  const rotationQueue = state.settings.rotationEnabled
+    ? state.settings.rotationDesigns.filter((id) => state.settings.widgets.some((widget) => widget.design === id && widget.enabled))
+    : [];
+  const queue = rotationQueue.length ? rotationQueue : enabledWidgets();
+  if (!queue.length) return state.settings.activeDesign;
+  return queue[state.previewIndex % queue.length];
 }
 
 function clampNumber(value, min, max, fallback) {
   const number = Number.parseInt(value, 10);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, number));
-}
-
-function setDirty(dirty = true) {
-  state.dirty = dirty;
-  document.getElementById("save-state").textContent = dirty ? "Unsaved" : "Saved";
-  document.getElementById("save-state").classList.toggle("dirty", dirty);
-}
-
-function setStatus(message) {
-  state.status = message || "";
-  const status = document.getElementById("inline-status");
-  if (status) status.textContent = state.status;
 }
 
 async function boot() {
@@ -193,440 +245,688 @@ async function boot() {
     state.status = `Load failed: ${error}`;
   }
   render();
+  loadReleaseTimeline();
+  startPreviewLoop();
 }
 
 function render() {
   renderNavigation();
-  renderWidgetList();
   renderPage();
-  setDirty(state.dirty);
+  renderFloatingTaskbar();
+  renderWidgetModal();
 }
 
 function renderNavigation() {
-  document.querySelectorAll(".nav-item").forEach((button) => {
+  document.querySelectorAll(".nav-item[data-page]").forEach((button) => {
     button.classList.toggle("active", button.dataset.page === state.page);
     button.onclick = () => {
       state.page = button.dataset.page;
+      state.status = "";
       render();
+      if (state.page === "updates" && !state.releaseTimeline.length) {
+        loadReleaseTimeline();
+      }
     };
   });
 }
 
-function renderWidgetList() {
-  const list = document.getElementById("widget-list");
-  list.innerHTML = "";
-  for (const design of designs) {
-    const button = document.createElement("button");
-    button.className = `widget-card ${design.id === state.settings.activeDesign ? "active" : ""}`;
-    button.innerHTML = `
-      <span class="dot ${design.accentClass}"></span>
-      <span>
-        <strong>${escapeHtml(design.title)}</strong>
-        <small>${currentWidgetState(design.id)} - ${escapeHtml(design.subtitle)}</small>
-      </span>
-    `;
-    button.onclick = () => {
-      state.page = "library";
-      state.settings.activeDesign = design.id;
-      setDirty(true);
-      render();
-    };
-    list.appendChild(button);
-  }
-}
-
-function currentWidgetState(designId) {
-  const widget = state.settings.widgets.find((item) => item.design === designId);
-  return widget?.enabled ? "On" : "Off";
-}
-
 function renderPage() {
-  const active = designById(state.settings.activeDesign);
-  const title = document.getElementById("page-title");
-  const eyebrow = document.getElementById("eyebrow");
   const page = document.getElementById("page");
-  eyebrow.textContent = pageLabel();
-
   if (state.page === "rotation") {
-    title.textContent = "Slider Rotation";
-    page.innerHTML = rotationTemplate();
-    bindRotation();
-    return;
+    page.innerHTML = rotationPage();
+    bindRotationPage();
+  } else if (state.page === "updates") {
+    page.innerHTML = updatesPage();
+    bindUpdatesPage();
+  } else if (state.page === "settings") {
+    page.innerHTML = settingsPage();
+    bindSettingsPage();
+  } else {
+    page.innerHTML = libraryPage();
+    bindLibraryPage();
   }
-
-  if (state.page === "updates") {
-    title.textContent = "Updates";
-    page.innerHTML = updatesTemplate();
-    bindUpdates();
-    return;
-  }
-
-  title.textContent = active.title;
-  page.innerHTML = libraryTemplate(active);
-  bindLibrary(active);
 }
 
-function pageLabel() {
-  if (state.page === "rotation") return "Slider Rotation";
-  if (state.page === "updates") return "Release Management";
-  return "Widget Settings";
-}
-
-function libraryTemplate(design) {
-  const widget = currentWidget();
+function pageHeader(pageId = state.page) {
+  const meta = pageMeta[pageId];
   return `
-    <div class="grid">
-      <div class="stack">
-        <section class="panel preview">
-          <div class="taskbar-strip">${previewMarkup(design.id)}</div>
-        </section>
-        <section class="panel">
-          <h3>${escapeHtml(design.title)}</h3>
-          <p>${escapeHtml(design.description)}</p>
-        </section>
+    <header class="page-header">
+      <div>
+        <h2>${escapeHtml(meta.title)}</h2>
+        <p>${escapeHtml(meta.description)}</p>
       </div>
+      <div class="save-pill ${state.dirty ? "dirty" : ""}">
+        <span class="material-symbols-outlined">${state.dirty ? "pending" : "check_circle"}</span>
+        ${state.dirty ? "Unsaved" : "Saved"}
+      </div>
+    </header>
+  `;
+}
 
-      <div class="stack">
-        <section class="panel">
-          <h3>General Settings</h3>
-          ${widgetSwitchField("enabled", "Widget Enabled", "Show this widget on the taskbar", widget.enabled)}
-          ${numberField("refreshIntervalSecs", "Refresh Interval", "Update frequency in seconds", state.settings.refreshIntervalSecs, 1, 3600)}
-          ${widgetRangeField("positionPct", "Move", "0% is taskbar left, 100% is before the system tray", widget.positionPct ?? 100, 0, 100, "%")}
-        </section>
+function libraryPage() {
+  const filtered = widgetCatalog.filter((widget) => {
+    const q = state.search.trim().toLowerCase();
+    if (!q) return true;
+    return [widget.title, widget.category, widget.description].join(" ").toLowerCase().includes(q);
+  });
+  const featured = widgetCatalog.filter((widget) => widget.featured).slice(0, 3);
+  return `
+    ${pageHeader("library")}
+    <section class="library-toolbar">
+      <div class="search-box">
+        <span class="material-symbols-outlined">search</span>
+        <input id="widget-search" value="${escapeAttr(state.search)}" placeholder="Search widgets..." />
+      </div>
+      <div class="filter-pills">
+        ${["All Widgets", "System", "Utility", "Media", "Gaming"].map((item, index) => `
+          <button class="${index === 0 ? "active" : ""}" type="button">${escapeHtml(item)}</button>
+        `).join("")}
+      </div>
+    </section>
 
-        <section class="panel">
-          <h3>${escapeHtml(design.title)} Settings</h3>
-          ${widgetSpecificFields(design.id)}
-        </section>
+    <section class="section-block">
+      <h3>Featured</h3>
+      <div class="featured-row">
+        ${featured.map(featuredWidgetCard).join("")}
+      </div>
+    </section>
 
-        ${actionsTemplate()}
+    <section class="section-block">
+      <h3>All Widgets</h3>
+      <div class="widget-grid">
+        ${filtered.map(widgetGridCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function featuredWidgetCard(widget) {
+  const runtime = widgetRuntime(widget.id);
+  return `
+    <article class="glass-card featured-card inner-glow" style="--accent:${widget.accent}">
+      <div class="featured-head">
+        <div class="widget-title-block">
+          <div class="widget-icon"><span class="material-symbols-outlined filled">${widget.icon}</span></div>
+          <div>
+            <h4>${escapeHtml(widget.title)}</h4>
+            <p>${escapeHtml(widget.category)}</p>
+          </div>
+        </div>
+        ${toggleButton(widget.id)}
+      </div>
+      <div class="widget-live-surface">
+        ${runtime.preview}
+      </div>
+    </article>
+  `;
+}
+
+function widgetGridCard(widget) {
+  const runtime = widgetRuntime(widget.id);
+  const enabled = isWidgetEnabled(widget.id);
+  return `
+    <article class="glass-card widget-tile ${enabled ? "enabled" : ""}" data-open-widget="${widget.id}" style="--accent:${widget.accent}">
+      <div class="widget-state-pill ${enabled ? "on" : ""}">
+        <span class="material-symbols-outlined">${enabled ? "check_circle" : "radio_button_unchecked"}</span>
+        ${enabled ? "Active" : "Off"}
+      </div>
+      <button class="tile-preview" data-open-widget="${widget.id}" type="button">
+        ${runtime.preview}
+      </button>
+      <div class="tile-foot">
+        <div>
+          <h4>${escapeHtml(widget.title)}</h4>
+          <p>${escapeHtml(widget.category)}</p>
+        </div>
+        ${toggleButton(widget.id, true)}
+      </div>
+    </article>
+  `;
+}
+
+function toggleButton(id, compact = false) {
+  const enabled = isWidgetEnabled(id);
+  return `
+    <button class="${compact ? "round-action widget-check-action" : "gradient-action"} ${enabled ? "active" : ""}" data-toggle-widget="${id}" type="button" aria-label="${enabled ? "Disable" : "Enable"} ${escapeAttr(widgetById(id).title)}">
+      <span class="material-symbols-outlined">${enabled ? "check" : "add"}</span>
+      ${compact ? "" : `<span>${enabled ? "Added" : "Add"}</span>`}
+    </button>
+  `;
+}
+
+function rotationPage() {
+  const queue = state.settings.rotationDesigns;
+  return `
+    ${pageHeader("rotation")}
+    <section class="rotation-header">
+      <div>
+        <h3>Active Sequence</h3>
+        <p>Choose widgets and arrange the order shown on the taskbar preview.</p>
+      </div>
+      ${settingToggle("rotationEnabled", "Enable Rotation", state.settings.rotationEnabled, "large")}
+    </section>
+
+    <div class="rotation-layout">
+      <section class="sequence-column">
+        <div class="sequence-head">
+          <h3><span class="material-symbols-outlined">view_timeline</span> Active Sequence</h3>
+          <button class="text-action" id="enable-all-rotation" type="button">
+            <span class="material-symbols-outlined">add</span>
+            Add Widgets
+          </button>
+        </div>
+        <div class="sequence-list">
+          ${queue.map((id, index) => sequenceItem(id, index)).join("")}
+          <div class="drop-zone">Drop new widget here</div>
+        </div>
+      </section>
+
+      <section class="preview-column">
+        <div class="sequence-head">
+          <h3><span class="material-symbols-outlined">desktop_windows</span> Live Taskbar Preview</h3>
+          <div class="segmented">
+            <button class="${state.previewMode === "bottom" ? "active" : ""}" data-preview-mode="bottom" type="button">Bottom</button>
+            <button class="${state.previewMode === "rail" ? "active" : ""}" data-preview-mode="rail" type="button">Left Rail</button>
+          </div>
+        </div>
+        <div class="desktop-preview ${state.previewMode === "rail" ? "rail" : ""}">
+          <div class="desktop-glow"></div>
+          ${desktopTaskbarMarkup()}
+        </div>
+        <div class="interval-card glass-panel">
+          <label>Slide Interval</label>
+          <div>
+            <input type="number" min="5" max="3600" data-setting="rotationIntervalSecs" value="${escapeAttr(state.settings.rotationIntervalSecs)}" />
+            <span>sec</span>
+          </div>
+        </div>
+      </section>
+    </div>
+    ${inlineStatus()}
+  `;
+}
+
+function sequenceItem(id, index) {
+  const widget = widgetById(id);
+  const active = index === state.previewIndex % Math.max(1, state.settings.rotationDesigns.length);
+  return `
+    <article class="sequence-item ${active ? "current" : ""}" draggable="true" data-sequence-id="${widget.id}" style="--accent:${widget.accent}">
+      <div class="drag-handle"><span class="material-symbols-outlined">drag_indicator</span></div>
+      <div class="sequence-icon"><span class="material-symbols-outlined">${widget.icon}</span></div>
+      <div class="sequence-copy">
+        <strong>${escapeHtml(widget.title)}</strong>
+        <small>${active ? "Currently Active" : `Queue #${index + 1}`}</small>
+      </div>
+      <div class="sequence-controls">
+        <input type="number" min="5" max="3600" data-setting="rotationIntervalSecs" value="${escapeAttr(state.settings.rotationIntervalSecs)}" />
+        <span>sec</span>
+      </div>
+      <select data-transition="${widget.id}">
+        <option value="fade">Fade</option>
+        <option value="slide_up" selected>Slide Up</option>
+        <option value="slide_left">Slide Left</option>
+      </select>
+      <button class="icon-button" data-move="${widget.id}" data-dir="-1" ${index === 0 ? "disabled" : ""} type="button">
+        <span class="material-symbols-outlined">keyboard_arrow_up</span>
+      </button>
+      <button class="icon-button" data-move="${widget.id}" data-dir="1" ${index === state.settings.rotationDesigns.length - 1 ? "disabled" : ""} type="button">
+        <span class="material-symbols-outlined">keyboard_arrow_down</span>
+      </button>
+      <button class="icon-button danger" data-remove-rotation="${widget.id}" type="button">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </article>
+  `;
+}
+
+function settingsPage() {
+  const active = activeWidget();
+  return `
+    ${pageHeader("settings")}
+    <div class="settings-stack">
+      <section class="glass-panel settings-section">
+        <div class="section-title"><span class="material-symbols-outlined">palette</span><h3>Widget Appearance</h3></div>
+        ${settingToggle("enabled", "Active Widget Enabled", active.enabled, "widget")}
+        ${rangeSetting("positionPct", "Taskbar Position", "0% is taskbar left, 100% is before the system tray", active.positionPct ?? 100, 0, 100, "%", "widget")}
+        ${rangeSetting("moveX", "Move X", "Fine tune horizontal offset in pixels.", active.moveX ?? 0, -640, 640, "px", "widget")}
+        ${numberSetting("refreshIntervalSecs", "Refresh Interval", "Update frequency in seconds.", state.settings.refreshIntervalSecs, 1, 3600)}
+      </section>
+
+      <section class="glass-panel settings-section">
+        <div class="section-title"><span class="material-symbols-outlined">tune</span><h3>Current Widget Settings</h3></div>
+        <div class="segmented wide">
+          ${widgetCatalog.map((widget) => `
+            <button class="${state.settings.activeDesign === widget.id ? "active" : ""}" data-select-widget="${widget.id}" type="button">${escapeHtml(widget.title)}</button>
+          `).join("")}
+        </div>
+        ${currentWidgetSettingsFields()}
+      </section>
+
+      <section class="glass-panel settings-section danger-section">
+        <div class="section-title"><span class="material-symbols-outlined">warning</span><h3>Danger Zone</h3></div>
+        <div class="setting-row">
+          <div><strong>Reset to Saved Settings</strong><p>Discard unsaved local edits and reload the settings file.</p></div>
+          <button class="outline-danger" id="reset-settings" type="button">Reset</button>
+        </div>
+      </section>
+    </div>
+    ${actionFooter()}
+  `;
+}
+
+function currentWidgetSettingsFields() {
+  const id = state.settings.activeDesign;
+  if (id === "weather-static") {
+    return `
+      ${textSetting("weatherCity", "City", "Weather location name.", state.settings.weatherCity, "Istanbul")}
+      ${selectSetting("weatherTempUnit", "Temperature Unit", "Display format.", state.settings.weatherTempUnit, [["C", "Celsius"], ["F", "Fahrenheit"]])}
+    `;
+  }
+  if (id === "discord-voice") {
+    return `
+      ${settingToggle("discordEnabled", "Discord Integration", state.settings.discordEnabled)}
+      ${settingToggle("discordBackgroundEnabled", "Widget Background", state.settings.discordBackgroundEnabled)}
+      ${textSetting("discordClientId", "Client ID", "Discord application client id.", state.settings.discordClientId, "1525972653641433288")}
+      ${textSetting("discordClientSecret", "Client Secret", "Stored in widget-settings.json.", state.settings.discordClientSecret, "client secret", true)}
+      ${textSetting("discordRedirectUri", "Redirect URI", "Must match Discord Developer Portal.", state.settings.discordRedirectUri, "http://127.0.0.1/callback")}
+    `;
+  }
+  if (id === "media-player") {
+    return `
+      ${settingToggle("mediaDarkMode", "Dark Mode", state.settings.mediaDarkMode)}
+      ${mediaDiagnostics()}
+    `;
+  }
+  if (id === "steam-download") {
+    return `
+      <div class="setting-row">
+        <div><strong>Steam Source</strong><p>Reads local Steam manifests and content logs from the installed Steam client.</p></div>
+        <span class="status-chip">Automatic</span>
+      </div>
+    `;
+  }
+  if (id === "weather-static") return "";
+  return `
+    ${textSetting("codexApiEndpoint", "API Endpoint", "Custom API endpoint URL.", state.settings.codexApiEndpoint, "https://api.example.com")}
+    ${textSetting("codexProjectFilter", "Project Filter", "Filter displayed projects by name.", state.settings.codexProjectFilter, "my-project")}
+  `;
+}
+
+function updatesPage() {
+  const update = state.updateStatus || {};
+  const busy = update.state === "checking" || update.state === "downloading";
+  const current = update.currentVersion || "0.1.0";
+  const latest = update.latestVersion || "Not checked";
+  const checked = update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked";
+  const isCurrent = update.state === "current" || (latest !== "Not checked" && latest.replace(/^v/i, "") === current.replace(/\.0$/, ""));
+  return `
+    ${pageHeader("updates")}
+    <div class="updates-status glass-panel">
+      <div class="status-orb ${isCurrent ? "ok" : "pending"}"><span class="material-symbols-outlined filled">${isCurrent ? "check_circle" : "new_releases"}</span></div>
+      <div>
+        <h3>${isCurrent ? "System is up to date" : update.updateAvailable ? "Update available" : "Release status"}</h3>
+        <p>Checked: ${escapeHtml(checked)}</p>
       </div>
     </div>
+
+    <div class="updates-layout">
+      <section class="glass-panel channel-card">
+        <h3>Update Channel</h3>
+        <div class="segmented">
+          <button class="active" type="button">Stable</button>
+          <button disabled type="button">Preview</button>
+          <button disabled type="button">Dev</button>
+        </div>
+        <p>Currently on <strong>Stable</strong> channel. Preview and Dev channels are not available in this build.</p>
+      </section>
+
+      <section class="glass-panel update-card inner-glow">
+        <div>
+          <span class="status-chip">${update.updateAvailable ? "Available" : "Stable"}</span>
+          <h3>${escapeHtml(latest)}</h3>
+          <p>Current: ${escapeHtml(current)}</p>
+        </div>
+        <div class="update-actions">
+          <button class="gradient-action" id="check-updates" ${busy ? "disabled" : ""} type="button">
+            <span class="material-symbols-outlined">${busy ? "hourglass_top" : "sync"}</span>
+            <span>${busy ? "Checking" : "Check Updates"}</span>
+          </button>
+          <button class="secondary-action" id="install-update" ${!update.updateAvailable || busy ? "disabled" : ""} type="button">
+            <span class="material-symbols-outlined">download</span>
+            <span>${update.state === "ready" || update.state === "installing" ? "Open Installer" : "Download & Install"}</span>
+          </button>
+        </div>
+        <p class="${busy ? "pulse" : ""}">${escapeHtml(update.message || "Run a check to refresh update status.")}</p>
+      </section>
+
+      <section class="glass-panel release-timeline">
+        <h3><span class="material-symbols-outlined">history</span> Release Timeline</h3>
+        <div class="timeline-list">
+          ${releaseTimelineMarkup()}
+        </div>
+      </section>
+    </div>
+    ${inlineStatus()}
   `;
 }
 
-function previewMarkup(id) {
-  if (id === "weather-static") {
-    return `<div class="capsule weather-capsule"><span><strong>Ceyhan, Adana</strong><small>23:32 - 12/07</small></span><strong>26 deg</strong></div>`;
+function releaseTimelineMarkup() {
+  if (state.releaseTimelineState === "loading") {
+    return `<div class="timeline-empty pulse">Loading GitHub releases...</div>`;
   }
-  if (id === "discord-voice") {
-    return `<div class="capsule discord-capsule"><span class="avatar"></span><span class="avatar speaking"></span><span class="avatar"></span><span class="avatar"></span></div>`;
-  }
-  if (id === "media-player") {
-    return `<div class="capsule media-capsule"><span class="cover"></span><span><strong>Now Playing</strong><small>System media</small></span><span class="play">></span></div>`;
-  }
-  if (id === "steam-download") {
-    return `<div class="capsule steam-capsule"><span class="cover steam-cover"></span><span><strong>Game Download</strong><small>8dk kaldi</small></span><span class="steam-progress"><strong>42%</strong><i></i></span></div>`;
-  }
-  if (id === "btc-fees") {
-    return `<div class="capsule"><strong>ETH Fees</strong><small>Base 12 gwei - Priority 2</small></div>`;
-  }
-  return `<div class="capsule"><strong>Antigravity</strong><small>Quota and tasks</small></div>`;
+  const items = state.releaseTimeline.length ? state.releaseTimeline : fallbackTimeline();
+  return items.map((release, index) => `
+    <article class="timeline-item ${index === 0 ? "current" : ""}">
+      <div class="timeline-dot"></div>
+      <div class="timeline-head">
+        <h4>${escapeHtml(release.name || release.tagName)} ${index === 0 ? "<span>(Latest)</span>" : ""}</h4>
+        <time>${escapeHtml(formatDate(release.publishedAt || release.createdAt))}</time>
+      </div>
+      <div class="timeline-body">${releaseBodyMarkup(release.body)}</div>
+    </article>
+  `).join("");
 }
 
-function widgetSpecificFields(id) {
-  if (id === "weather-static") {
-    return `
-      ${textField("weatherCity", "City", "Weather location name", state.settings.weatherCity, "Istanbul")}
-      ${selectField("weatherTempUnit", "Temperature Unit", "Display format for temperature", state.settings.weatherTempUnit, [["C", "Celsius"], ["F", "Fahrenheit"]])}
-    `;
-  }
-  if (id === "discord-voice") {
-    return `
-      ${switchField("discordEnabled", "Discord Integration", "Read selected voice channel users from Discord", state.settings.discordEnabled)}
-      ${switchField("discordBackgroundEnabled", "Widget Background", "Show the black capsule behind avatars", state.settings.discordBackgroundEnabled)}
-      ${textField("discordClientId", "Client ID", "Discord application client id", state.settings.discordClientId, "1525972653641433288")}
-      ${textField("discordClientSecret", "Client Secret", "Stored in widget-settings.json", state.settings.discordClientSecret, "client secret", true)}
-      ${textField("discordRedirectUri", "Redirect URI", "Must match Discord Developer Portal", state.settings.discordRedirectUri, "http://127.0.0.1/callback")}
-    `;
-  }
-  if (id === "media-player") {
-    return `
-      ${switchField("mediaDarkMode", "Dark Mode", "Use the modern dark media palette", state.settings.mediaDarkMode)}
-      ${mediaDiagnosticsTemplate()}
-    `;
-  }
-  if (id === "steam-download") {
-    return `
-      <div class="field">
-        <label>Steam Source</label>
-        <small>Reads Steam library manifests and content logs from the local Steam installation.</small>
-      </div>
-    `;
-  }
-  return `
-    ${textField("codexApiEndpoint", "API Endpoint", "Custom API endpoint URL", state.settings.codexApiEndpoint, "https://api.example.com")}
-    ${textField("codexProjectFilter", "Project Filter", "Filter displayed projects by name", state.settings.codexProjectFilter, "my-project")}
-  `;
+function releaseBodyMarkup(body) {
+  const text = String(body || "TaskbarStats release build. Use TaskbarStatsSetup.exe for normal Windows installation/update.").trim();
+  const lines = text.split(/\r?\n/).filter(Boolean).slice(0, 4);
+  return `<p>${escapeHtml(lines.join(" "))}</p>`;
 }
 
-function switchField(key, label, hint, checked) {
+function fallbackTimeline() {
+  const update = state.updateStatus || {};
+  return [
+    {
+      tagName: update.latestVersion || "v0.1.5",
+      name: update.latestVersion || "TaskbarStats v0.1.5",
+      publishedAt: update.updatedAtUnix ? new Date(update.updatedAtUnix * 1000).toISOString() : new Date().toISOString(),
+      body: update.message || "Latest TaskbarStats release metadata will appear here after GitHub is reachable.",
+    },
+  ];
+}
+
+function settingToggle(key, label, checked, mode = "setting") {
   return `
-    <div class="field row">
-      <div>
-        <label>${escapeHtml(label)}</label>
-        <small>${escapeHtml(hint)}</small>
-      </div>
-      <label class="switch">
-        <input type="checkbox" data-setting="${key}" ${checked ? "checked" : ""} />
-        <span></span>
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>${toggleHint(key)}</p></div>
+      <label class="win-toggle">
+        <input type="checkbox" data-${mode === "widget" ? "widget-" : ""}setting="${key}" ${checked ? "checked" : ""} />
+        <span><i></i></span>
       </label>
     </div>
   `;
 }
 
-function widgetSwitchField(key, label, hint, checked) {
+function rangeSetting(key, label, hint, value, min, max, unit = "", mode = "setting") {
   return `
-    <div class="field row">
-      <div>
-        <label>${escapeHtml(label)}</label>
-        <small>${escapeHtml(hint)}</small>
-      </div>
-      <label class="switch">
-        <input type="checkbox" data-widget-setting="${key}" ${checked ? "checked" : ""} />
-        <span></span>
-      </label>
+    <div class="setting-block">
+      <div class="setting-head"><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div><span id="${mode}-${key}-value">${value}${unit}</span></div>
+      <input type="range" min="${min}" max="${max}" step="1" data-${mode === "widget" ? "widget-" : ""}setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" />
     </div>
   `;
 }
 
-function numberField(key, label, hint, value, min, max) {
+function numberSetting(key, label, hint, value, min, max) {
   return `
-    <div class="field">
-      <label>${escapeHtml(label)}</label>
-      <small>${escapeHtml(hint)}</small>
-      <input type="number" min="${min}" max="${max}" data-setting="${key}" value="${escapeAttr(value)}" />
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div>
+      <input class="compact-input" type="number" min="${min}" max="${max}" data-setting="${key}" value="${escapeAttr(value)}" />
     </div>
   `;
 }
 
-function rangeField(key, label, hint, value, min, max, unit = "") {
-  const suffix = unit ? ` ${unit}` : "";
+function textSetting(key, label, hint, value, placeholder, secret = false) {
   return `
-    <div class="field">
-      <div class="row">
-        <div>
-          <label>${escapeHtml(label)}</label>
-          <small>${escapeHtml(hint)}</small>
-        </div>
-        <strong id="${key}-value">${value}${suffix}</strong>
-      </div>
-      <input type="range" min="${min}" max="${max}" step="4" data-setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" />
+    <div class="setting-block">
+      <div class="setting-head"><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div></div>
+      <input class="text-input" type="${secret ? "password" : "text"}" data-setting="${key}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(placeholder)}" />
     </div>
   `;
 }
 
-function widgetRangeField(key, label, hint, value, min, max, unit = "") {
-  const suffix = unit ? ` ${unit}` : "";
+function selectSetting(key, label, hint, value, options) {
   return `
-    <div class="field">
-      <div class="row">
-        <div>
-          <label>${escapeHtml(label)}</label>
-          <small>${escapeHtml(hint)}</small>
-        </div>
-        <strong id="widget-${key}-value">${value}${suffix}</strong>
-      </div>
-      <input type="range" min="${min}" max="${max}" step="4" data-widget-setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" />
-    </div>
-  `;
-}
-
-function textField(key, label, hint, value, placeholder, secret = false) {
-  return `
-    <div class="field">
-      <label>${escapeHtml(label)}</label>
-      <small>${escapeHtml(hint)}</small>
-      <input type="${secret ? "password" : "text"}" data-setting="${key}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(placeholder)}" />
-    </div>
-  `;
-}
-
-function selectField(key, label, hint, value, options) {
-  return `
-    <div class="field">
-      <label>${escapeHtml(label)}</label>
-      <small>${escapeHtml(hint)}</small>
-      <select data-setting="${key}">
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div>
+      <select class="compact-input" data-setting="${key}">
         ${options.map(([id, text]) => `<option value="${escapeAttr(id)}" ${id === value ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}
       </select>
     </div>
   `;
 }
 
-function actionsTemplate() {
+function toggleHint(key) {
+  const hints = {
+    enabled: "Show the active widget on the taskbar.",
+    rotationEnabled: "Cycle through selected widgets in the configured order.",
+    discordEnabled: "Read selected voice channel users from Discord.",
+    discordBackgroundEnabled: "Show the black capsule behind Discord avatars.",
+    mediaDarkMode: "Use the modern dark media palette.",
+  };
+  return hints[key] || "";
+}
+
+function mediaDiagnostics() {
+  const media = state.mediaStatus || {};
   return `
-    <section class="actions">
-      <button class="btn primary" id="save">Save Changes</button>
-      <button class="btn" id="reset">Reset</button>
-      <button class="btn" id="packs">Design Packs</button>
-    </section>
-    <p id="inline-status">${escapeHtml(state.status)}</p>
+    <div class="diagnostics-card">
+      ${statusRow("Active", formatBool(media.active))}
+      ${statusRow("Playing", formatBool(media.playing))}
+      ${statusRow("Metadata source", media.metadataSource || "Not available")}
+      ${statusRow("Source app", media.sourceApp || "Not available")}
+      ${media.error ? statusRow("Error", media.error) : ""}
+    </div>
   `;
 }
 
-function bindLibrary() {
-  bindSettingInputs();
-  bindDiagnostics();
-  bindActions();
-}
-
-function bindDiagnostics() {
-  const refresh = document.getElementById("refresh-media-diagnostics");
-  if (!refresh) return;
-  refresh.onclick = async () => {
-    try {
-      const loaded = await invoke("load_state");
-      state.mediaStatus = loaded.mediaStatus || {};
-      setStatus("Runtime diagnostics refreshed");
-      render();
-    } catch (error) {
-      setStatus(`Refresh failed: ${error}`);
-    }
-  };
-}
-
-function bindSettingInputs() {
-  document.querySelectorAll("[data-setting]").forEach((input) => {
-    input.addEventListener("input", () => {
-      const key = input.dataset.setting;
-      if (input.type === "checkbox") {
-        state.settings[key] = input.checked;
-      } else if (input.type === "number" || input.type === "range") {
-        state.settings[key] = clampNumber(input.value, Number(input.min || 0), Number(input.max || 3600), defaults[key] || 0);
-        if (input.type === "range") {
-          const value = document.getElementById(`${key}-value`);
-          const unit = input.dataset.unit ? ` ${input.dataset.unit}` : "";
-          if (value) value.textContent = `${state.settings[key]}${unit}`;
-        }
-      } else {
-        state.settings[key] = input.value;
-      }
-      setDirty(true);
-      setStatus("");
-    });
-  });
-  document.querySelectorAll("[data-widget-setting]").forEach((input) => {
-    input.addEventListener("input", () => {
-      const widget = currentWidget();
-      const key = input.dataset.widgetSetting;
-      if (input.type === "checkbox") {
-        widget[key] = input.checked;
-      } else if (input.type === "number" || input.type === "range") {
-        widget[key] = clampNumber(input.value, Number(input.min || -640), Number(input.max || 640), widget[key] || 0);
-        if (input.type === "range") {
-          const value = document.getElementById(`widget-${key}-value`);
-          const unit = input.dataset.unit ? ` ${input.dataset.unit}` : "";
-          if (value) value.textContent = `${widget[key]}${unit}`;
-        }
-      } else {
-        widget[key] = input.value;
-      }
-      setDirty(true);
-      setStatus("");
-      renderWidgetList();
-      scheduleAutosave();
-    });
-  });
-}
-
-function scheduleAutosave() {
-  clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(async () => {
-    await saveSettings("Applied");
-  }, 350);
-}
-
-function bindActions() {
-  const save = document.getElementById("save");
-  if (save) save.onclick = () => saveSettings();
-  const reset = document.getElementById("reset");
-  if (reset) reset.onclick = async () => {
-    const loaded = await invoke("load_state");
-    state.settings = mergeSettings(loaded.settings || {});
-    state.updateStatus = loaded.updateStatus || {};
-    state.mediaStatus = loaded.mediaStatus || {};
-    setDirty(false);
-    setStatus("Settings reset");
-    render();
-  };
-  const packs = document.getElementById("packs");
-  if (packs) packs.onclick = async () => {
-    try {
-      await invoke("open_widget_libraries");
-      setStatus("WidgetLibraries opened");
-    } catch (error) {
-      setStatus(`Open failed: ${error}`);
-    }
-  };
-}
-
-async function saveSettings(successMessage = "Settings saved") {
-  try {
-    state.settings.rotationDesigns = normalizeRotation(state.settings.rotationDesigns);
-    state.settings.widgets = normalizeWidgets(state.settings.widgets, state.settings.activeDesign, state.settings.enabled, state.settings.widgetMoveX);
-    const widget = currentWidget();
-    state.settings.enabled = widget.enabled;
-    state.settings.widgetMoveX = widget.moveX;
-    state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
-    await invoke("save_settings", { settings: state.settings });
-    setDirty(false);
-    setStatus(successMessage);
-  } catch (error) {
-    setStatus(`Save failed: ${error}`);
-  }
-}
-
-function rotationTemplate() {
+function actionFooter() {
   return `
-    <div class="grid">
-      <section class="panel">
-        <h3>Rotation Controls</h3>
-        ${switchField("rotationEnabled", "Auto Rotate Widgets", "Cycle through selected widgets in order", state.settings.rotationEnabled)}
-        ${numberField("rotationIntervalSecs", "Slide Interval", "Seconds before switching to the next widget", state.settings.rotationIntervalSecs, 5, 3600)}
-      </section>
-      <section class="panel">
-        <h3>Rotation Queue</h3>
-        <p>Choose widgets and arrange the exact sequence.</p>
-        <div class="queue">
-          ${designs.map(queueItemTemplate).join("")}
+    <footer class="action-footer">
+      <button class="gradient-action" id="save-settings" type="button"><span class="material-symbols-outlined">save</span><span>Save Changes</span></button>
+      <button class="secondary-action" id="open-packs" type="button"><span class="material-symbols-outlined">folder_open</span><span>Design Packs</span></button>
+      ${inlineStatus()}
+    </footer>
+  `;
+}
+
+function inlineStatus() {
+  return `<p id="inline-status" class="inline-status">${escapeHtml(state.status)}</p>`;
+}
+
+function desktopTaskbarMarkup() {
+  const widget = widgetById(currentPreviewDesign());
+  return `
+    <div class="desktop-taskbar ${state.previewMode === "rail" ? "rail" : ""}">
+      <div class="taskbar-left">
+        <span class="material-symbols-outlined">grid_view</span>
+        <span class="material-symbols-outlined">folder</span>
+        <span class="material-symbols-outlined">language</span>
+      </div>
+      <div class="rotating-widget" style="--accent:${widget.accent}">
+        ${taskbarWidgetCapsule(widget.id)}
+      </div>
+      <div class="tray">
+        <span class="material-symbols-outlined">expand_less</span>
+        <span class="material-symbols-outlined">wifi</span>
+        <span class="material-symbols-outlined">volume_up</span>
+        <time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+      </div>
+    </div>
+  `;
+}
+
+function renderFloatingTaskbar() {
+  const preview = document.getElementById("taskbar-preview");
+  preview.innerHTML = `
+    <div class="floating-left"><span class="material-symbols-outlined">window</span></div>
+    <div class="floating-widgets">
+      ${enabledWidgets().slice(0, 3).map((id) => `
+        <div class="floating-slot" style="--accent:${widgetById(id).accent}">
+          ${taskbarWidgetCapsule(id)}
         </div>
-      </section>
+      `).join("")}
+      <div class="empty-slot"><span class="material-symbols-outlined">add</span></div>
     </div>
-    ${actionsTemplate()}
+    <div class="floating-tray">
+      <span class="material-symbols-outlined">wifi</span>
+      <span class="material-symbols-outlined">volume_up</span>
+      <time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+    </div>
   `;
 }
 
-function queueItemTemplate(design) {
-  const index = state.settings.rotationDesigns.indexOf(design.id);
-  const enabled = index >= 0;
+function taskbarWidgetCapsule(id) {
+  const widget = widgetRuntime(id);
+  return `<div class="taskbar-capsule ${id}">${widget.taskbar}</div>`;
+}
+
+function renderWidgetModal() {
+  let modal = document.getElementById("widget-modal-root");
+  if (!state.modalWidgetId) {
+    modal?.remove();
+    return;
+  }
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "widget-modal-root";
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = widgetSettingsModal(state.modalWidgetId);
+  bindWidgetModal();
+}
+
+function widgetSettingsModal(id) {
+  const catalog = widgetById(id);
+  const widget = widgetState(id);
+  const wasActive = state.settings.activeDesign;
+  state.settings.activeDesign = catalog.id;
+  const fields = currentWidgetSettingsFields();
+  state.settings.activeDesign = wasActive;
   return `
-    <div class="queue-item">
-      <input type="checkbox" data-queue="${design.id}" ${enabled ? "checked" : ""} />
-      <div class="queue-title">
-        <strong>${escapeHtml(design.title)}</strong>
-        <small>${enabled ? `#${index + 1}` : "Off"} - ${escapeHtml(design.subtitle)}</small>
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="widget-modal glass-panel" style="--accent:${catalog.accent}" role="dialog" aria-modal="true" aria-label="${escapeAttr(catalog.title)} settings">
+      <header class="modal-head">
+        <div class="widget-title-block">
+          <div class="widget-icon"><span class="material-symbols-outlined filled">${catalog.icon}</span></div>
+          <div>
+            <h3>${escapeHtml(catalog.title)}</h3>
+            <p>${escapeHtml(catalog.category)} widget settings</p>
+          </div>
+        </div>
+        <button class="icon-button" data-close-modal type="button" aria-label="Close">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </header>
+
+      <div class="modal-preview">
+        ${widgetRuntime(catalog.id).preview}
       </div>
-      <div class="mini-actions">
-        <button data-move="${design.id}" data-dir="-1" ${!enabled || index === 0 ? "disabled" : ""}>Up</button>
-        <button data-move="${design.id}" data-dir="1" ${!enabled || index === state.settings.rotationDesigns.length - 1 ? "disabled" : ""}>Dn</button>
+
+      <div class="modal-settings">
+        ${settingToggle("enabled", "Enable Widget", widget.enabled, "widget")}
+        ${rangeSetting("positionPct", "Taskbar Position", "0% is taskbar left, 100% is before the system tray", widget.positionPct ?? 100, 0, 100, "%", "widget")}
+        ${rangeSetting("moveX", "Move X", "Fine tune horizontal offset in pixels.", widget.moveX ?? 0, -640, 640, "px", "widget")}
+        ${fields}
       </div>
-    </div>
+
+      <footer class="modal-actions">
+        <button class="secondary-action" data-open-full-settings="${catalog.id}" type="button">
+          <span class="material-symbols-outlined">tune</span>
+          <span>Full Settings</span>
+        </button>
+        <button class="gradient-action" id="save-widget-modal" type="button">
+          <span class="material-symbols-outlined">save</span>
+          <span>Save</span>
+        </button>
+      </footer>
+    </section>
   `;
 }
 
-function bindRotation() {
-  bindSettingInputs();
-  document.querySelectorAll("[data-queue]").forEach((checkbox) => {
-    checkbox.onchange = () => {
-      const id = checkbox.dataset.queue;
-      if (checkbox.checked) {
-        if (!state.settings.rotationDesigns.includes(id)) state.settings.rotationDesigns.push(id);
-      } else {
-        state.settings.rotationDesigns = state.settings.rotationDesigns.filter((item) => item !== id);
-        if (!state.settings.rotationDesigns.length) state.settings.rotationDesigns = [id];
-      }
+function widgetRuntime(id) {
+  if (id === "weather-static") {
+    return {
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule weather-static"><span class="material-symbols-outlined filled">light_mode</span><div><strong>26 deg</strong><small>${escapeHtml(state.settings.weatherCity || "Istanbul")}</small></div></div></div>`,
+      taskbar: `<span class="material-symbols-outlined filled">light_mode</span><strong>26 deg</strong>`,
+    };
+  }
+  if (id === "discord-voice") {
+    return {
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule discord-voice"><span class="avatar-mini"></span><span class="avatar-mini speaking"></span><span class="avatar-mini"></span><span class="avatar-mini"></span></div></div>`,
+      taskbar: `<span class="avatar-mini"></span><span class="avatar-mini speaking"></span><span class="avatar-mini"></span>`,
+    };
+  }
+  if (id === "media-player") {
+    return {
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule media-player"><span class="album-dot"></span><div><strong>Now Playing</strong><small>System media</small></div><span class="material-symbols-outlined filled">play_arrow</span></div></div>`,
+      taskbar: `<span class="album-dot"></span><div><strong>Now Playing</strong><small>Media</small></div>`,
+    };
+  }
+  if (id === "steam-download") {
+    return {
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule steam-download"><span class="steam-art mini"></span><div><strong>Steam Download</strong><small>8 min left</small></div><b>42%</b></div></div>`,
+      taskbar: `<span class="steam-art mini"></span><div><strong>42%</strong><small>8 min left</small></div>`,
+    };
+  }
+  if (id === "btc-fees") {
+    return {
+      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule btc-fees"><span class="material-symbols-outlined">currency_bitcoin</span><div><strong>ETH Fees</strong><small>Base 12 gwei</small></div></div></div>`,
+      taskbar: `<span class="material-symbols-outlined">currency_bitcoin</span><strong>12 gwei</strong>`,
+    };
+  }
+  return {
+    preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule codex-status"><span class="material-symbols-outlined">terminal</span><div><strong>Antigravity</strong><small>Quota 74%</small></div></div></div>`,
+    taskbar: `<span class="material-symbols-outlined">terminal</span><div><strong>74%</strong><small>Quota</small></div>`,
+  };
+}
+
+function statusRow(label, value) {
+  return `<div class="status-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function bindLibraryPage() {
+  document.getElementById("widget-search")?.addEventListener("input", (event) => {
+    state.search = event.target.value;
+    render();
+  });
+  bindWidgetButtons();
+}
+
+function bindWidgetButtons() {
+  document.querySelectorAll("[data-toggle-widget]").forEach((button) => {
+    button.onclick = (event) => {
+      event.stopPropagation();
+      const id = button.dataset.toggleWidget;
+      const widget = widgetState(id);
+      widget.enabled = !widget.enabled;
+      state.settings.activeDesign = id;
       setDirty(true);
+      scheduleAutosave();
+      render();
+    };
+  });
+  document.querySelectorAll("[data-open-widget]").forEach((element) => {
+    element.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWidgetModal(element.dataset.openWidget);
+    };
+  });
+  document.querySelectorAll("[data-select-widget]").forEach((button) => {
+    button.onclick = () => {
+      state.settings.activeDesign = button.dataset.selectWidget;
+      state.page = "settings";
+      render();
+    };
+  });
+}
+
+function bindRotationPage() {
+  bindInputs();
+  bindSequenceDragAndDrop();
+  document.querySelectorAll("[data-preview-mode]").forEach((button) => {
+    button.onclick = () => {
+      state.previewMode = button.dataset.previewMode;
       render();
     };
   });
@@ -637,79 +937,133 @@ function bindRotation() {
       const index = state.settings.rotationDesigns.indexOf(id);
       const next = index + dir;
       if (index >= 0 && next >= 0 && next < state.settings.rotationDesigns.length) {
-        [state.settings.rotationDesigns[index], state.settings.rotationDesigns[next]] = [state.settings.rotationDesigns[next], state.settings.rotationDesigns[index]];
+        [state.settings.rotationDesigns[index], state.settings.rotationDesigns[next]] =
+          [state.settings.rotationDesigns[next], state.settings.rotationDesigns[index]];
         setDirty(true);
+        scheduleAutosave();
         render();
       }
     };
   });
-  bindActions();
+  document.querySelectorAll("[data-remove-rotation]").forEach((button) => {
+    button.onclick = () => {
+      const id = button.dataset.removeRotation;
+      state.settings.rotationDesigns = state.settings.rotationDesigns.filter((item) => item !== id);
+      if (!state.settings.rotationDesigns.length) state.settings.rotationDesigns = [id];
+      setDirty(true);
+      scheduleAutosave();
+      render();
+    };
+  });
+  document.getElementById("enable-all-rotation")?.addEventListener("click", () => {
+    state.settings.rotationDesigns = widgetCatalog.map((item) => item.id);
+    setDirty(true);
+    scheduleAutosave();
+    render();
+  });
 }
 
-function updatesTemplate() {
-  const update = state.updateStatus || {};
-  const busy = update.state === "checking" || update.state === "downloading";
-  const checking = update.state === "checking";
-  const installLabel = update.state === "ready" || update.state === "installing" ? "Open Installer" : "Install Update";
-  return `
-    <div class="grid">
-      <section class="panel">
-        <h3>Release Status</h3>
-        <div class="status-table">
-          ${statusRow("Current version", update.currentVersion || "0.1.0")}
-          ${statusRow("Latest release", update.latestVersion || "Not checked")}
-          ${statusRow("State", update.state || "idle")}
-          ${statusRow("Updated", update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked")}
-        </div>
-        <p class="${busy ? "pulse" : ""}">${escapeHtml(update.message || "Run a check to refresh update status.")}</p>
-      </section>
-      <section class="panel">
-        <h3>Actions</h3>
-        <div class="actions">
-          <button class="btn primary" id="check-updates" ${busy ? "disabled" : ""}>${checking ? "Checking..." : "Check Updates"}</button>
-          <button class="btn ${update.updateAvailable ? "success" : ""}" id="install-update" ${!update.updateAvailable || busy ? "disabled" : ""}>${installLabel}</button>
-        </div>
-        <p id="inline-status">${escapeHtml(state.status)}</p>
-      </section>
-    </div>
-  `;
+function bindSequenceDragAndDrop() {
+  document.querySelectorAll("[data-sequence-id]").forEach((item) => {
+    item.addEventListener("dragstart", (event) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", item.dataset.sequenceId);
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      document.querySelectorAll(".sequence-item.drag-over").forEach((node) => node.classList.remove("drag-over"));
+    });
+    item.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      item.classList.add("drag-over");
+    });
+    item.addEventListener("dragleave", () => {
+      item.classList.remove("drag-over");
+    });
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const fromId = event.dataTransfer.getData("text/plain");
+      const toId = item.dataset.sequenceId;
+      item.classList.remove("drag-over");
+      reorderRotation(fromId, toId);
+    });
+  });
 }
 
-function mediaDiagnosticsTemplate() {
-  const media = state.mediaStatus || {};
-  return `
-    <div class="diagnostics">
-      <div class="row diagnostics-head">
-        <h4>Runtime Diagnostics</h4>
-        <button class="mini-btn" id="refresh-media-diagnostics">Refresh</button>
-      </div>
-      <div class="status-table compact">
-        ${statusRow("Active", formatBool(media.active))}
-        ${statusRow("Playing", formatBool(media.playing))}
-        ${statusRow("Metadata source", media.metadataSource || "Not available")}
-        ${statusRow("Sessions", media.sessionCount ?? "0")}
-        ${statusRow("Source app", media.sourceApp || "Not available")}
-        ${statusRow("Title", media.title || "Not available")}
-        ${statusRow("Artist", media.artist || "Not available")}
-        ${statusRow("Updated", media.updatedAtUnix ? formatUnixTime(media.updatedAtUnix) : "Not available")}
-        ${media.error ? statusRow("Error", media.error) : ""}
-      </div>
-    </div>
-  `;
+function reorderRotation(fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return;
+  const queue = [...state.settings.rotationDesigns];
+  const fromIndex = queue.indexOf(fromId);
+  const toIndex = queue.indexOf(toId);
+  if (fromIndex < 0 || toIndex < 0) return;
+  const [moved] = queue.splice(fromIndex, 1);
+  queue.splice(toIndex, 0, moved);
+  state.settings.rotationDesigns = queue;
+  setDirty(true);
+  scheduleAutosave();
+  render();
 }
 
-function formatBool(value) {
-  if (value === true) return "Yes";
-  if (value === false) return "No";
-  return "Unknown";
+function openWidgetModal(id) {
+  state.modalWidgetId = widgetById(id).id;
+  state.settings.activeDesign = state.modalWidgetId;
+  render();
 }
 
-function statusRow(label, value) {
-  return `<div class="status-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+function closeWidgetModal() {
+  state.modalWidgetId = "";
+  renderWidgetModal();
 }
 
-function bindUpdates() {
-  document.getElementById("check-updates").onclick = async () => {
+function bindWidgetModal() {
+  bindInputs();
+  document.querySelectorAll("[data-close-modal]").forEach((button) => {
+    button.onclick = () => closeWidgetModal();
+  });
+  document.querySelector("[data-open-full-settings]")?.addEventListener("click", (event) => {
+    state.settings.activeDesign = event.currentTarget.dataset.openFullSettings;
+    state.modalWidgetId = "";
+    state.page = "settings";
+    render();
+  });
+  document.getElementById("save-widget-modal")?.addEventListener("click", async () => {
+    await saveSettings();
+    closeWidgetModal();
+    render();
+  });
+}
+
+function bindSettingsPage() {
+  bindInputs();
+  bindWidgetButtons();
+  document.getElementById("save-settings")?.addEventListener("click", () => saveSettings());
+  document.getElementById("open-packs")?.addEventListener("click", async () => {
+    try {
+      await invoke("open_widget_libraries");
+      setStatus("WidgetLibraries opened");
+    } catch (error) {
+      setStatus(`Open failed: ${error}`);
+    }
+  });
+  document.getElementById("reset-settings")?.addEventListener("click", async () => {
+    try {
+      const loaded = await invoke("load_state");
+      state.settings = mergeSettings(loaded.settings || {});
+      state.updateStatus = loaded.updateStatus || {};
+      state.mediaStatus = loaded.mediaStatus || {};
+      setDirty(false);
+      setStatus("Settings reloaded");
+      render();
+    } catch (error) {
+      setStatus(`Reset failed: ${error}`);
+    }
+  });
+}
+
+function bindUpdatesPage() {
+  document.getElementById("check-updates")?.addEventListener("click", async () => {
     try {
       setStatus("Checking for updates...");
       state.updateStatus = { ...state.updateStatus, state: "checking", message: "Checking GitHub latest release..." };
@@ -718,12 +1072,13 @@ function bindUpdates() {
       state.updateStatus = loaded.updateStatus || {};
       setStatus(state.updateStatus.message || "Update check finished");
       render();
+      loadReleaseTimeline(true);
     } catch (error) {
       setStatus(`Update check failed: ${error}`);
       await refreshState();
     }
-  };
-  document.getElementById("install-update").onclick = async () => {
+  });
+  document.getElementById("install-update")?.addEventListener("click", async () => {
     try {
       setStatus("Downloading update...");
       state.updateStatus = { ...state.updateStatus, state: "downloading", message: "Downloading update..." };
@@ -738,13 +1093,77 @@ function bindUpdates() {
       setStatus(`Update install failed: ${error}`);
       await refreshState();
     }
-  };
+  });
 }
 
-function formatUnixTime(value) {
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds <= 0) return "Not checked";
-  return new Date(seconds * 1000).toLocaleString();
+function bindInputs() {
+  document.querySelectorAll("[data-setting]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const key = input.dataset.setting;
+      if (input.type === "checkbox") {
+        state.settings[key] = input.checked;
+      } else if (input.type === "number" || input.type === "range") {
+        state.settings[key] = clampNumber(input.value, Number(input.min || 0), Number(input.max || 3600), defaults[key] || 0);
+        updateValueLabel("setting", key, state.settings[key], input.dataset.unit || "");
+      } else {
+        state.settings[key] = input.value;
+      }
+      setDirty(true);
+      scheduleAutosave();
+      renderFloatingTaskbar();
+    });
+  });
+  document.querySelectorAll("[data-widget-setting]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const widget = activeWidget();
+      const key = input.dataset.widgetSetting;
+      if (input.type === "checkbox") {
+        widget[key] = input.checked;
+      } else if (input.type === "number" || input.type === "range") {
+        widget[key] = clampNumber(input.value, Number(input.min || -640), Number(input.max || 640), widget[key] || 0);
+        updateValueLabel("widget", key, widget[key], input.dataset.unit || "");
+      } else {
+        widget[key] = input.value;
+      }
+      state.settings.enabled = widget.enabled;
+      state.settings.widgetMoveX = widget.moveX;
+      state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
+      setDirty(true);
+      scheduleAutosave();
+      renderFloatingTaskbar();
+    });
+  });
+}
+
+function updateValueLabel(prefix, key, value, unit) {
+  const label = document.getElementById(`${prefix}-${key}-value`);
+  if (label) label.textContent = `${value}${unit}`;
+}
+
+function scheduleAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => saveSettings("Applied"), 450);
+}
+
+async function saveSettings(successMessage = "Settings saved") {
+  try {
+    state.settings.rotationDesigns = normalizeRotation(state.settings.rotationDesigns);
+    state.settings.widgets = normalizeWidgets(
+      state.settings.widgets,
+      state.settings.activeDesign,
+      state.settings.enabled,
+      state.settings.widgetMoveX,
+    );
+    const widget = activeWidget();
+    state.settings.enabled = widget.enabled;
+    state.settings.widgetMoveX = widget.moveX;
+    state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
+    await invoke("save_settings", { settings: state.settings });
+    setDirty(false);
+    setStatus(successMessage);
+  } catch (error) {
+    setStatus(`Save failed: ${error}`);
+  }
 }
 
 async function refreshState() {
@@ -754,8 +1173,81 @@ async function refreshState() {
     state.mediaStatus = loaded.mediaStatus || {};
     render();
   } catch {
-    // Keep the visible status from the attempted action.
+    render();
   }
+}
+
+async function loadReleaseTimeline(force = false) {
+  if (state.releaseTimelineState === "loading") return;
+  if (state.releaseTimeline.length && !force) return;
+  state.releaseTimelineState = "loading";
+  if (state.page === "updates") render();
+  try {
+    const response = await fetch("https://api.github.com/repos/pfcdev/TaskWidgets/releases?per_page=6", {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const releases = await response.json();
+    state.releaseTimeline = releases.map((release) => ({
+      tagName: release.tag_name,
+      name: release.name || release.tag_name,
+      body: release.body || "",
+      publishedAt: release.published_at,
+      createdAt: release.created_at,
+    }));
+    state.releaseTimelineState = "ready";
+  } catch (error) {
+    state.releaseTimelineState = "error";
+  }
+  if (state.page === "updates") render();
+}
+
+function startPreviewLoop() {
+  clearInterval(previewTimer);
+  previewTimer = setInterval(() => {
+    const queue = state.settings.rotationEnabled ? state.settings.rotationDesigns : enabledWidgets();
+    if (!queue.length) return;
+    state.previewIndex = (state.previewIndex + 1) % queue.length;
+    if (state.page === "rotation") renderPage();
+    renderFloatingTaskbar();
+  }, Math.max(5, state.settings.rotationIntervalSecs || 30) * 1000);
+}
+
+function setDirty(value) {
+  state.dirty = value;
+  renderNavigation();
+  const pill = document.querySelector(".save-pill");
+  if (pill) {
+    pill.classList.toggle("dirty", value);
+    pill.innerHTML = `<span class="material-symbols-outlined">${value ? "pending" : "check_circle"}</span>${value ? "Unsaved" : "Saved"}`;
+  }
+}
+
+function setStatus(message) {
+  state.status = message || "";
+  const status = document.getElementById("inline-status");
+  if (status) status.textContent = state.status;
+}
+
+function isWidgetEnabled(id) {
+  return Boolean(state.settings.widgets.find((widget) => widget.design === id)?.enabled);
+}
+
+function formatBool(value) {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return "Unknown";
+}
+
+function formatUnixTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "Not checked";
+  return new Date(seconds * 1000).toLocaleString();
+}
+
+function formatDate(value) {
+  if (!value) return "Unknown";
+  return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
 }
 
 function escapeHtml(value) {

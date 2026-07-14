@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>WidgetHub - Widget Library</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-background": "#e2e2e9",
+                      "inverse-surface": "#e2e2e9",
+                      "inverse-on-surface": "#2e3036",
+                      "surface-container-highest": "#33353a",
+                      "on-tertiary-fixed": "#181c25",
+                      "on-surface": "#e2e2e9",
+                      "inverse-primary": "#613de0",
+                      "surface-container": "#1e1f25",
+                      "tertiary": "#c3c6d3",
+                      "primary-fixed": "#e6deff",
+                      "primary-fixed-dim": "#cabeff",
+                      "on-secondary-fixed-variant": "#004d63",
+                      "outline-variant": "#484555",
+                      "on-secondary-fixed": "#001f29",
+                      "on-secondary": "#003545",
+                      "tertiary-fixed": "#dfe2ef",
+                      "on-tertiary-fixed-variant": "#434751",
+                      "on-surface-variant": "#c9c4d8",
+                      "on-primary-fixed": "#1c0062",
+                      "secondary-fixed-dim": "#5fd4ff",
+                      "secondary-fixed": "#bbe9ff",
+                      "surface-container-lowest": "#0c0e13",
+                      "surface-container-low": "#1a1b21",
+                      "primary": "#cabeff",
+                      "surface-container-high": "#282a2f",
+                      "secondary-container": "#00b1de",
+                      "on-primary": "#32009a",
+                      "outline": "#938ea1",
+                      "on-tertiary": "#2c303a",
+                      "error-container": "#93000a",
+                      "primary-container": "#947dff",
+                      "background": "#111318",
+                      "surface": "#111318",
+                      "secondary": "#5fd4ff",
+                      "error": "#ffb4ab",
+                      "on-error-container": "#ffdad6",
+                      "on-primary-fixed-variant": "#4918c8",
+                      "surface-tint": "#cabeff",
+                      "on-secondary-container": "#003f51",
+                      "surface-dim": "#111318",
+                      "surface-bright": "#37393f",
+                      "on-primary-container": "#2b0088",
+                      "on-tertiary-container": "#262a33",
+                      "surface-variant": "#33353a",
+                      "tertiary-container": "#8d909c",
+                      "on-error": "#690005",
+                      "tertiary-fixed-dim": "#c3c6d3"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "md": "16px",
+                      "sidebar_width": "260px",
+                      "lg": "24px",
+                      "sm": "12px",
+                      "gutter": "20px",
+                      "xl": "32px",
+                      "xs": "8px",
+                      "container_max_width": "1440px",
+                      "base": "4px"
+              },
+              "fontFamily": {
+                      "headline-lg": [
+                              "Inter"
+                      ],
+                      "label-sm": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Inter"
+                      ],
+                      "display": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "label-md": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "headline-lg": [
+                              "28px",
+                              {
+                                      "lineHeight": "36px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-sm": [
+                              "11px",
+                              {
+                                      "lineHeight": "14px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-md": [
+                              "20px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "display": [
+                              "40px",
+                              {
+                                      "lineHeight": "52px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-md": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.02em",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+<style>
+          .glass-panel {
+              background: rgba(23, 28, 38, 0.4);
+              backdrop-filter: blur(24px);
+              -webkit-backdrop-filter: blur(24px);
+              border: 1px solid rgba(255, 255, 255, 0.1);
+              border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          }
+
+          .glass-card {
+              background: rgba(23, 28, 38, 0.7);
+              backdrop-filter: blur(12px);
+              -webkit-backdrop-filter: blur(12px);
+              border: 1px solid rgba(255, 255, 255, 0.1);
+              border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+              transition: all 0.3s ease;
+          }
+
+          .glass-card:hover {
+              background: rgba(30, 31, 37, 0.8);
+              border-color: rgba(255, 255, 255, 0.15);
+              transform: translateY(-2px);
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+          }
+
+          .primary-gradient {
+              background: linear-gradient(135deg, #7C5CFC 0%, #00b1de 100%);
+          }
+
+          .inner-glow {
+              position: relative;
+          }
+
+          .inner-glow::after {
+              content: '';
+              position: absolute;
+              top: 0; right: 0; bottom: 0; left: 0;
+              background: radial-gradient(circle at top right, rgba(124, 92, 252, 0.1), transparent 50%);
+              pointer-events: none;
+              border-radius: inherit;
+          }
+
+          .custom-scrollbar::-webkit-scrollbar {
+              width: 6px;
+              height: 6px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-track {
+              background: transparent;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+              background: rgba(255, 255, 255, 0.1);
+              border-radius: 4px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+              background: rgba(255, 255, 255, 0.2);
+          }
+      </style>
+</head>
+<body class="bg-background text-on-background h-screen overflow-hidden flex font-body-md">
+<!-- SideNavBar Component -->
+<nav class="hidden md:flex flex-col py-4 h-full bg-surface-container-low/80 backdrop-blur-3xl fixed left-0 top-0 bottom-0 w-[260px] border-r border-white/10 shadow-sm z-50">
+<!-- Header -->
+<div class="px-md mb-xl flex items-center gap-sm">
+<div class="w-10 h-10 rounded-lg primary-gradient flex items-center justify-center shadow-lg">
+<span class="material-symbols-outlined text-white" style="font-variation-settings: 'FILL' 1;">widgets</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md text-on-surface">WidgetHub Pro</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant opacity-70">System Service: Running</p>
+</div>
+</div>
+<!-- Navigation Links -->
+<ul class="flex-1 px-sm space-y-2">
+<!-- Active Item: Widget Library -->
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface bg-white/10 relative before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:bg-primary before:rounded-full active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">widgets</span>
+<span class="font-label-md text-label-md">Widget Library</span>
+</a>
+</li>
+<!-- Inactive Items -->
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface-variant hover:bg-white/5 active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">rebase_edit</span>
+<span class="font-label-md text-label-md">Slider Rotation</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface-variant hover:bg-white/5 active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">system_update</span>
+<span class="font-label-md text-label-md">Updates</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface-variant hover:bg-white/5 active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-md text-label-md">Settings</span>
+</a>
+</li>
+</ul>
+<!-- Footer Links -->
+<div class="px-sm mt-auto pt-4 border-t border-white/5">
+<ul class="space-y-2">
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface-variant hover:bg-white/5 active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">help</span>
+<span class="font-label-md text-label-md">Help</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-sm py-2 rounded-lg text-on-surface-variant hover:bg-white/5 active:scale-95 transition-transform hover:bg-white/10 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">chat_bubble</span>
+<span class="font-label-md text-label-md">Feedback</span>
+</a>
+</li>
+</ul>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 ml-[260px] h-full overflow-y-auto custom-scrollbar pb-[80px] bg-background">
+<div class="max-w-[1440px] mx-auto px-lg py-xl">
+<!-- Header Section -->
+<header class="mb-xl">
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md mb-md">
+<h2 class="font-display text-display text-on-surface">Widget Library</h2>
+<!-- Search Bar -->
+<div class="relative w-full md:w-64">
+<span class="material-symbols-outlined absolute left-3 top-1/2 transform -translate-y-1/2 text-on-surface-variant opacity-70">search</span>
+<input class="w-full bg-[#151922] border-none text-on-surface rounded-lg pl-10 pr-4 py-2 focus:ring-0 focus:border-b-2 focus:border-primary-container transition-all placeholder:text-on-surface-variant/50 font-body-md text-body-md outline-none" placeholder="Search widgets..." type="text"/>
+</div>
+</div>
+<!-- Filters -->
+<div class="flex gap-sm overflow-x-auto pb-2 custom-scrollbar">
+<button class="px-4 py-1.5 rounded-full bg-white/10 border border-white/10 text-on-surface font-label-md text-label-md whitespace-nowrap hover:bg-white/15 transition-colors">All Widgets</button>
+<button class="px-4 py-1.5 rounded-full border border-white/5 text-on-surface-variant font-label-md text-label-md whitespace-nowrap hover:bg-white/5 transition-colors">System</button>
+<button class="px-4 py-1.5 rounded-full border border-white/5 text-on-surface-variant font-label-md text-label-md whitespace-nowrap hover:bg-white/5 transition-colors">Performance</button>
+<button class="px-4 py-1.5 rounded-full border border-white/5 text-on-surface-variant font-label-md text-label-md whitespace-nowrap hover:bg-white/5 transition-colors">Media</button>
+<button class="px-4 py-1.5 rounded-full border border-white/5 text-on-surface-variant font-label-md text-label-md whitespace-nowrap hover:bg-white/5 transition-colors">Utility</button>
+</div>
+</header>
+<!-- Featured Section -->
+<section class="mb-xl">
+<h3 class="font-headline-md text-headline-md text-on-surface mb-md">Featured</h3>
+<div class="flex gap-md overflow-x-auto pb-4 custom-scrollbar snap-x">
+<!-- Featured Card 1 -->
+<div class="glass-card inner-glow rounded-xl p-md flex-shrink-0 w-[400px] snap-center flex flex-col justify-between group">
+<div class="flex justify-between items-start mb-lg">
+<div class="flex items-center gap-sm">
+<div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/5">
+<span class="material-symbols-outlined text-primary-container text-[28px]" style="font-variation-settings: 'FILL' 1;">speed</span>
+</div>
+<div>
+<h4 class="font-headline-md text-on-surface">Pro CPU Monitor</h4>
+<p class="font-label-sm text-on-surface-variant">System</p>
+</div>
+</div>
+<button class="primary-gradient text-white px-4 py-1.5 rounded-md font-label-md hover:opacity-90 transition-opacity">Add</button>
+</div>
+<div class="h-[120px] rounded-lg bg-surface border border-white/5 p-sm relative overflow-hidden flex items-end justify-center">
+<!-- Simulated graph -->
+<div class="w-full h-1/2 flex items-end gap-1 px-2 opacity-70">
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 40%"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 60%"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 80%"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 50%"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 90%"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 70%"></div>
+</div>
+<div class="absolute top-2 left-2 font-label-sm text-on-surface">Usage: 45%</div>
+</div>
+</div>
+<!-- Featured Card 2 -->
+<div class="glass-card inner-glow rounded-xl p-md flex-shrink-0 w-[400px] snap-center flex flex-col justify-between group">
+<div class="flex justify-between items-start mb-lg">
+<div class="flex items-center gap-sm">
+<div class="w-12 h-12 rounded-lg bg-[#1DB954]/20 flex items-center justify-center border border-[#1DB954]/30">
+<span class="material-symbols-outlined text-[#1DB954] text-[28px]" style="font-variation-settings: 'FILL' 1;">play_circle</span>
+</div>
+<div>
+<h4 class="font-headline-md text-on-surface">Spotify Now Playing</h4>
+<p class="font-label-sm text-on-surface-variant">Media</p>
+</div>
+</div>
+<button class="primary-gradient text-white px-4 py-1.5 rounded-md font-label-md hover:opacity-90 transition-opacity">Add</button>
+</div>
+<div class="h-[120px] rounded-lg bg-surface border border-white/5 p-sm flex items-center gap-md">
+<div class="w-20 h-20 rounded-md bg-surface-container-highest border border-white/10 flex-shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="A moody, high-contrast abstract album cover art featuring deep purples and electric blues in a minimalist geometric style." src="https://www.gstatic.com/labs-code/stitch/stitch-placeholder-300x300.svg"/>
+</div>
+<div class="flex-1">
+<div class="font-label-md text-on-surface mb-1 truncate">Midnight City</div>
+<div class="font-label-sm text-on-surface-variant mb-3 truncate">M83</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-on-surface-variant text-[16px] hover:text-on-surface cursor-pointer">skip_previous</span>
+<span class="material-symbols-outlined text-on-surface text-[24px] cursor-pointer" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+<span class="material-symbols-outlined text-on-surface-variant text-[16px] hover:text-on-surface cursor-pointer">skip_next</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Main Grid Section -->
+<section>
+<h3 class="font-headline-md text-headline-md text-on-surface mb-md">All Widgets</h3>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-lg">
+<!-- Grid Card 1 -->
+<div class="glass-card rounded-[16px] p-sm flex flex-col">
+<div class="h-24 bg-surface border border-white/5 rounded-lg mb-sm flex items-center justify-center relative overflow-hidden">
+<div class="flex flex-col items-center">
+<span class="material-symbols-outlined text-secondary text-3xl mb-1">network_wifi</span>
+<span class="font-label-md text-on-surface">120 Mbps</span>
+</div>
+</div>
+<div class="flex justify-between items-center px-1">
+<div>
+<h4 class="font-label-md text-on-surface">Network Speed</h4>
+<p class="font-label-sm text-on-surface-variant">System</p>
+</div>
+<button class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+</button>
+</div>
+</div>
+<!-- Grid Card 2 -->
+<div class="glass-card rounded-[16px] p-sm flex flex-col">
+<div class="h-24 bg-surface border border-white/5 rounded-lg mb-sm flex items-center justify-center relative overflow-hidden">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-amber-400 text-4xl" style="font-variation-settings: 'FILL' 1;">light_mode</span>
+<div class="flex flex-col">
+<span class="font-headline-md text-on-surface leading-none">72°</span>
+<span class="font-label-sm text-on-surface-variant">Sunny</span>
+</div>
+</div>
+</div>
+<div class="flex justify-between items-center px-1">
+<div>
+<h4 class="font-label-md text-on-surface">Weather Mini</h4>
+<p class="font-label-sm text-on-surface-variant">Utility</p>
+</div>
+<button class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+</button>
+</div>
+</div>
+<!-- Grid Card 3 -->
+<div class="glass-card rounded-[16px] p-sm flex flex-col">
+<div class="h-24 bg-surface border border-white/5 rounded-lg mb-sm flex p-2 items-end justify-between relative overflow-hidden">
+<div class="flex gap-1 items-end h-full w-full opacity-60">
+<div class="w-full bg-[#5865F2] rounded-t-sm" style="height: 30%"></div>
+<div class="w-full bg-[#5865F2] rounded-t-sm" style="height: 50%"></div>
+<div class="w-full bg-[#5865F2] rounded-t-sm" style="height: 20%"></div>
+<div class="w-full bg-[#5865F2] rounded-t-sm" style="height: 80%"></div>
+</div>
+<span class="material-symbols-outlined absolute top-2 right-2 text-[#5865F2]">forum</span>
+</div>
+<div class="flex justify-between items-center px-1">
+<div>
+<h4 class="font-label-md text-on-surface">Discord Activity</h4>
+<p class="font-label-sm text-on-surface-variant">Social</p>
+</div>
+<button class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+</button>
+</div>
+</div>
+<!-- Grid Card 4 -->
+<div class="glass-card rounded-[16px] p-sm flex flex-col">
+<div class="h-24 bg-surface border border-white/5 rounded-lg mb-sm flex items-center justify-center relative overflow-hidden p-2">
+<div class="w-full space-y-1">
+<div class="w-full bg-surface-container-high rounded p-1 flex justify-between items-center">
+<span class="font-label-sm text-on-surface-variant text-[9px]">RAM</span>
+<span class="font-label-sm text-on-surface text-[9px]">12GB / 32GB</span>
+</div>
+<div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="w-[38%] h-full bg-primary-container"></div>
+</div>
+</div>
+</div>
+<div class="flex justify-between items-center px-1">
+<div>
+<h4 class="font-label-md text-on-surface">Memory Usage</h4>
+<p class="font-label-sm text-on-surface-variant">System</p>
+</div>
+<button class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Simulated Taskbar Preview -->
+<div class="fixed bottom-4 left-1/2 transform -translate-x-1/2 ml-[130px] glass-panel rounded-2xl h-14 px-4 flex items-center gap-3 z-50 border border-white/10 shadow-2xl">
+<!-- Windows Start/Search visual placeholder -->
+<div class="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-primary-container">window</span>
+</div>
+<div class="w-[1px] h-6 bg-white/10 mx-1"></div>
+<!-- Active Widget Slots -->
+<div class="flex items-center gap-2">
+<div class="h-10 px-3 rounded-lg bg-surface border border-white/5 flex items-center gap-2 cursor-pointer hover:bg-surface-container-high transition-colors group relative">
+<span class="material-symbols-outlined text-amber-400 text-[18px]" style="font-variation-settings: 'FILL' 1;">light_mode</span>
+<span class="font-label-sm text-on-surface">72°</span>
+<!-- Tooltip hover effect -->
+<div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] text-on-surface opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Weather Mini</div>
+</div>
+<div class="h-10 px-3 rounded-lg bg-surface border border-white/5 flex items-center gap-2 cursor-pointer hover:bg-surface-container-high transition-colors group relative">
+<span class="material-symbols-outlined text-primary-container text-[18px]">speed</span>
+<span class="font-label-sm text-on-surface">45%</span>
+<div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] text-on-surface opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Pro CPU Monitor</div>
+</div>
+<!-- Empty slot indicator -->
+<div class="h-10 w-10 rounded-lg border border-dashed border-white/20 flex items-center justify-center opacity-50 hover:opacity-100 transition-opacity cursor-pointer">
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant">add</span>
+</div>
+</div>
+<div class="w-[1px] h-6 bg-white/10 mx-1"></div>
+<!-- System Tray visual placeholder -->
+<div class="flex items-center gap-2 text-on-surface-variant opacity-70">
+<span class="material-symbols-outlined text-[16px]">wifi</span>
+<span class="material-symbols-outlined text-[16px]">volume_up</span>
+<span class="font-label-sm text-[10px]">10:42 AM</span>
+</div>
+</div>
+</body></html>

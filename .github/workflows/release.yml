@@ -34,6 +34,7 @@ jobs:
       INPUT_DRAFT: ${{ inputs.draft || false }}
       INPUT_PRERELEASE: ${{ inputs.prerelease || false }}
       GH_TOKEN: ${{ github.token }}
+      TASKBARSTATS_TAURI_TARGET_DIR: ${{ github.workspace }}\.cache\taskbarstats-tauri-target
 
     steps:
       - name: Checkout
@@ -63,6 +64,32 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           rustup default stable
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~\.nuget\packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('product/**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+          key: ${{ runner.os }}-cargo-home-${{ hashFiles('product/TaskbarStatsSettingsTauri/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-home-
+
+      - name: Cache Tauri target
+        uses: actions/cache@v4
+        with:
+          path: .cache\taskbarstats-tauri-target
+          key: ${{ runner.os }}-tauri-target-${{ hashFiles('product/TaskbarStatsSettingsTauri/src-tauri/Cargo.lock', 'product/TaskbarStatsSettingsTauri/src-tauri/Cargo.toml', 'product/TaskbarStatsSettingsTauri/src-tauri/src/**/*.rs', 'product/TaskbarStatsSettingsTauri/dist/**') }}
+          restore-keys: |
+            ${{ runner.os }}-tauri-target-
 
       - name: Install native build tools
         shell: pwsh

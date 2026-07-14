@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>WidgetHub - Slider Rotation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar for webkit to match dark theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0B0D12;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #33353a;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484555;
+        }
+
+        /* Fluent Design Glow effects */
+        .fluent-card {
+            background: rgba(23, 28, 38, 0.6);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-top-color: rgba(255, 255, 255, 0.1);
+            border-left-color: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Primary Gradient */
+        .bg-primary-gradient {
+            background: linear-gradient(135deg, #cabeff 0%, #5fd4ff 100%);
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-background": "#e2e2e9",
+                        "inverse-surface": "#e2e2e9",
+                        "inverse-on-surface": "#2e3036",
+                        "surface-container-highest": "#33353a",
+                        "on-tertiary-fixed": "#181c25",
+                        "on-surface": "#e2e2e9",
+                        "inverse-primary": "#613de0",
+                        "surface-container": "#1e1f25",
+                        "tertiary": "#c3c6d3",
+                        "primary-fixed": "#e6deff",
+                        "primary-fixed-dim": "#cabeff",
+                        "on-secondary-fixed-variant": "#004d63",
+                        "outline-variant": "#484555",
+                        "on-secondary-fixed": "#001f29",
+                        "on-secondary": "#003545",
+                        "tertiary-fixed": "#dfe2ef",
+                        "on-tertiary-fixed-variant": "#434751",
+                        "on-surface-variant": "#c9c4d8",
+                        "on-primary-fixed": "#1c0062",
+                        "secondary-fixed-dim": "#5fd4ff",
+                        "secondary-fixed": "#bbe9ff",
+                        "surface-container-lowest": "#0c0e13",
+                        "surface-container-low": "#1a1b21",
+                        "primary": "#cabeff",
+                        "surface-container-high": "#282a2f",
+                        "secondary-container": "#00b1de",
+                        "on-primary": "#32009a",
+                        "outline": "#938ea1",
+                        "on-tertiary": "#2c303a",
+                        "error-container": "#93000a",
+                        "primary-container": "#947dff",
+                        "background": "#111318",
+                        "surface": "#111318",
+                        "secondary": "#5fd4ff",
+                        "error": "#ffb4ab",
+                        "on-error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#4918c8",
+                        "surface-tint": "#cabeff",
+                        "on-secondary-container": "#003f51",
+                        "surface-dim": "#111318",
+                        "surface-bright": "#37393f",
+                        "on-primary-container": "#2b0088",
+                        "on-tertiary-container": "#262a33",
+                        "surface-variant": "#33353a",
+                        "tertiary-container": "#8d909c",
+                        "on-error": "#690005",
+                        "tertiary-fixed-dim": "#c3c6d3"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "md": "16px",
+                        "sidebar_width": "260px",
+                        "lg": "24px",
+                        "sm": "12px",
+                        "gutter": "20px",
+                        "xl": "32px",
+                        "xs": "8px",
+                        "container_max_width": "1440px",
+                        "base": "4px"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "display": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["28px", { "lineHeight": "36px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "label-sm": ["11px", { "lineHeight": "14px", "fontWeight": "600" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "display": ["40px", { "lineHeight": "52px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen overflow-hidden flex flex-col selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopAppBar -->
+<header class="bg-surface-container dark:bg-surface-container-low text-primary dark:text-primary-fixed font-body-md text-body-md sticky top-0 z-50 w-full border-b border-white/10 flex justify-between items-center h-8 px-4 w-full">
+<div class="flex items-center gap-xs text-body-lg font-headline-md text-on-surface dark:text-on-background font-bold tracking-tight">
+<!-- App Icon (Simulated) -->
+<div class="w-4 h-4 rounded-[2px] bg-primary-gradient flex items-center justify-center shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]"></div>
+            WidgetHub
+        </div>
+<!-- Window Controls Simulation -->
+<div class="flex items-center">
+<button aria-label="Minimize" class="h-8 w-10 flex items-center justify-center text-on-surface-variant hover:bg-white/10 transition-colors cursor-default">
+<span class="material-symbols-outlined text-[16px]">remove</span>
+</button>
+<button aria-label="Maximize" class="h-8 w-10 flex items-center justify-center text-on-surface-variant hover:bg-white/10 transition-colors cursor-default">
+<span class="material-symbols-outlined text-[14px]">check_box_outline_blank</span>
+</button>
+<button aria-label="Close" class="h-8 w-10 flex items-center justify-center text-on-surface-variant hover:bg-red-500 hover:text-white transition-colors cursor-default">
+<span class="material-symbols-outlined text-[16px]">close</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden h-[calc(100vh-32px)] relative mt-8">
+<!-- SideNavBar -->
+<nav class="bg-surface-container-low/80 backdrop-blur-3xl text-primary dark:text-primary-fixed font-label-md text-label-md fixed left-0 top-8 bottom-0 w-[260px] border-r border-white/10 shadow-sm flex flex-col py-4 h-full z-40">
+<!-- Header Section -->
+<div class="px-lg mb-6 flex flex-col gap-1">
+<h2 class="font-headline-md text-headline-md text-on-surface">WidgetHub Pro</h2>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<div class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"></div>
+<span class="text-label-sm">System Service: Running</span>
+</div>
+</div>
+<!-- Main Navigation -->
+<ul class="flex-1 flex flex-col gap-xs px-sm">
+<li>
+<a class="flex items-center gap-sm px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/5 transition-all duration-200 active:scale-95 cursor-default group" href="#">
+<span class="material-symbols-outlined text-outline group-hover:text-on-surface transition-colors" data-icon="widgets">widgets</span>
+<span class="group-hover:text-on-surface transition-colors">Widget Library</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-md py-sm rounded-lg text-on-surface bg-white/10 relative before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:bg-primary before:rounded-full hover:bg-white/10 transition-all duration-200 active:scale-95 cursor-default group shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]" href="#">
+<span class="material-symbols-outlined text-primary" data-icon="rebase_edit" style="font-variation-settings: 'FILL' 1;">rebase_edit</span>
+<span class="font-bold">Slider Rotation</span>
+</a>
+</li>
+<li>
+<a class="flex items-center justify-between gap-sm px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/5 transition-all duration-200 active:scale-95 cursor-default group" href="#">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-outline group-hover:text-on-surface transition-colors" data-icon="system_update">system_update</span>
+<span class="group-hover:text-on-surface transition-colors">Updates</span>
+</div>
+<span class="bg-primary/20 text-primary-fixed px-1.5 py-0.5 rounded text-[10px] font-bold">2</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/5 transition-all duration-200 active:scale-95 cursor-default group" href="#">
+<span class="material-symbols-outlined text-outline group-hover:text-on-surface transition-colors" data-icon="settings">settings</span>
+<span class="group-hover:text-on-surface transition-colors">Settings</span>
+</a>
+</li>
+</ul>
+<!-- Footer Navigation -->
+<div class="mt-auto px-sm pt-4 border-t border-white/5">
+<ul class="flex flex-col gap-xs">
+<li>
+<a class="flex items-center gap-sm px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/5 transition-all duration-200 active:scale-95 cursor-default group" href="#">
+<span class="material-symbols-outlined text-outline group-hover:text-on-surface transition-colors" data-icon="help">help</span>
+<span class="group-hover:text-on-surface transition-colors">Help</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/5 transition-all duration-200 active:scale-95 cursor-default group" href="#">
+<span class="material-symbols-outlined text-outline group-hover:text-on-surface transition-colors" data-icon="chat_bubble">chat_bubble</span>
+<span class="group-hover:text-on-surface transition-colors">Feedback</span>
+</a>
+</li>
+</ul>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="ml-[260px] flex-1 overflow-y-auto p-xl scroll-smooth">
+<div class="max-w-container_max_width mx-auto flex flex-col gap-xl">
+<!-- Page Header & Master Controls -->
+<div class="flex items-end justify-between border-b border-outline-variant/30 pb-lg">
+<div class="flex flex-col gap-xs">
+<h1 class="font-display text-display text-on-surface tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-on-surface to-on-surface-variant">Slider Rotation</h1>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-2xl">Configure the sequence, timing, and visual transitions for widgets rotating on your taskbar or designated display area.</p>
+</div>
+<!-- Fluent Style Master Toggle -->
+<div class="flex items-center gap-sm bg-surface-container p-sm px-md rounded-xl border border-white/5 shadow-sm">
+<span class="font-label-md text-label-md text-on-surface">Enable Rotation</span>
+<button aria-checked="true" class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-primary-gradient transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background" role="switch" type="button">
+<span class="sr-only">Enable Rotation</span>
+<span aria-hidden="true" class="pointer-events-none inline-block h-5 w-5 translate-x-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"></span>
+</button>
+</div>
+</div>
+<!-- Bento Grid Layout for Settings and Preview -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-lg items-start">
+<!-- Left Column: Rotation Sequence Configuration (Col Span 5) -->
+<div class="lg:col-span-5 flex flex-col gap-md">
+<div class="flex items-center justify-between mb-sm">
+<h3 class="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">view_timeline</span>
+                                Active Sequence
+                            </h3>
+<button class="text-label-sm font-label-sm text-secondary hover:text-secondary-fixed transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">add</span> Add Widget
+                            </button>
+</div>
+<!-- Draggable List Container -->
+<div class="flex flex-col gap-sm">
+<!-- Sequence Item 1 (Active/Currently Rotating Simulation) -->
+<div class="fluent-card rounded-xl p-md flex items-center gap-md relative overflow-hidden group">
+<!-- Active Indicator Glow -->
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-primary shadow-[0_0_12px_rgba(202,190,255,0.8)]"></div>
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+<!-- Drag Handle -->
+<div class="text-outline-variant cursor-grab hover:text-on-surface transition-colors flex flex-col gap-0.5">
+<span class="material-symbols-outlined text-[20px] leading-none">drag_indicator</span>
+</div>
+<!-- Widget Info -->
+<div class="flex items-center gap-sm flex-1">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10 text-secondary">
+<span class="material-symbols-outlined">partly_cloudy_day</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface font-semibold">Local Weather</span>
+<span class="text-[11px] text-on-surface-variant">Currently Active</span>
+</div>
+</div>
+<!-- Settings -->
+<div class="flex items-center gap-sm">
+<div class="relative group/tooltip">
+<div class="flex items-center bg-surface-container-highest border border-outline-variant/30 rounded-md px-2 py-1 focus-within:border-primary/50 transition-colors">
+<input aria-label="Duration in seconds" class="bg-transparent border-none text-on-surface font-body-md text-sm w-8 p-0 focus:ring-0 text-center" type="number" value="15"/>
+<span class="text-xs text-on-surface-variant ml-1">sec</span>
+</div>
+</div>
+<select class="bg-surface-container-highest border border-outline-variant/30 rounded-md text-on-surface text-sm py-1.5 pl-2 pr-8 focus:ring-primary focus:border-primary/50 transition-colors appearance-none cursor-pointer" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c9c4d8%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right .7rem top 50%; background-size: .65rem auto;">
+<option value="fade">Fade</option>
+<option value="slide_up">Slide Up</option>
+<option value="slide_left">Slide Left</option>
+</select>
+</div>
+</div>
+<!-- Sequence Item 2 -->
+<div class="fluent-card rounded-xl p-md flex items-center gap-md relative overflow-hidden group">
+<div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+<div class="text-outline-variant cursor-grab hover:text-on-surface transition-colors flex flex-col gap-0.5">
+<span class="material-symbols-outlined text-[20px] leading-none">drag_indicator</span>
+</div>
+<div class="flex items-center gap-sm flex-1">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10 text-primary-container">
+<span class="material-symbols-outlined">memory</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface">System CPU Info</span>
+<span class="text-[11px] text-on-surface-variant">Queue #2</span>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<div class="flex items-center bg-surface-container-highest border border-outline-variant/30 rounded-md px-2 py-1 focus-within:border-primary/50 transition-colors">
+<input aria-label="Duration in seconds" class="bg-transparent border-none text-on-surface font-body-md text-sm w-8 p-0 focus:ring-0 text-center" type="number" value="10"/>
+<span class="text-xs text-on-surface-variant ml-1">sec</span>
+</div>
+<select class="bg-surface-container-highest border border-outline-variant/30 rounded-md text-on-surface text-sm py-1.5 pl-2 pr-8 focus:ring-primary focus:border-primary/50 transition-colors appearance-none cursor-pointer" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c9c4d8%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right .7rem top 50%; background-size: .65rem auto;">
+<option selected="" value="slide_up">Slide Up</option>
+<option value="fade">Fade</option>
+<option value="slide_left">Slide Left</option>
+</select>
+</div>
+<button aria-label="Remove" class="text-outline-variant hover:text-error transition-colors p-1">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<!-- Sequence Item 3 -->
+<div class="fluent-card rounded-xl p-md flex items-center gap-md relative overflow-hidden group">
+<div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+<div class="text-outline-variant cursor-grab hover:text-on-surface transition-colors flex flex-col gap-0.5">
+<span class="material-symbols-outlined text-[20px] leading-none">drag_indicator</span>
+</div>
+<div class="flex items-center gap-sm flex-1">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10 text-tertiary">
+<span class="material-symbols-outlined">schedule</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface">World Clock (Tokyo)</span>
+<span class="text-[11px] text-on-surface-variant">Queue #3</span>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<div class="flex items-center bg-surface-container-highest border border-outline-variant/30 rounded-md px-2 py-1 focus-within:border-primary/50 transition-colors">
+<input aria-label="Duration in seconds" class="bg-transparent border-none text-on-surface font-body-md text-sm w-8 p-0 focus:ring-0 text-center" type="number" value="20"/>
+<span class="text-xs text-on-surface-variant ml-1">sec</span>
+</div>
+<select class="bg-surface-container-highest border border-outline-variant/30 rounded-md text-on-surface text-sm py-1.5 pl-2 pr-8 focus:ring-primary focus:border-primary/50 transition-colors appearance-none cursor-pointer" style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c9c4d8%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right .7rem top 50%; background-size: .65rem auto;">
+<option value="slide_up">Slide Up</option>
+<option selected="" value="fade">Fade</option>
+<option value="slide_left">Slide Left</option>
+</select>
+</div>
+<button aria-label="Remove" class="text-outline-variant hover:text-error transition-colors p-1">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<!-- Add Drop Zone -->
+<div class="h-16 border-2 border-dashed border-outline-variant/30 rounded-xl flex items-center justify-center text-on-surface-variant hover:border-primary/50 hover:bg-primary/5 transition-colors cursor-pointer mt-2">
+<span class="font-label-md text-label-md">Drop new widget here</span>
+</div>
+</div>
+</div>
+<!-- Right Column: Live Preview (Col Span 7) -->
+<div class="lg:col-span-7 flex flex-col gap-md h-full min-h-[500px]">
+<div class="flex items-center justify-between mb-sm">
+<h3 class="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary">desktop_windows</span>
+                                Live Taskbar Preview
+                            </h3>
+<div class="flex items-center gap-2 bg-surface-container-high rounded-full p-1 border border-white/5">
+<button class="px-3 py-1 rounded-full bg-white/10 text-on-surface font-label-sm text-xs shadow-sm">Bottom</button>
+<button class="px-3 py-1 rounded-full text-on-surface-variant hover:text-on-surface font-label-sm text-xs transition-colors">Left Rail</button>
+</div>
+</div>
+<!-- Preview Canvas Area -->
+<div class="fluent-card rounded-2xl flex-1 relative overflow-hidden flex flex-col justify-end bg-[url('placeholder')] bg-cover bg-center" data-alt="A macro, abstract digital wallpaper background. Dark, deep charcoal base with sweeping, elegant curves of subtle bioluminescent cyan and violet light. The aesthetic is ultra-modern, smooth, and evokes the feel of a premium operating system desktop wallpaper. Lighting is cinematic and focused, creating a sense of deep space and pristine glass surfaces." style="background-image: url('https://www.gstatic.com/labs-code/stitch/stitch-placeholder-300x300.svg')">
+<!-- Ambient Glow overlay -->
+<div class="absolute inset-0 bg-gradient-to-t from-background/90 via-background/40 to-transparent"></div>
+<!-- Simulated Taskbar -->
+<div class="relative w-full h-14 bg-surface-container-highest/80 backdrop-blur-2xl border-t border-white/10 flex items-center justify-between px-6 z-10 shadow-[0_-4px_24px_rgba(0,0,0,0.5)]">
+<!-- Fake Start/Apps area -->
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-md bg-white/10 border border-white/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-[18px]">grid_view</span>
+</div>
+<div class="w-6 h-6 rounded-md bg-white/5 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant text-[16px]">folder</span>
+</div>
+<div class="w-6 h-6 rounded-md bg-white/5 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant text-[16px]">language</span>
+</div>
+</div>
+<!-- The Rotating Widget Area (The focus) -->
+<div class="relative w-48 h-10 rounded-lg overflow-hidden border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] bg-surface-container-low/50 group cursor-pointer">
+<!-- Simulated Active Widget (Weather) with a pseudo-animation state -->
+<div class="absolute inset-0 flex items-center justify-between px-3 transition-opacity duration-1000 ease-in-out opacity-100">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary text-[20px]" data-weight="fill">partly_cloudy_day</span>
+<div class="flex flex-col leading-none">
+<span class="text-on-surface font-semibold text-[13px]">72°</span>
+<span class="text-on-surface-variant text-[10px]">Seattle, WA</span>
+</div>
+</div>
+<!-- Progress ring simulation -->
+<svg class="w-4 h-4 transform -rotate-90" viewbox="0 0 24 24">
+<circle class="text-white/10" cx="12" cy="12" fill="transparent" r="10" stroke="currentColor" stroke-width="3"></circle>
+<circle class="text-primary" cx="12" cy="12" fill="transparent" r="10" stroke="currentColor" stroke-dasharray="62.8" stroke-dashoffset="15" stroke-linecap="round" stroke-width="3"></circle>
+</svg>
+</div>
+<!-- Simulated Next Widget (CPU) sliding up -->
+<div class="absolute inset-0 flex items-center justify-between px-3 translate-y-full opacity-0">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[20px]">memory</span>
+<div class="flex flex-col leading-none">
+<span class="text-on-surface font-semibold text-[13px]">12%</span>
+<span class="text-on-surface-variant text-[10px]">CPU Load</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Fake System Tray area -->
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">expand_less</span>
+<span class="material-symbols-outlined text-[16px]">wifi</span>
+<span class="material-symbols-outlined text-[16px]">volume_up</span>
+<div class="flex flex-col items-end leading-tight text-[11px]">
+<span>10:42 AM</span>
+<span>10/24/2023</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

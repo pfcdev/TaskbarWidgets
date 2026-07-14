@@ -163,9 +163,23 @@ fn default_widget_instances() -> Vec<WidgetInstanceSettings> {
 
 fn app_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    exe.parent()
+    let exe_dir = exe
+        .parent()
         .map(Path::to_path_buf)
-        .ok_or_else(|| "Application directory could not be resolved.".to_owned())
+        .ok_or_else(|| "Application directory could not be resolved.".to_owned())?;
+
+    if exe_dir.join("TaskbarStats.exe").exists() {
+        return Ok(exe_dir);
+    }
+
+    for ancestor in exe_dir.ancestors() {
+        let artifact_dir = ancestor.join("artifacts").join("TaskbarStats");
+        if artifact_dir.join("TaskbarStats.exe").exists() {
+            return Ok(artifact_dir);
+        }
+    }
+
+    Ok(exe_dir)
 }
 
 fn read_settings_from(app_dir: &Path) -> WidgetSettings {
