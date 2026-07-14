@@ -65,6 +65,12 @@ internal static class Program
             return 0;
         }
 
+        if (args.Any(arg => string.Equals(arg, "--update-silent", StringComparison.OrdinalIgnoreCase)))
+        {
+            await GitHubUpdater.CheckAndInstallIfAvailableAsync(CancellationToken.None, silentSetup: true);
+            return 0;
+        }
+
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out var createdNew);
         if (!createdNew)
         {

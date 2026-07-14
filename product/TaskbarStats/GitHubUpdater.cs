@@ -22,7 +22,9 @@ internal static class GitHubUpdater
     private static readonly string LogPath = Path.Combine(LogsDirectory, "loader.log");
     private static readonly string UpdateStatusPath = Path.Combine(AppDirectory, "update-status.json");
 
-    public static async Task CheckAndInstallIfAvailableAsync(CancellationToken cancellationToken)
+    public static async Task CheckAndInstallIfAvailableAsync(
+        CancellationToken cancellationToken,
+        bool silentSetup = false)
     {
         try
         {
@@ -42,8 +44,8 @@ internal static class GitHubUpdater
                 $"Downloading {release.TagName}...");
             var downloaded = await DownloadReleaseAsync(release, cancellationToken);
             WriteStatus("installing", CurrentVersion().ToString(), release.TagName, true,
-                "Applying update...");
-            StartUpdateScriptAndExit(downloaded);
+                silentSetup ? "Applying update..." : "Launching installer...");
+            StartUpdateScriptAndExit(downloaded, silentSetup);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -259,13 +261,14 @@ internal static class GitHubUpdater
         return new DownloadedUpdate(filePath, release.Kind);
     }
 
-    private static void StartUpdateScriptAndExit(DownloadedUpdate update)
+    private static void StartUpdateScriptAndExit(DownloadedUpdate update, bool silentSetup)
     {
         var currentExe = Environment.ProcessPath ??
                          Process.GetCurrentProcess().MainModule?.FileName ??
                          throw new InvalidOperationException("Current executable path could not be resolved");
         var scriptPath = Path.Combine(Path.GetDirectoryName(update.Path)!, "apply-update.cmd");
         var currentPid = Environment.ProcessId;
+        var setupArguments = silentSetup ? " /S" : "";
         var script = update.Kind switch
         {
             UpdatePackageKind.Msi => $"""
@@ -292,13 +295,17 @@ setlocal
 set "SRC={update.Path}"
 set "DIR={AppDirectory}"
 set "PID={currentPid}"
+set "LOG=%DIR%\Logs\loader.log"
 :wait
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
 if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto wait
 )
-start /wait "" "%SRC%" /S
+if not exist "%DIR%\Logs" mkdir "%DIR%\Logs" >nul 2>nul
+>>"%LOG%" echo %DATE% %TIME% [updater] Starting setup package: "%SRC%"{setupArguments}
+start /wait "" "%SRC%"{setupArguments}
+>>"%LOG%" echo %DATE% %TIME% [updater] Setup package exited with code %ERRORLEVEL%.
 if exist "%DIR%\TaskbarStats.exe" start "" "%DIR%\TaskbarStats.exe"
 del "%~f0"
 """,
@@ -329,7 +336,9 @@ del "%~f0"
             ArgumentList = { "/c", scriptPath }
         });
 
-        Log("Update apply script started; exiting current process");
+        Log(silentSetup
+            ? "Silent update apply script started; exiting current process"
+            : "Interactive update installer script started; exiting current process");
         Environment.Exit(0);
     }
 
