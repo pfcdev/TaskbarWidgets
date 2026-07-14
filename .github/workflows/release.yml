@@ -28,6 +28,7 @@ jobs:
   build-release:
     name: Build and publish Windows release
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       INPUT_VERSION: ${{ inputs.version || '' }}
       INPUT_DRAFT: ${{ inputs.draft || false }}

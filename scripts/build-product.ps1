@@ -113,7 +113,7 @@ if (Test-Path $MediaHelperSource) {
 }
 
 Write-Host "Building settings app..."
-cargo build --manifest-path (Join-Path $SettingsProject "Cargo.toml") --release -j 1 --target-dir $SettingsTargetDir
+cargo build --manifest-path (Join-Path $SettingsProject "Cargo.toml") --release -j 1 --target-dir $SettingsTargetDir --verbose
 if ($LASTEXITCODE -ne 0) {
     throw "Settings app build failed with exit code $LASTEXITCODE."
 }
