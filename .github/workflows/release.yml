@@ -66,6 +66,8 @@ jobs:
             artifacts/release-manifest.json
       - name: Publish GitHub release
         if: github.event_name == 'push' || inputs.publish == true
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $draft = "${{ inputs.draft || false }}" -eq "true"
