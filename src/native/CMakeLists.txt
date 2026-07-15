@@ -5,6 +5,13 @@ if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Taskbar Widgets native components require Windows x64")
 endif()
 
+# The hook contains user-facing Unicode literals. MSVC otherwise interprets
+# UTF-8 source files with the machine's active ANSI code page, which can turn
+# characters such as the U+2022 bullet separator into mojibake.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 add_library(TaskbarWidgetsHook SHARED taskbar-hook/taskbar_widgets_hook.cpp)
 set_target_properties(TaskbarWidgetsHook PROPERTIES
     OUTPUT_NAME "TaskbarWidgets.Hook"

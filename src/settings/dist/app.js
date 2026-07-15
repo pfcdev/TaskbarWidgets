@@ -239,9 +239,10 @@ function localizeIcons() {
     grid_view: "▦", folder: "□", language: "◎", expand_less: "⌃", wifi: "⌁",
     volume_up: "◖", window: "⊞", eject: "■", play_arrow: "▶", light_mode: "☀"
   };
-  document.querySelectorAll(".material-symbols-outlined").forEach((element) => {
+  document.querySelectorAll(".material-symbols-outlined:not([data-localized-icon])").forEach((element) => {
     const name = element.textContent.trim();
-    element.textContent = glyphs[name] || "•";
+    element.textContent = glyphs[name] || "◇";
+    element.dataset.localizedIcon = name || "unknown";
     element.setAttribute("aria-hidden", "true");
   });
 }
@@ -275,6 +276,7 @@ function renderPage() {
     page.innerHTML = libraryPage();
     bindLibraryPage();
   }
+  localizeIcons();
 }
 
 function pageHeader(pageId = state.page) {
@@ -777,6 +779,7 @@ function renderFloatingTaskbar() {
       <time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
     </div>
   `;
+  localizeIcons();
 }
 
 function taskbarWidgetCapsule(id) {
@@ -797,6 +800,7 @@ function renderWidgetModal() {
   }
   modal.innerHTML = widgetSettingsModal(state.modalWidgetId);
   bindWidgetModal();
+  localizeIcons();
 }
 
 function widgetSettingsModal(id) {
@@ -1315,6 +1319,7 @@ function setDirty(value) {
   if (pill) {
     pill.classList.toggle("dirty", value);
     pill.innerHTML = `<span class="material-symbols-outlined">${value ? "pending" : "check_circle"}</span>${value ? "Unsaved" : "Saved"}`;
+    localizeIcons();
   }
 }
 
