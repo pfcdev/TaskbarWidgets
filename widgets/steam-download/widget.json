@@ -1,0 +1,11 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "steam-download",
+  "displayName": "Steam Downloads",
+  "category": "Gaming",
+  "description": "Active Steam download speed, progress and remaining time.",
+  "defaultSize": { "width": 240, "height": 48 },
+  "assets": [],
+  "settings": []
+}

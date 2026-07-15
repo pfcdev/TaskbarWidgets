@@ -1,0 +1,13 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "media-player",
+  "displayName": "Media Player",
+  "category": "Media",
+  "description": "Current Windows media session with playback controls.",
+  "defaultSize": { "width": 240, "height": 48 },
+  "assets": ["assets/media_cover.png"],
+  "settings": [
+    { "key": "darkMode", "type": "boolean", "label": "Dark appearance", "default": true }
+  ]
+}

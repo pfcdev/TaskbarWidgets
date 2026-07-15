@@ -8,12 +8,9 @@ artifacts/
 **/bin/
 **/obj/
 
-product/TaskbarStats/Resources/*.dll
-product/TaskbarStats/Resources/*.exe
-product/TaskbarStatsInstaller/Resources/*.zip
-product/TaskbarStatsMsi/Generated/
-product/TaskbarStatsSettings/target/
-product/TaskbarStatsSettingsTauri/src-tauri/target/
+src/loader/Resources/*.dll
+src/loader/Resources/*.exe
+src/settings/src-tauri/target/
 ornek_proje/OpenQuota/
 
 *.user

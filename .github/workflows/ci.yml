@@ -1,0 +1,26 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      TASKBARWIDGETS_TAURI_TARGET_DIR: ${{ github.workspace }}\.cache\tauri-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Setup Rust
+        run: rustup default stable
+      - name: Verify clean build and contracts
+        shell: pwsh
+        run: .\build.ps1 -Target Verify -Configuration Release

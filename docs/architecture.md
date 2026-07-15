@@ -1,66 +1,61 @@
 # Architecture
 
-## Current Prototype
+Taskbar Widgets is one user-facing product made from three isolated processes.
 
-`windhawk/taskbar-stats.wh.cpp` is a Windhawk mod for `explorer.exe`.
+```text
+Settings UI -> Data/config.json -> Loader/providers -> Data/State/*.json
+     ^                                      |                 |
+     |                                      v                 v
+Data/Commands/*.json <---------------- actions ---------- Explorer hook
+```
 
-The mod:
+## Components
 
-- waits for Windows 11 taskbar XAML host windows to exist;
-- injects a XAML Diagnostics TAP into the current Explorer process;
-- watches XAML visual tree additions;
-- finds `SystemTray.SystemTrayFrame`;
-- inserts a `StackPanel` named `TaskbarStatsRoot` into the same taskbar
-  parent grid;
-- reads `%LOCALAPPDATA%\TaskbarStats\codex-status.json`;
-- rotates compact Codex status slides on a lightweight XAML timer;
-- removes the inserted UI and restores shifted grid columns on unload.
+- `src/loader` is the .NET host. It migrates legacy data once, supervises each
+  provider independently, writes atomic snapshots, validates commands, manages
+  Codex accounts/IDE profiles, updates the product, and reinjects after an
+  Explorer restart.
+- `src/settings` is a Tauri application with local HTML, CSS, JavaScript, icons,
+  and fonts. It edits config v2 and preserves unknown widget records disabled.
+- `src/native/taskbar-hook` is the Explorer-side boundary. It discovers the
+  Windows 11 taskbar XAML tree, lays out enabled widgets, renders snapshots, and
+  queues user actions. Every parse/render/injection boundary catches errors and
+  fails closed.
+- `src/native/media-helper` talks to Windows media sessions outside the hook.
+- `widgets/<id>` owns a v1 manifest, optional C# provider, renderer assets, and
+  widget-specific documentation. Source widgets are compiled with the product;
+  v1 does not load arbitrary external DLLs or executable folders.
 
-The status collection work runs outside Explorer in
-`agent/CodexStatusAgent`. The Windhawk side only reads a small local JSON file
-and updates existing text controls.
+## Generated catalog
 
-## CodexStatusAgent
+`build/generate-widget-catalog.ps1` validates all manifests, rejects duplicate
+or invalid IDs, then generates catalogs for C#, C++, and Settings. Generated
+files are committed so a diff shows catalog changes. `-Check` makes CI fail if
+they are stale.
 
-The agent is a .NET console app. It:
+## Failure isolation
 
-- starts `codex app-server` on a temporary loopback WebSocket port;
-- sends `initialize`, `initialized`, and `account/rateLimits/read`;
-- extracts Codex rate-limit windows from the returned `RateLimitSnapshot`;
-- reads local 30-day token totals from `%USERPROFILE%\.codex\state_5.sqlite`
-  via `sqlite3.exe` when it is available;
-- writes `%LOCALAPPDATA%\TaskbarStats\codex-status.json` atomically.
+Each provider has its own retry/backoff loop and writes only its widget state.
+State is written as a temporary file then atomically replaced. The hook treats
+missing, malformed, oversized, or unsupported snapshots as unavailable and
+does not execute provider code. Unknown commands and unsupported schema
+versions are rejected by the loader.
 
-## Private Windows Assumptions
+## Installation and data
 
-Windows 11 taskbar internals are private and build-dependent. This prototype
-assumes that a taskbar XAML element with the type name
-`SystemTray.SystemTrayFrame` appears in the visual tree, and that its parent is
-a XAML `Grid` that can accept an auto-width column immediately before the tray
-column.
+The default install root is `%LOCALAPPDATA%\Programs\TaskbarWidgets`. Packaged
+assets are immutable product files; mutable files live under `Data`. Portable
+packages use the same relative layout. Uninstall preserves `Data` unless the
+user explicitly selects data removal.
 
-If these assumptions are wrong for a Windows build, the mod logs a diagnostic
-message and leaves the taskbar unchanged.
+The migration layer is the only production code allowed to refer to the legacy
+product name. It copies user-owned settings, accounts, profiles, active account,
+and libraries without deleting the source. Runtime binaries, caches, logs,
+updates, and stale state are intentionally excluded.
 
-## Product Loader
+## Private Windows boundary
 
-`product/TaskbarStats` is the Windhawk-free product loader. It publishes a
-single-file `.NET 8` `TaskbarStats.exe` that embeds the native hook DLL,
-extracts it to `%LOCALAPPDATA%\TaskbarStats\Runtime\...`, injects it into the
-current-session `explorer.exe`, runs the Codex status collector loop, and
-watches Explorer for restarts.
-
-`product/TaskbarStatsHook` is the native Explorer-side hook DLL. It is ported
-from the Windhawk prototype, writes diagnostics to
-`%LOCALAPPDATA%\TaskbarStats\Logs\hook.log`, and uses a named shutdown event so
-the loader can detach it without Windhawk.
-
-## Updates
-
-The loader checks `https://api.github.com/repos/pfcdev/TaskWidgets/releases/latest`
-for GitHub Releases. A release is considered installable when it has a newer
-semantic tag such as `v0.1.1` and includes `TaskbarStats.exe`. If the optional
-`TaskbarStats.exe.sha256` asset exists, the downloaded executable is verified
-before installation. The updater writes a small command script under
-`%LOCALAPPDATA%\TaskbarStats\Updates\...`, waits for the current process to
-exit, replaces the executable in place, and restarts it.
+The hook depends on undocumented XAML element names and layout behavior that
+can change between Windows updates. Compatibility checks happen before layout
+mutation, all injected UI is removable, and a named shutdown event permits a
+clean detach. See [windows-private-api-risks.md](windows-private-api-risks.md).

@@ -1,0 +1,14 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "codex-status",
+  "displayName": "Codex Status",
+  "category": "Developer",
+  "description": "Codex quota, active task and account information.",
+  "defaultSize": { "width": 220, "height": 48 },
+  "assets": [],
+  "settings": [
+    { "key": "apiEndpoint", "type": "text", "label": "API endpoint", "default": "" },
+    { "key": "projectFilter", "type": "text", "label": "Project filter", "default": "" }
+  ]
+}

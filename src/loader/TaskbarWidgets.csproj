@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TaskbarWidgets</AssemblyName>
+    <RootNamespace>TaskbarWidgets.Loader</RootNamespace>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\TaskbarWidgets.Hook.dll"
+                      Condition="Exists('Resources\TaskbarWidgets.Hook.dll')"
+                      LogicalName="TaskbarWidgets.Hook.dll" />
+    <EmbeddedResource Include="Resources\TaskbarWidgets.Settings.exe"
+                      Condition="Exists('Resources\TaskbarWidgets.Settings.exe')"
+                      LogicalName="TaskbarWidgets.Settings.exe" />
+    <Compile Include="..\..\widgets\**\provider\*.cs"
+             Link="Widgets\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

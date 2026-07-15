@@ -4,207 +4,63 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example 0.1.3"
+        description: "Release version, for example 0.1.0"
         required: true
         type: string
       draft:
-        description: "Create the release as a draft"
-        required: false
-        default: false
         type: boolean
+        default: false
       prerelease:
-        description: "Mark the release as a prerelease"
-        required: false
-        default: false
         type: boolean
+        default: true
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
-    name: Build and publish Windows release
+  release:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       INPUT_VERSION: ${{ inputs.version || '' }}
-      INPUT_DRAFT: ${{ inputs.draft || false }}
-      INPUT_PRERELEASE: ${{ inputs.prerelease || false }}
-      GH_TOKEN: ${{ github.token }}
-      TASKBARSTATS_TAURI_TARGET_DIR: ${{ github.workspace }}\.cache\taskbarstats-tauri-target
-
+      TASKBARWIDGETS_TAURI_TARGET_DIR: ${{ github.workspace }}\.cache\tauri-target
+      WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+      WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Resolve release version
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $version = $env:INPUT_VERSION
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            $version = $env:GITHUB_REF_NAME -replace '^[vV]', ''
-          }
-          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-            throw "Version must be numeric SemVer-like text such as 0.1.3 or 0.1.3.1. Got: $version"
-          }
-          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
-
       - name: Setup Rust
+        run: rustup default stable
+      - name: Resolve version
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          rustup default stable
-
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+          $version = $env:INPUT_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = $env:GITHUB_REF_NAME -replace '^[vV]', '' }
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid version: $version" }
+          "RELEASE_VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+          "RELEASE_TAG=v$version" | Out-File $env:GITHUB_ENV -Append
+      - name: Verify
+        shell: pwsh
+        run: .\build.ps1 -Target Verify -Configuration Release
+      - name: Package
+        shell: pwsh
+        run: .\build.ps1 -Target Package -Configuration Release -Version $env:RELEASE_VERSION -InstallDependencies
+      - uses: actions/upload-artifact@v4
         with:
-          path: ~\.nuget\packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('product/**/*.csproj', 'Directory.Packages.props', 'global.json') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
+          name: TaskbarWidgets-${{ env.RELEASE_VERSION }}-x64
           path: |
-            ~\.cargo\registry
-            ~\.cargo\git
-          key: ${{ runner.os }}-cargo-home-${{ hashFiles('product/TaskbarStatsSettingsTauri/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-home-
-
-      - name: Cache Tauri target
-        uses: actions/cache@v4
-        with:
-          path: .cache\taskbarstats-tauri-target
-          key: ${{ runner.os }}-tauri-target-${{ hashFiles('product/TaskbarStatsSettingsTauri/src-tauri/Cargo.lock', 'product/TaskbarStatsSettingsTauri/src-tauri/Cargo.toml', 'product/TaskbarStatsSettingsTauri/src-tauri/src/**/*.rs', 'product/TaskbarStatsSettingsTauri/dist/**') }}
-          restore-keys: |
-            ${{ runner.os }}-tauri-target-
-
-      - name: Install native build tools
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          winget source update
-          if ($LASTEXITCODE -ne 0) {
-            throw "winget source update failed with exit code $LASTEXITCODE"
-          }
-          winget install --id RamenSoftware.Windhawk --exact --silent --accept-package-agreements --accept-source-agreements
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windhawk install failed with exit code $LASTEXITCODE"
-          }
-          winget install --id NSIS.NSIS --exact --silent --accept-package-agreements --accept-source-agreements
-          if ($LASTEXITCODE -ne 0) {
-            throw "NSIS install failed with exit code $LASTEXITCODE"
-          }
-          $windhawkCompiler = "C:\Program Files\Windhawk\Compiler\bin\clang++.exe"
-          if (-not (Test-Path $windhawkCompiler)) {
-            throw "Windhawk compiler was not installed at $windhawkCompiler"
-          }
-          "TASKBARSTATS_CLANGXX=$windhawkCompiler" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Build product
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          powershell -ExecutionPolicy Bypass -File .\scripts\build-product.ps1 -Configuration Release -Version $env:RELEASE_VERSION
-
-      - name: Build NSIS installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Configuration Release -Version $env:RELEASE_VERSION -SkipProductBuild -InstallNsisIfMissing
-
-      - name: Verify release assets
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $files = @(
-            "artifacts\TaskbarStats\TaskbarStats.exe",
-            "artifacts\TaskbarStats\TaskbarStats.exe.sha256",
-            "artifacts\TaskbarStatsSetup.exe",
-            "artifacts\TaskbarStatsSetup.exe.sha256"
-          )
-          foreach ($file in $files) {
-            if (-not (Test-Path $file)) {
-              throw "Missing release asset: $file"
-            }
-          }
-          Get-Item $files | Select-Object FullName, Length, LastWriteTime
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TaskbarStats-${{ env.RELEASE_VERSION }}
-          path: |
-            artifacts/TaskbarStats/TaskbarStats.exe
-            artifacts/TaskbarStats/TaskbarStats.exe.sha256
-            artifacts/TaskbarStatsSetup.exe
-            artifacts/TaskbarStatsSetup.exe.sha256
-
+            artifacts/TaskbarWidgetsSetup-x64.exe
+            artifacts/TaskbarWidgetsSetup-x64.exe.sha256
+            artifacts/TaskbarWidgets-portable-x64.zip
+            artifacts/TaskbarWidgets-portable-x64.zip.sha256
+            artifacts/release-manifest.json
       - name: Publish GitHub release
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $false
-          $files = @(
-            "artifacts\TaskbarStats\TaskbarStats.exe",
-            "artifacts\TaskbarStats\TaskbarStats.exe.sha256",
-            "artifacts\TaskbarStatsSetup.exe",
-            "artifacts\TaskbarStatsSetup.exe.sha256"
-          )
-          $notes = "TaskbarStats $env:RELEASE_TAG build. Use TaskbarStatsSetup.exe for normal Windows installation/update."
-
-          function Invoke-GhWithRetry {
-            param([string[]]$Arguments)
-
-            for ($attempt = 1; $attempt -le 4; $attempt++) {
-              gh @Arguments
-              if ($LASTEXITCODE -eq 0) {
-                return
-              }
-              if ($attempt -eq 4) {
-                exit $LASTEXITCODE
-              }
-              $delay = 5 * $attempt
-              Write-Warning "gh command failed with exit code $LASTEXITCODE. Retrying in $delay seconds..."
-              Start-Sleep -Seconds $delay
-            }
-          }
-
-          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            $uploadArgs = @("release", "upload", $env:RELEASE_TAG) + $files + @("--repo", $env:GITHUB_REPOSITORY, "--clobber")
-            Invoke-GhWithRetry $uploadArgs
-            exit 0
-          }
-
-          $args = @(
-            "release", "create", $env:RELEASE_TAG
-          ) + $files + @(
-            "--repo", $env:GITHUB_REPOSITORY,
-            "--title", "TaskbarStats $env:RELEASE_TAG",
-            "--notes", $notes
-          )
-
-          if ($env:GITHUB_REF_TYPE -ne "tag") {
-            $args += @("--target", $env:GITHUB_SHA)
-          }
-          if ($env:INPUT_DRAFT -eq "true") {
-            $args += "--draft"
-          }
-          if ($env:INPUT_PRERELEASE -eq "true") {
-            $args += "--prerelease"
-          }
-
-          Invoke-GhWithRetry $args
+          $draft = "${{ inputs.draft || false }}" -eq "true"
+          $prerelease = "${{ inputs.prerelease || false }}" -eq "true"
+          .\build\create-release.ps1 -Tag $env:RELEASE_TAG -SkipBuild -Draft:$draft -Prerelease:$prerelease

@@ -1,0 +1,14 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "weather-static",
+  "displayName": "Weather",
+  "category": "Utility",
+  "description": "Current weather and local forecast for a selected city.",
+  "defaultSize": { "width": 220, "height": 48 },
+  "assets": ["assets/weather"],
+  "settings": [
+    { "key": "city", "type": "text", "label": "City", "default": "Istanbul" },
+    { "key": "temperatureUnit", "type": "select", "label": "Temperature unit", "default": "C", "options": ["C", "F"] }
+  ]
+}

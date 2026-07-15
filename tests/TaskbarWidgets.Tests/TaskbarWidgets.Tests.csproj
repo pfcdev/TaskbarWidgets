@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TaskbarWidgets.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\loader\AppPaths.cs" Link="AppPaths.cs" />
+    <Compile Include="..\..\src\loader\Core\WidgetContracts.cs" Link="Core\WidgetContracts.cs" />
+    <Compile Include="..\..\src\loader\Core\WidgetConfiguration.cs" Link="Core\WidgetConfiguration.cs" />
+    <Compile Include="..\..\src\loader\Core\ReleaseAssetPolicy.cs" Link="Core\ReleaseAssetPolicy.cs" />
+    <Compile Include="..\..\src\loader\Generated\WidgetCatalog.g.cs" Link="Generated\WidgetCatalog.g.cs" />
+  </ItemGroup>
+</Project>

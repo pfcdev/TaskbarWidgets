@@ -1,0 +1,16 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "discord-voice",
+  "displayName": "Discord Voice",
+  "category": "Social",
+  "description": "Discord voice participants and speaking state.",
+  "defaultSize": { "width": 220, "height": 48 },
+  "assets": [],
+  "settings": [
+    { "key": "backgroundEnabled", "type": "boolean", "label": "Show background", "default": true },
+    { "key": "clientId", "type": "text", "label": "Discord client ID", "default": "" },
+    { "key": "clientSecret", "type": "secret", "label": "Discord client secret", "default": "" },
+    { "key": "redirectUri", "type": "text", "label": "Redirect URI", "default": "http://127.0.0.1/callback" }
+  ]
+}

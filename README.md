@@ -1,132 +1,73 @@
-# TaskbarStats
+# Taskbar Widgets
 
-Experimental Windows 11 taskbar integration prototype.
+Taskbar Widgets is an open-source Windows 11 x64 application that places small,
+live widgets directly on the taskbar. The first catalog contains Codex Status,
+Weather, Discord Voice, Media Player, and Steam Downloads. Widgets can be shown
+side by side or in an optional rotation layout.
 
-This repository intentionally targets the real Windows 11 taskbar surface from a
-Windhawk mod loaded into `explorer.exe`. It does not implement a tray icon,
-floating overlay, always-on-top window, desktop widget, Widgets Board widget, or
-normal app taskbar button.
+> [!WARNING]
+> The Explorer integration uses private Windows 11 XAML surfaces. Unsupported
+> Windows builds are detected at runtime and the hook fails closed, but this is
+> still beta software. See [Private API risks](docs/windows-private-api-risks.md).
 
-## Milestones
+## Product model
 
-1. Real taskbar module: insert a small XAML module inside the Windows 11
-   taskbar.
-2. Codex status agent: collect Codex account rate-limit and local 30-day usage
-   outside Explorer.
-3. Taskbar slider: rotate compact Codex status views in the taskbar module.
-4. Packaging: replace the Windhawk development harness with the product loader.
-5. Hardening: multi-monitor, DPI, build compatibility, diagnostics.
+Users install one product and launch `TaskbarWidgets.exe`. The loader owns data
+providers, lifecycle, migration, updates, and account management. Settings is an
+internal process opened with `TaskbarWidgets.exe --settings`. A native hook does
+only taskbar hosting and rendering; provider failures never run inside Explorer.
 
-## Current State
-
-Milestones 1-3 are implemented as a prototype:
-
-- `windhawk/taskbar-stats.wh.cpp` injects the taskbar XAML module.
-- `agent/CodexStatusAgent` collects Codex status and writes a local JSON file.
-
-The mod uses Windows XAML Diagnostics from inside `explorer.exe` to inspect
-taskbar XAML elements and insert a small module next to the system tray frame.
-The code is guarded so that unsupported/private taskbar structures log and fail
-closed instead of crashing Explorer intentionally.
-
-The agent runs outside Explorer. It starts Codex app-server on a temporary
-loopback WebSocket port, requests `account/rateLimits/read`, reads local 30-day
-token totals from `%USERPROFILE%\.codex\state_5.sqlite` when `sqlite3.exe` is
-available, and writes:
+User data is stored beside the installed program under `Data`:
 
 ```text
-%LOCALAPPDATA%\TaskbarStats\codex-status.json
+%LOCALAPPDATA%\Programs\TaskbarWidgets\
+  TaskbarWidgets.exe
+  TaskbarWidgets.Settings.exe
+  TaskbarWidgets.MediaHelper.exe
+  Data\
+    config.json
+    State\
+    Commands\
+    Accounts\
+    Logs\
 ```
 
-## Manual Test Summary
+## Build
 
-Build/run the status agent once:
+Requirements: Windows 11 x64, PowerShell 7 or Windows PowerShell 5.1, .NET 8
+SDK, Rust stable, Visual Studio 2022 Build Tools with C++/Windows SDK, CMake, and
+NSIS for packaging.
 
 ```powershell
-dotnet run --project .\agent\CodexStatusAgent\CodexStatusAgent.csproj -- --once
+.\build.ps1 -Target Verify
+.\build.ps1 -Target Build
+.\build.ps1 -Target Package -InstallDependencies
 ```
 
-Then install Windhawk, create a new local mod, paste the contents of
-`windhawk/taskbar-stats.wh.cpp`, compile/enable it, and verify that the taskbar
-rotates through compact Codex status slides such as `LIMIT`, `WEEK`, `30D`, and
-`PLAN`.
+`VERSION` is the single version source. Package output contains only the full
+installer, portable ZIP, SHA-256 files, and a release manifest. Detailed setup
+is in [Building](docs/building.md).
 
-Copy SVG assets to:
+## Repository
 
 ```text
-%LOCALAPPDATA%\TaskbarStats\Assets\
+src/loader/       .NET runtime, providers, accounts, commands, updates
+src/settings/     Tauri settings application and offline web UI
+src/native/       Explorer hook, taskbar renderer, media helper
+widgets/<id>/     manifest, provider source, assets
+installer/        NSIS installer
+build/            validation, build, package, signing, release scripts
+docs/             architecture and contributor documentation
+tests/            Explorer-independent contract tests
 ```
 
-before testing if you want the SVG icons to load. If they are missing, the mod
-falls back to Segoe MDL2 glyphs.
+Read [Architecture](docs/architecture.md), [Widget protocol](docs/protocol.md),
+and [Adding a widget](docs/adding-a-widget.md) before changing runtime contracts.
 
-## Product Loader Build
+## Contributing and security
 
-The Windhawk-free product build creates a single-file loader that embeds the
-native Explorer hook DLL and extracts it at runtime:
+Contributions are welcome under [CONTRIBUTING.md](CONTRIBUTING.md). Do not post
+security vulnerabilities in public issues; follow [SECURITY.md](SECURITY.md).
+Taskbar Widgets is licensed under the [MIT License](LICENSE).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-product.ps1 -Configuration Release
-```
-
-Output:
-
-```text
-artifacts\TaskbarStats\TaskbarStats.exe
-```
-
-Useful commands:
-
-```powershell
-.\artifacts\TaskbarStats\TaskbarStats.exe --console
-.\artifacts\TaskbarStats\TaskbarStats.exe --detach
-.\artifacts\TaskbarStats\TaskbarStats.exe --check-updates
-.\artifacts\TaskbarStats\TaskbarStats.exe --update
-.\artifacts\TaskbarStats\TaskbarStats.exe --install-startup
-.\artifacts\TaskbarStats\TaskbarStats.exe --uninstall-startup
-```
-
-Logs are written under:
-
-```text
-%LOCALAPPDATA%\TaskbarStats\Logs\
-```
-
-## GitHub Releases Updates
-
-The product loader checks GitHub Releases for updates from:
-
-```text
-pfcdev/TaskWidgets
-```
-
-The latest release must include these assets:
-
-```text
-TaskbarStats.exe
-TaskbarStats.exe.sha256
-TaskbarStatsSetup.exe
-TaskbarStatsSetup.exe.sha256
-```
-
-`TaskbarStatsSetup.exe` is the primary update package. The loader prefers it
-over raw executable assets so updates use the same NSIS install/uninstall flow as
-normal distribution.
-
-Create or update a release from a shell where GitHub CLI is authenticated:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\create-github-release.ps1 -Tag v0.1.0
-```
-
-GitHub Actions can also build and publish the release on GitHub-hosted Windows
-runners:
-
-```powershell
-gh workflow run release.yml --repo pfcdev/TaskWidgets -f version=0.1.0
-```
-
-Pushing a numeric version tag such as `v0.1.0` runs the same release workflow.
-
-Normal startup checks for updates in the background. Use `--no-update-check`
-to disable the startup check for development runs.
+Türkçe kurulum özeti için [README.tr.md](README.tr.md) dosyasına bakın.
