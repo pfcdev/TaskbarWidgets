@@ -1,13 +1,16 @@
 param(
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
-    [string]$Version = "0.1.0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Content (Join-Path $RepoRoot "VERSION") -Raw).Trim()
+}
 if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid version: $Version" }
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $NativeSource = Join-Path $RepoRoot "src\native"
 $NativeBuild = Join-Path $RepoRoot "artifacts\native-build"
 $LoaderProject = Join-Path $RepoRoot "src\loader\TaskbarWidgets.csproj"

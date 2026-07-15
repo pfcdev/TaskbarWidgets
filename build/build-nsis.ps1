@@ -1,18 +1,21 @@
 param(
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
-    [string]$Version = "0.1.0",
+    [string]$Version = "",
     [switch]$SkipProductBuild,
     [switch]$InstallNsisIfMissing
 )
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Content (Join-Path $RepoRoot "VERSION") -Raw).Trim()
+}
 
 if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
     throw "Version must be numeric SemVer-like text such as 0.1.0 or 0.1.0.1."
 }
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ProductBuildScript = Join-Path $RepoRoot "build\build-product.ps1"
 $ProductDir = Join-Path $RepoRoot "artifacts\TaskbarWidgets"
 $ArtifactDir = Join-Path $RepoRoot "artifacts"
@@ -20,6 +23,8 @@ $StagingRoot = Join-Path $RepoRoot "artifacts\nsis"
 $PackageRoot = Join-Path $StagingRoot "package"
 $InstallerOutput = Join-Path $ArtifactDir "TaskbarWidgetsSetup-x64.exe"
 $InstallerSha = Join-Path $ArtifactDir "TaskbarWidgetsSetup-x64.exe.sha256"
+$LegacyInstallerOutput = Join-Path $ArtifactDir "TaskbarStatsSetup.exe"
+$LegacyInstallerSha = Join-Path $ArtifactDir "TaskbarStatsSetup.exe.sha256"
 $PortableOutput = Join-Path $ArtifactDir "TaskbarWidgets-portable-x64.zip"
 $PortableSha = Join-Path $ArtifactDir "TaskbarWidgets-portable-x64.zip.sha256"
 $NsisScript = Join-Path $RepoRoot "installer\nsis\TaskbarWidgets.nsi"
@@ -131,7 +136,7 @@ foreach ($FileName in $RequiredFiles) {
 Copy-Item -Path (Join-Path $ProductDir "Assets") -Destination (Join-Path $PackageRoot "Assets") -Recurse -Force
 Copy-Item -Path (Join-Path $ProductDir "Widgets") -Destination (Join-Path $PackageRoot "Widgets") -Recurse -Force
 
-Remove-Item -Force $InstallerOutput, $InstallerSha, $PortableOutput, $PortableSha -ErrorAction SilentlyContinue
+Remove-Item -Force $InstallerOutput, $InstallerSha, $LegacyInstallerOutput, $LegacyInstallerSha, $PortableOutput, $PortableSha -ErrorAction SilentlyContinue
 
 $NsisArgs = @(
     "/DVERSION=$Version",
@@ -156,6 +161,8 @@ if (-not (Test-Path $InstallerOutput)) {
 
 $Hash = (Get-FileHash $InstallerOutput -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -Path $InstallerSha -Value "$Hash  TaskbarWidgetsSetup-x64.exe" -Encoding ASCII
+Copy-Item -Force $InstallerOutput $LegacyInstallerOutput
+Set-Content -Path $LegacyInstallerSha -Value "$Hash  TaskbarStatsSetup.exe" -Encoding ASCII
 
 Compress-Archive -Path (Join-Path $ProductDir "*") -DestinationPath $PortableOutput -CompressionLevel Optimal
 $PortableHash = (Get-FileHash $PortableOutput -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -170,8 +177,15 @@ $Manifest = [ordered]@{
         [ordered]@{ name = "TaskbarWidgetsSetup-x64.exe"; sha256 = $Hash },
         [ordered]@{ name = "TaskbarWidgets-portable-x64.zip"; sha256 = $PortableHash }
     )
+    compatibilityArtifacts = @(
+        [ordered]@{
+            name = "TaskbarStatsSetup.exe"
+            sha256 = $Hash
+            purpose = "TaskbarStats <= 0.2.7 update bridge"
+        }
+    )
 }
 $Manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $ArtifactDir "release-manifest.json") -Encoding UTF8
 
 Write-Host "NSIS installer output:"
-Get-Item $InstallerOutput, $InstallerSha, $PortableOutput, $PortableSha | Select-Object FullName, Length, LastWriteTime
+Get-Item $InstallerOutput, $InstallerSha, $LegacyInstallerOutput, $LegacyInstallerSha, $PortableOutput, $PortableSha | Select-Object FullName, Length, LastWriteTime

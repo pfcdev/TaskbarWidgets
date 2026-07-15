@@ -119,10 +119,13 @@ void TestUpdaterAssetSelection()
     ]);
     Assert(partial is null, "partial product selected as updater");
     var full = ReleaseAssetPolicy.Select([
+        ("TaskbarStatsSetup.exe", "legacy-setup"),
+        ("TaskbarStatsSetup.exe.sha256", "legacy-sha"),
         (ReleaseAssetPolicy.SetupSha256Name, "sha"),
         (ReleaseAssetPolicy.SetupName, "setup")
     ]);
-    Assert(full?.DownloadUrl == "setup" && full?.Sha256Url == "sha", "full setup not selected");
+    Assert(full?.DownloadUrl == "setup" && full?.Sha256Url == "sha",
+        "new updater did not prefer the Taskbar Widgets setup asset");
 }
 
 void Assert(bool condition, string message)

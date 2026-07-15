@@ -14,7 +14,9 @@ $updates = @(
     @{ Path = "src\loader\TaskbarWidgets.csproj"; Pattern = '<FileVersion>[^<]+</FileVersion>'; Replacement = "<FileVersion>$AssemblyVersion</FileVersion>" },
     @{ Path = "src\settings\src-tauri\Cargo.toml"; Pattern = '(?m)^version = "[^"]+"'; Replacement = "version = `"$Version`"" },
     @{ Path = "src\settings\src-tauri\tauri.conf.json"; Pattern = '(?m)^(\s*)"version": "[^"]+"'; Replacement = "`$1`"version`": `"$Version`"" },
-    @{ Path = "src\native\CMakeLists.txt"; Pattern = 'project\(TaskbarWidgetsNative VERSION [^ ]+'; Replacement = "project(TaskbarWidgetsNative VERSION $Version" }
+    @{ Path = "src\native\CMakeLists.txt"; Pattern = 'project\(TaskbarWidgetsNative VERSION [^ ]+'; Replacement = "project(TaskbarWidgetsNative VERSION $Version" },
+    @{ Path = "src\settings\dist\app.js"; Pattern = 'const current = update\.currentVersion \|\| "[^"]+";'; Replacement = "const current = update.currentVersion || `"$Version`";" },
+    @{ Path = "widgets\codex-status\provider\CodexStatusWorker.cs"; Pattern = '(?m)^(\s*)version = "[^"]+"$'; Replacement = "`$1version = `"$Version`"" }
 )
 
 $changed = @()

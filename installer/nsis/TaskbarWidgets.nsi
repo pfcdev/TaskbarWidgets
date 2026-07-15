@@ -2,7 +2,7 @@ Unicode true
 RequestExecutionLevel user
 
 !ifndef VERSION
-  !define VERSION "0.1.0"
+  !error "VERSION must be provided"
 !endif
 !ifndef PACKAGE_ROOT
   !error "PACKAGE_ROOT must be provided"
@@ -43,6 +43,8 @@ Var StartWithWindowsCheckbox
 Var DesktopShortcutCheckbox
 Var RemoveUserData
 Var RemoveUserDataCheckbox
+Var LegacyInstallDir
+Var LegacyUpgrade
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -59,6 +61,10 @@ UninstPage custom un.DataPage un.DataPageLeave
 Function .onInit
   StrCpy $StartWithWindows "1"
   StrCpy $DesktopShortcut "0"
+  StrCpy $LegacyUpgrade "0"
+  ${If} $EXEFILE == "TaskbarStatsSetup.exe"
+    StrCpy $LegacyUpgrade "1"
+  ${EndIf}
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "InstallLocation"
   ${If} $0 != ""
     ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "TaskbarWidgets"
@@ -117,11 +123,28 @@ Function StopTaskbarWidgets
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "TaskbarStats"
 FunctionEnd
 
+Function DisableLegacyLoader
+  ReadRegStr $LegacyInstallDir HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarStats" "InstallLocation"
+  ${If} $LegacyInstallDir == ""
+    StrCpy $LegacyInstallDir "$LOCALAPPDATA\Programs\TaskbarStats"
+  ${EndIf}
+
+  ; Preserve legacy user data and the old binary, but move the loader away
+  ; from the exact path that the <=0.2.7 updater tries to restart.
+  ${If} $LegacyInstallDir != "$INSTDIR"
+    IfFileExists "$LegacyInstallDir\TaskbarStats.exe" 0 legacy_loader_done
+    Delete "$LegacyInstallDir\TaskbarStats.exe.migrated"
+    Rename "$LegacyInstallDir\TaskbarStats.exe" "$LegacyInstallDir\TaskbarStats.exe.migrated"
+  ${EndIf}
+legacy_loader_done:
+FunctionEnd
+
 Section "Taskbar Widgets" SecMain
   SectionIn RO
   Call StopTaskbarWidgets
   SetOutPath "$INSTDIR"
   File /r "${PACKAGE_ROOT}\*.*"
+  Call DisableLegacyLoader
   WriteUninstaller "$INSTDIR\Uninstall Taskbar Widgets.exe"
 
   CreateDirectory "$SMPROGRAMS\Taskbar Widgets"
@@ -149,6 +172,14 @@ Section "Taskbar Widgets" SecMain
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "QuietUninstallString" '"$INSTDIR\Uninstall Taskbar Widgets.exe" /S'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "NoRepair" 1
+
+  ; A silent legacy updater has no finish page and its old apply script only
+  ; knows how to restart TaskbarStats.exe. Start the new loader here instead.
+  ${If} $LegacyUpgrade == "1"
+    IfSilent 0 legacy_upgrade_done
+    Exec '"$INSTDIR\TaskbarWidgets.exe" --no-update-check'
+  ${EndIf}
+legacy_upgrade_done:
 SectionEnd
 
 Function un.DataPage

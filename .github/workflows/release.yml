@@ -59,6 +59,8 @@ jobs:
           path: |
             artifacts/TaskbarWidgetsSetup-x64.exe
             artifacts/TaskbarWidgetsSetup-x64.exe.sha256
+            artifacts/TaskbarStatsSetup.exe
+            artifacts/TaskbarStatsSetup.exe.sha256
             artifacts/TaskbarWidgets-portable-x64.zip
             artifacts/TaskbarWidgets-portable-x64.zip.sha256
             artifacts/release-manifest.json
