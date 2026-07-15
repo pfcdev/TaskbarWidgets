@@ -4040,7 +4040,8 @@ void UpdateScrollingTitleAnimation(wux::FrameworkElement const& marqueeElement,
                                    wuxc::TextBlock const& first,
                                    wuxc::TextBlock const& second,
                                    double viewportWidth,
-                                   double pixelsPerSecond) {
+                                   double pixelsPerSecond,
+                                   double deltaSeconds) {
     if (!marqueeElement || !first || !second || second.Text().empty()) {
         return;
     }
@@ -4066,24 +4067,30 @@ void UpdateScrollingTitleAnimation(wux::FrameworkElement const& marqueeElement,
         marqueeElement.RenderTransform(transform);
     }
 
-    double elapsed = static_cast<double>(CurrentUnixMillis() % 600000LL) / 1000.0;
-    double offset = std::fmod(elapsed * pixelsPerSecond, itemWidth);
+    double offset = -transform.X();
+    if (!std::isfinite(offset) || offset < 0) {
+        offset = 0;
+    }
+    offset = std::fmod(offset + (pixelsPerSecond * deltaSeconds), itemWidth);
     transform.X(-offset);
 }
 
-void UpdateTaskbarStatsAnimations(wux::UIElement const& root) {
+void UpdateTaskbarStatsAnimations(wux::UIElement const& root,
+                                  double deltaSeconds) {
     UpdateScrollingTitleAnimation(
         FindNamedFrameworkElement(root, L"TaskbarStatsMediaTitleMarquee"),
         FindNamedTextBlock(root, L"TaskbarStatsMediaTitle"),
         FindNamedTextBlock(root, L"TaskbarStatsMediaTitleClone"),
         112.0,
-        18.0);
+        18.0,
+        deltaSeconds);
     UpdateScrollingTitleAnimation(
         FindNamedFrameworkElement(root, L"TaskbarStatsSteamTitleMarquee"),
         FindNamedTextBlock(root, L"TaskbarStatsSteamTitle"),
         FindNamedTextBlock(root, L"TaskbarStatsSteamTitleClone"),
         93.0,
-        18.0);
+        18.0,
+        deltaSeconds);
 }
 
 void SetNamedTextColor(wux::UIElement const& root,
@@ -5114,9 +5121,19 @@ wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root,
     timer.Interval(std::chrono::milliseconds(33));
     timer.Tick([root, parent, trayElement,
                 lastAnchorUpdate = CurrentUnixMillis(),
-                lastDataUpdate = CurrentUnixMillis()](auto const&, auto const&) mutable {
+                lastDataUpdate = CurrentUnixMillis(),
+                lastAnimationUpdate = CurrentUnixMillis()](auto const&, auto const&) mutable {
         try {
             long long now = CurrentUnixMillis();
+            double animationDeltaSeconds =
+                static_cast<double>(now - lastAnimationUpdate) / 1000.0;
+            if (!std::isfinite(animationDeltaSeconds) ||
+                animationDeltaSeconds <= 0) {
+                animationDeltaSeconds = 1.0 / 30.0;
+            }
+            animationDeltaSeconds = std::min(animationDeltaSeconds, 0.1);
+            lastAnimationUpdate = now;
+
             auto rootElement = root.try_as<wux::FrameworkElement>();
             if (rootElement && parent && trayElement &&
                 now - lastAnchorUpdate >= 250) {
@@ -5128,7 +5145,7 @@ wux::DispatcherTimer StartTaskbarStatsTimer(wux::UIElement const& root,
                 UpdateTaskbarStatsRoot(root);
                 lastDataUpdate = now;
             }
-            UpdateTaskbarStatsAnimations(root);
+            UpdateTaskbarStatsAnimations(root, animationDeltaSeconds);
         } catch (winrt::hresult_error const& ex) {
             Wh_Log(L"TaskbarStats update failed: 0x%08X %s", ex.code(),
                    ex.message().c_str());
