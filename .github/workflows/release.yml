@@ -13,6 +13,10 @@ on:
       prerelease:
         type: boolean
         default: true
+      publish:
+        description: "Create/update the GitHub release after packaging"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -59,6 +63,7 @@ jobs:
             artifacts/TaskbarWidgets-portable-x64.zip.sha256
             artifacts/release-manifest.json
       - name: Publish GitHub release
+        if: github.event_name == 'push' || inputs.publish == true
         shell: pwsh
         run: |
           $draft = "${{ inputs.draft || false }}" -eq "true"
