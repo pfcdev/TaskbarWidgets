@@ -326,7 +326,7 @@ static async Task<AppServerStatus> ReadRateLimitsFromAppServerAsync(string codex
             {
                 name = "taskbar-widgets",
                 title = "TaskbarWidgets",
-                version = "0.3.3"
+                version = "0.3.4"
             },
             capabilities = new
             {

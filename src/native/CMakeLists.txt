@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TaskbarWidgetsNative VERSION 0.3.3 LANGUAGES CXX)
+project(TaskbarWidgetsNative VERSION 0.3.4 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Taskbar Widgets native components require Windows x64")

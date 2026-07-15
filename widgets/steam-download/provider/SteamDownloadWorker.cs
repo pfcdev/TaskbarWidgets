@@ -45,7 +45,7 @@ internal static class SteamDownloadWorker
                 var snapshot = await BuildSnapshotAsync(previousBytes, cancellationToken);
                 WriteStatus(snapshot);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
@@ -355,12 +355,16 @@ internal static class SteamDownloadWorker
                 await File.WriteAllBytesAsync(path, bytes, cancellationToken);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             Log($"Steam header download failed for {appId}: {ex.Message}");
         }
 
-        return path;
+        return File.Exists(path) ? path : "";
     }
 
     private static string SanitizeFileName(string value)
