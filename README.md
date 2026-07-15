@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/logo.png" alt="Taskbar Widgets logo" width="96" height="96" />
+</p>
+
 # Taskbar Widgets
 
 Taskbar Widgets is an open-source Windows 11 x64 application that places small,

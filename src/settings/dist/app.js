@@ -301,7 +301,6 @@ function libraryPage() {
     if (!q) return true;
     return [widget.title, widget.category, widget.description].join(" ").toLowerCase().includes(q);
   });
-  const featured = widgetCatalog.filter((widget) => widget.featured).slice(0, 3);
   return `
     ${pageHeader("library")}
     <section class="library-toolbar">
@@ -309,65 +308,34 @@ function libraryPage() {
         <span class="material-symbols-outlined">search</span>
         <input id="widget-search" value="${escapeAttr(state.search)}" placeholder="Search widgets..." />
       </div>
-      <div class="filter-pills">
-        ${["All Widgets", "System", "Utility", "Media", "Gaming"].map((item, index) => `
-          <button class="${index === 0 ? "active" : ""}" type="button">${escapeHtml(item)}</button>
-        `).join("")}
-      </div>
+      <span class="library-count">${filtered.length} widget${filtered.length === 1 ? "" : "s"}</span>
     </section>
 
-    <section class="section-block">
-      <h3>Featured</h3>
-      <div class="featured-row">
-        ${featured.map(featuredWidgetCard).join("")}
-      </div>
-    </section>
-
-    <section class="section-block">
-      <h3>All Widgets</h3>
-      <div class="widget-grid">
-        ${filtered.map(widgetGridCard).join("")}
-      </div>
+    <section class="widget-library-list" aria-label="Available widgets">
+      ${filtered.length
+        ? filtered.map(widgetLibraryRow).join("")
+        : `<div class="library-empty"><strong>No widgets found</strong><span>Try a different search.</span></div>`}
     </section>
   `;
 }
 
-function featuredWidgetCard(widget) {
-  const runtime = widgetRuntime(widget.id);
-  return `
-    <article class="glass-card featured-card inner-glow" style="--accent:${widget.accent}">
-      <div class="featured-head">
-        <div class="widget-title-block">
-          <div class="widget-icon"><span class="material-symbols-outlined filled">${widget.icon}</span></div>
-          <div>
-            <h4>${escapeHtml(widget.title)}</h4>
-            <p>${escapeHtml(widget.category)}</p>
-          </div>
-        </div>
-        ${toggleButton(widget.id)}
-      </div>
-      <div class="widget-live-surface">
-        ${runtime.preview}
-      </div>
-    </article>
-  `;
-}
-
-function widgetGridCard(widget) {
+function widgetLibraryRow(widget) {
   const runtime = widgetRuntime(widget.id);
   const enabled = isWidgetEnabled(widget.id);
   return `
-    <article class="glass-card widget-tile ${enabled ? "enabled" : ""}" data-open-widget="${widget.id}" style="--accent:${widget.accent}">
-      <div class="library-card-head">
-        <div>
-          <h4>${escapeHtml(widget.title)}</h4>
-          <p>${escapeHtml(widget.category)}</p>
-        </div>
-        ${toggleButton(widget.id)}
-      </div>
-      <button class="tile-preview" data-open-widget="${widget.id}" type="button">
+    <article class="widget-library-row ${enabled ? "enabled" : ""}" style="--accent:${widget.accent}">
+      <button class="native-preview-button" data-open-widget="${widget.id}" type="button" aria-label="Open ${escapeAttr(widget.title)} settings">
         ${runtime.preview}
       </button>
+      <div class="widget-library-copy">
+        <div class="widget-library-title">
+          <span class="widget-accent-dot"></span>
+          <h3>${escapeHtml(widget.title)}</h3>
+          <span>${escapeHtml(widget.category)}</span>
+        </div>
+        <p>${escapeHtml(widget.description)}</p>
+      </div>
+      ${toggleButton(widget.id, true)}
     </article>
   `;
 }
@@ -541,7 +509,7 @@ function updatesPage() {
   const busy = isUpdateBusy(update);
   const downloading = update.state === "downloading";
   const installing = update.state === "installing" || updateInstallerLaunchInProgress;
-  const current = update.currentVersion || "0.3.0";
+  const current = update.currentVersion || "0.3.1";
   const latest = update.latestVersion || "Not checked";
   const checked = update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked";
   const isCurrent = update.state === "current" || (latest !== "Not checked" && latest.replace(/^v/i, "") === current.replace(/\.0$/, ""));
@@ -876,30 +844,34 @@ function runtimeControlPanel() {
 function widgetRuntime(id) {
   if (id === "weather-static") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule weather-static"><div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Istanbul")}</strong><small>21:24 - Clear</small></div><strong class="weather-temp">26 deg</strong><span class="material-symbols-outlined filled">light_mode</span></div></div>`,
+      preview: `<div class="native-preview-stage"><div class="native-widget weather-static"><div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Izmir")}</strong><small>21:24 • 15/07</small></div><strong class="weather-temp">26°</strong><img src="./assets/weather/rain.png" alt="" /></div></div>`,
       taskbar: `<div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Istanbul")}</strong><small>21:24 - Clear</small></div><strong class="weather-temp">26 deg</strong><span class="material-symbols-outlined filled">light_mode</span>`,
     };
   }
   if (id === "discord-voice") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule discord-voice"><span class="avatar-mini active"></span><span class="avatar-mini speaking"></span><span class="avatar-mini active"></span><span class="avatar-mini"></span><span class="avatar-mini"></span></div></div>`,
+      preview: `<div class="native-preview-stage"><div class="native-widget discord-voice"><span class="discord-avatar-frame"><i></i></span><span class="discord-avatar-frame speaking"><i></i></span><span class="discord-avatar-frame"><i></i></span></div></div>`,
       taskbar: `<span class="avatar-mini active"></span><span class="avatar-mini speaking"></span><span class="avatar-mini active"></span>`,
     };
   }
   if (id === "media-player") {
+    const media = state.mediaStatus || {};
+    const mediaTitle = media.title || "No media";
+    const mediaArtist = media.artist || "Open a player";
+    const darkMode = state.settings.mediaDarkMode !== false;
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule media-player"><span class="album-dot"></span><div class="media-copy"><strong>Now Playing</strong><small>System media</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span></div></div>`,
+      preview: `<div class="native-preview-stage"><div class="native-widget media-player ${darkMode ? "dark" : "light"}"><img class="native-cover" src="./assets/widgets/media_cover.png" alt="" /><div class="media-copy"><strong>${escapeHtml(mediaTitle)}</strong><small>${escapeHtml(mediaArtist)}</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span></div></div>`,
       taskbar: `<span class="album-dot"></span><div class="media-copy"><strong>Now Playing</strong><small>System media</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span>`,
     };
   }
   if (id === "steam-download") {
     return {
-      preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule steam-download"><span class="steam-art mini"></span><div class="steam-copy"><strong>Cyberpunk 2077</strong><small>8 min remaining</small></div><div class="steam-metric"><b>42%</b><i><em></em></i></div></div></div>`,
+      preview: `<div class="native-preview-stage"><div class="native-widget steam-download"><span class="native-cover steam-cover"></span><div class="steam-copy"><strong>Steam Downloads</strong><small>Indirme yok</small></div><div class="steam-metric"><b>--</b><i><em></em></i></div></div></div>`,
       taskbar: `<span class="steam-art mini"></span><div class="steam-copy"><strong>Cyberpunk 2077</strong><small>8 min remaining</small></div><div class="steam-metric"><b>42%</b><i><em></em></i></div>`,
     };
   }
   return {
-    preview: `<div class="taskbar-demo-strip"><div class="taskbar-capsule codex-status"><div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div></div></div>`,
+    preview: `<div class="native-preview-stage"><div class="native-widget codex-status"><div class="codex-line"><strong>Antigravity</strong><span class="native-state-icon">&#xE73E;</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div></div></div>`,
     taskbar: `<div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div>`,
   };
 }

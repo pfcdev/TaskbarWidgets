@@ -1036,6 +1036,10 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     root.Height(36);
     root.Width(184);
     root.Margin(wux::ThicknessHelper::FromLengths(6, 0, 6, 0));
+    // A Grid without a background is hit-testable only over painted children.
+    // Keep the whole widget rectangle interactive so Codex hover expansion
+    // starts anywhere inside its declared hitbox, not only over text/bars.
+    root.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
 
     wuxc::Grid compact;
     compact.Name(L"TaskbarWidgetsCompactPanel");

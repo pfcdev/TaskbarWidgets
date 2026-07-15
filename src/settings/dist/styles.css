@@ -123,15 +123,19 @@ button {
 .app-icon {
   width: 36px;
   height: 36px;
-  display: grid;
-  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
   border-radius: 10px;
-  background: linear-gradient(135deg, #7c5cfc, #00b1de);
-  box-shadow: 0 12px 28px rgba(0, 177, 222, .18);
+  background: #0d1118;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .32);
 }
 
-.app-icon span {
-  color: white;
+.app-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .sidebar-head h1 {
@@ -641,6 +645,391 @@ button {
   border-radius: 8px;
   background: rgba(8, 10, 14, .92);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
+.library-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.widget-library-list {
+  display: grid;
+  gap: 8px;
+}
+
+.widget-library-row {
+  min-width: 0;
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 12px 9px 9px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 12px;
+  background: rgba(26, 27, 33, .62);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.widget-library-row:hover {
+  border-color: rgba(255, 255, 255, .13);
+  background: rgba(31, 33, 40, .78);
+}
+
+.widget-library-row.enabled {
+  border-color: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, .08));
+}
+
+.native-preview-button {
+  width: 264px;
+  height: 58px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  cursor: pointer;
+  background: transparent;
+}
+
+.native-preview-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.native-preview-stage {
+  width: 264px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .025), transparent),
+    #080a0e;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+}
+
+.native-widget {
+  box-sizing: border-box;
+  overflow: hidden;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.native-widget.codex-status {
+  width: 184px;
+  height: 36px;
+  display: grid;
+  grid-template-rows: 14px 2px 17px;
+  align-content: center;
+  color: rgba(248, 250, 252, .94);
+}
+
+.native-widget.codex-status .codex-line {
+  gap: 0;
+  justify-content: center;
+}
+
+.native-widget.codex-status .codex-line strong {
+  width: 104px;
+  flex: 0 0 104px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.native-state-icon {
+  width: 8px;
+  height: 10px;
+  margin: 0 1px 0 2px;
+  color: rgba(148, 163, 184, .8);
+  font-family: "Segoe MDL2 Assets";
+  font-size: 8px;
+  line-height: 10px;
+}
+
+.native-widget.codex-status .codex-line small {
+  width: 32px;
+  color: rgba(148, 163, 184, .8);
+  font-size: 8px;
+  line-height: 10px;
+  text-align: left;
+}
+
+.native-widget.codex-status .quota-bar {
+  height: 2px;
+  border-radius: 0;
+  background: rgba(148, 163, 184, .22);
+}
+
+.native-widget.codex-status .quota-bar em {
+  background: #22d3ee;
+}
+
+.native-widget.codex-status .codex-metrics {
+  align-self: center;
+  color: rgba(248, 250, 252, .76);
+  font-size: 9px;
+}
+
+.native-widget.weather-static {
+  width: 228px;
+  height: 36px;
+  display: grid;
+  grid-template-columns: 114px 46px 52px;
+  align-items: center;
+  padding: 1px 6px 1px 10px;
+  border: 1px solid #2d2d2d;
+  border-radius: 8px;
+  background: rgba(17, 17, 17, .96);
+}
+
+.native-widget.weather-static .weather-text {
+  display: grid;
+  grid-template-rows: 17px 13px;
+  align-content: center;
+}
+
+.native-widget.weather-static .weather-text strong {
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 600;
+}
+
+.native-widget.weather-static .weather-text small {
+  color: rgba(248, 250, 252, .72);
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.native-widget.weather-static .weather-temp {
+  justify-self: end;
+  width: 44px;
+  font-size: 21px;
+  line-height: 24px;
+  text-align: right;
+}
+
+.native-widget.weather-static img {
+  width: 46px;
+  height: 34px;
+  justify-self: center;
+  object-fit: contain;
+}
+
+.native-widget.discord-voice {
+  width: 184px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border: 1px solid #2d2d2d;
+  border-radius: 8px;
+  background: rgba(17, 17, 17, .96);
+}
+
+.discord-avatar-frame {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  margin: 0 2px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+}
+
+.discord-avatar-frame i {
+  width: 24px;
+  height: 24px;
+  display: block;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #64748b, #1f2937);
+}
+
+.discord-avatar-frame:nth-child(2) i {
+  background: linear-gradient(145deg, #a78bfa, #4338ca);
+}
+
+.discord-avatar-frame:nth-child(3) i {
+  background: linear-gradient(145deg, #fb7185, #9f1239);
+}
+
+.discord-avatar-frame.speaking {
+  border-color: #22c55e;
+}
+
+.native-widget.media-player,
+.native-widget.steam-download {
+  width: 220px;
+  height: 44px;
+  display: grid;
+  align-items: center;
+  border-radius: 9px;
+}
+
+.native-widget.media-player {
+  grid-template-columns: 49px 126px 22px;
+  padding: 7px 11px 7px 12px;
+}
+
+.native-widget.media-player.dark {
+  color: #f8fafc;
+  background: #0f172a;
+}
+
+.native-widget.media-player.light {
+  color: #000;
+  background: #fafaf8;
+}
+
+.native-cover {
+  width: 49px;
+  height: 30px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.native-widget.media-player .media-copy {
+  width: 112px;
+  height: 30px;
+  display: grid;
+  grid-template-rows: 16px 14px;
+  margin-left: 12px;
+}
+
+.native-widget.media-player .media-copy strong,
+.native-widget.steam-download .steam-copy strong {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.native-widget.media-player .media-copy small,
+.native-widget.steam-download .steam-copy small {
+  font-size: 9px;
+  line-height: 14px;
+}
+
+.native-widget.media-player.dark .media-copy small {
+  color: #94a3b8;
+}
+
+.native-widget.media-player.light .media-copy small {
+  color: rgba(0, 0, 0, .94);
+}
+
+.native-widget.media-player .media-play {
+  justify-self: end;
+  background: #334155;
+  color: #cbd5e1;
+}
+
+.native-widget.steam-download {
+  grid-template-columns: 49px 104px 44px;
+  padding: 6px 11px 6px 12px;
+  color: #f8fafc;
+  background: linear-gradient(90deg, rgba(8, 19, 35, .96), rgba(27, 40, 56, .96));
+}
+
+.steam-cover {
+  background: linear-gradient(135deg, #1b2838, #2a475e);
+}
+
+.native-widget.steam-download .steam-copy {
+  width: 93px;
+  height: 30px;
+  display: grid;
+  grid-template-rows: 16px 14px;
+  margin-left: 12px;
+}
+
+.native-widget.steam-download .steam-copy small {
+  color: #cbd5e1;
+}
+
+.native-widget.steam-download .steam-metric {
+  width: 44px;
+  height: 30px;
+  grid-template-rows: 17px 13px;
+  align-items: center;
+}
+
+.native-widget.steam-download .steam-metric b {
+  color: #f8fafc;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.native-widget.steam-download .steam-metric i {
+  align-self: center;
+  background: rgba(203, 213, 225, .28);
+}
+
+.widget-library-copy {
+  min-width: 0;
+}
+
+.widget-library-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.widget-library-title h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget-library-title > span:last-child {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .055);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.widget-accent-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 52%, transparent);
+}
+
+.widget-library-copy p {
+  margin: 3px 0 0 14px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-empty {
+  min-height: 160px;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  border: 1px dashed rgba(255, 255, 255, .10);
+  border-radius: 12px;
+  color: var(--on-variant);
+  text-align: center;
+}
+
+.library-empty span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .widget-grid {
@@ -1975,6 +2364,16 @@ button {
 
   .widget-grid {
     grid-template-columns: 1fr;
+  }
+
+  .widget-library-row {
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 10px;
+  }
+
+  .native-preview-button {
+    grid-column: 1 / -1;
+    justify-self: center;
   }
 
   .sequence-item {
