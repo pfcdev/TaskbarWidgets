@@ -81,6 +81,20 @@ global settings are available from the shared Settings application.
 **Discord Voice** is also included. It shows voice participants and highlights
 the current speaker after Discord RPC authorization is configured in Settings.
 
+### System meters
+
+Four lightweight system widgets provide an XMeters-compatible meter layout
+using Taskbar Widgets branding and independently implemented native rendering:
+
+- **CPU** shows total, user/privileged, or per-core utilization.
+- **Storage** shows read/write throughput for all disks or a selected physical disk.
+- **Network** shows receive/send throughput for all adapters or a selected interface.
+- **Memory** shows used physical-memory percentage.
+
+Each meter supports text, bar, and pie views, configurable colors, and refresh
+intervals from 0.1 to 10 seconds. System meters are disabled by default on
+upgrade and can be enabled and positioned independently from the Widget Library.
+
 ### Dynamic Media Player themes
 
 The Media Player derives its background, accent and control colors from the
@@ -176,7 +190,7 @@ taskbar positioning, rotation sequencing, update controls and runtime load/unloa
 
 - **Row mode:** shows every enabled widget side by side in the configured order.
 - **Rotation mode:** shows widgets from a selected queue at a configurable interval.
-- **Positioning:** combines a taskbar anchor percentage with a fine pixel offset.
+- **Positioning:** every widget can be dragged directly along the taskbar; the saved anchor percentage and fine pixel offset remain editable and stay synchronized in Settings.
 - **Unknown widgets:** remain in configuration but stay disabled until supported.
 
 Settings is an internal component. Users launch `TaskbarWidgets.exe`; they do not

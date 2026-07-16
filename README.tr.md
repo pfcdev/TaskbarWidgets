@@ -1,9 +1,16 @@
 # Taskbar Widgets - Hızlı Başlangıç
 
 Taskbar Widgets, Windows 11 x64 görev çubuğuna canlı bilgi kartları ekleyen açık
-kaynak bir uygulamadır. İlk sürüm Codex, hava durumu, Discord Voice, medya ve
-Steam indirme widget'larını içerir. Widget'lar yan yana veya isteğe bağlı
+kaynak bir uygulamadır. Codex, hava durumu, Discord Voice, medya, Steam indirme
+ve sistem izleme widget'larını içerir. Widget'lar yan yana veya isteğe bağlı
 rotasyon modunda gösterilebilir.
+
+CPU, depolama, ağ ve bellek için dört bağımsız sistem widget'ı bulunur. Her biri
+metin, bar ve pasta görünümü; özelleştirilebilir metrik/çerçeve renkleri ve 0,1-10 saniyelik
+yenileme seçenekleri sunar. Yeni sistem widget'ları varsayılan olarak kapalıdır
+ve Widget Library üzerinden ayrı ayrı etkinleştirilip konumlandırılabilir.
+Widget'ların tamamı görev çubuğu üzerinde sürükle-bırak ile taşınabilir; bırakılan
+konum Settings içindeki yüzde ve piksel konum alanlarına kaydedilir.
 
 ## Kurulum
 

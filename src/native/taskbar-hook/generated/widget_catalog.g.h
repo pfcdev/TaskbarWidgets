@@ -5,11 +5,15 @@
 
 namespace taskbar_widgets::generated {
 struct WidgetDefinition { std::wstring_view id; std::wstring_view displayName; double width; double height; };
-inline constexpr std::array<WidgetDefinition, 5> kWidgets{{
+inline constexpr std::array<WidgetDefinition, 9> kWidgets{{
     {L"codex-status", L"Codex Status", 220.0, 48.0},
     {L"discord-voice", L"Discord Voice", 220.0, 48.0},
     {L"media-player", L"Media Player", 240.0, 48.0},
     {L"steam-download", L"Steam Downloads", 240.0, 48.0},
+    {L"system-cpu", L"CPU", 32.0, 24.0},
+    {L"system-memory", L"Memory", 32.0, 24.0},
+    {L"system-network", L"Network", 93.0, 24.0},
+    {L"system-storage", L"Storage", 93.0, 24.0},
     {L"weather-static", L"Weather", 220.0, 48.0}
 }};
 }  // namespace taskbar_widgets::generated

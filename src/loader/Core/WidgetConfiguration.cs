@@ -10,8 +10,11 @@ internal sealed class WidgetConfiguration
     public List<WidgetInstanceConfiguration> Widgets { get; set; } = DefaultWidgets();
     public RotationConfiguration Rotation { get; set; } = new();
 
-    public static WidgetConfiguration LoadOrCreate(string path)
+    public static WidgetConfiguration LoadOrCreate(string path) => LoadOrCreate(path, out _);
+
+    internal static WidgetConfiguration LoadOrCreate(string path, out bool normalized)
     {
+        normalized = false;
         if (!File.Exists(path))
         {
             return new WidgetConfiguration();
@@ -23,15 +26,16 @@ internal sealed class WidgetConfiguration
         {
             var configuration = JsonSerializer.Deserialize<WidgetConfiguration>(
                 document.RootElement.GetRawText(), JsonOptions()) ?? new WidgetConfiguration();
-            configuration.Normalize();
+            normalized = configuration.Normalize();
             return configuration;
         }
 
         return FromLegacy(document.RootElement);
     }
 
-    private void Normalize()
+    internal bool Normalize()
     {
+        var changed = false;
         Layout.Mode = string.Equals(Layout.Mode, "rotation", StringComparison.OrdinalIgnoreCase)
             ? "rotation"
             : "row";
@@ -44,12 +48,68 @@ internal sealed class WidgetConfiguration
             {
                 widget.Enabled = false;
             }
+            if (SystemMeterDefaults.TryGetValue(widget.Id, out var defaults) &&
+                (!widget.Settings.TryGetPropertyValue("meterStyleVersion", out var versionNode) ||
+                 versionNode?.GetValue<int?>() != 1))
+            {
+                widget.Settings = (JsonObject)defaults.DeepClone();
+                changed = true;
+            }
         }
         Rotation.WidgetIds = Rotation.WidgetIds
             .Where(WidgetCatalog.IsKnown)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        return changed;
     }
+
+    internal static readonly IReadOnlyDictionary<string, JsonObject> SystemMeterDefaults =
+        new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["system-cpu"] = new()
+            {
+                ["meterStyleVersion"] = 1,
+                ["displayMode"] = "bar",
+                ["refreshSeconds"] = 3d,
+                ["outlineColor"] = "#FFFFFFFF",
+                ["showIndividualCores"] = true,
+                ["combineLogicalCores"] = false,
+                ["separateUtilization"] = true,
+                ["systemColor"] = "#FFFFFFFF",
+                ["userColor"] = "systemAccent",
+                ["cpuColor"] = "systemAccent"
+            },
+            ["system-storage"] = new()
+            {
+                ["meterStyleVersion"] = 1,
+                ["displayMode"] = "text",
+                ["refreshSeconds"] = 3d,
+                ["outlineColor"] = "#FFFFFFFF",
+                ["readColor"] = "#FFFFFFFF",
+                ["writeColor"] = "#FFFFFFFF",
+                ["diskId"] = "_Total"
+            },
+            ["system-network"] = new()
+            {
+                ["meterStyleVersion"] = 1,
+                ["displayMode"] = "text",
+                ["refreshSeconds"] = 3d,
+                ["outlineColor"] = "#FFFFFFFF",
+                ["receiveColor"] = "systemAccent",
+                ["sendColor"] = "systemAccent",
+                ["interfaceId"] = "all",
+                ["autoBandwidth"] = true,
+                ["bandwidthKiloBytes"] = 125000d
+            },
+            ["system-memory"] = new()
+            {
+                ["meterStyleVersion"] = 1,
+                ["displayMode"] = "pie",
+                ["refreshSeconds"] = 3d,
+                ["outlineColor"] = "systemAccent",
+                ["usedColor"] = "systemAccent"
+            }
+        };
 
     public void Save(string path) => AtomicJson.Write(path, this, JsonOptions());
 
@@ -167,6 +227,36 @@ internal sealed class WidgetPosition
 {
     public int AnchorPercent { get; set; } = 100;
     public int OffsetPx { get; set; }
+}
+
+internal static class WidgetPositionCommandHandler
+{
+    private static readonly object SyncRoot = new();
+
+    internal static bool TryApply(string path, string? widgetId, int? anchorPercent, int? offsetPx)
+    {
+        if (string.IsNullOrWhiteSpace(widgetId) || !WidgetCatalog.IsKnown(widgetId) ||
+            anchorPercent is null or < 0 or > 100 || offsetPx is null or < -640 or > 640)
+        {
+            return false;
+        }
+
+        lock (SyncRoot)
+        {
+            var configuration = WidgetConfiguration.LoadOrCreate(path);
+            var widget = configuration.Widgets.FirstOrDefault(
+                item => string.Equals(item.Id, widgetId, StringComparison.OrdinalIgnoreCase));
+            if (widget is null)
+            {
+                return false;
+            }
+
+            widget.Position.AnchorPercent = anchorPercent.Value;
+            widget.Position.OffsetPx = offsetPx.Value;
+            configuration.Save(path);
+            return true;
+        }
+    }
 }
 
 internal sealed class RotationConfiguration

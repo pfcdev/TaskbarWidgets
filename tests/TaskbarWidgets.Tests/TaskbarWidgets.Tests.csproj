@@ -11,6 +11,8 @@
     <Compile Include="..\..\src\loader\Core\WidgetContracts.cs" Link="Core\WidgetContracts.cs" />
     <Compile Include="..\..\src\loader\Core\WidgetConfiguration.cs" Link="Core\WidgetConfiguration.cs" />
     <Compile Include="..\..\src\loader\Core\ReleaseAssetPolicy.cs" Link="Core\ReleaseAssetPolicy.cs" />
+    <Compile Include="..\..\src\loader\Core\SystemMetricMath.cs" Link="Core\SystemMetricMath.cs" />
     <Compile Include="..\..\src\loader\Generated\WidgetCatalog.g.cs" Link="Generated\WidgetCatalog.g.cs" />
+    <Compile Include="..\..\widgets\system-cpu\provider\SystemMetricsWorker.cs" Link="Widgets\SystemMetricsWorker.cs" />
   </ItemGroup>
 </Project>

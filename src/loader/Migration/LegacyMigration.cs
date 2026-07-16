@@ -14,6 +14,7 @@ internal static class LegacyMigration
     {
         if (File.Exists(MarkerPath))
         {
+            MigrateSystemMeterSettings();
             return;
         }
 
@@ -48,6 +49,29 @@ internal static class LegacyMigration
             MarkerPath,
             $"MigratedAt={DateTimeOffset.UtcNow:O}{Environment.NewLine}Source={source ?? "none"}{Environment.NewLine}",
             Encoding.UTF8);
+        MigrateSystemMeterSettings();
+    }
+
+    private static void MigrateSystemMeterSettings()
+    {
+        var path = Path.Combine(AppPaths.DataDirectory, "config.json");
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var configuration = WidgetConfiguration.LoadOrCreate(path, out var normalized);
+            if (normalized)
+            {
+                configuration.Save(path);
+            }
+        }
+        catch
+        {
+            // A malformed user config is left untouched; Settings can report it.
+        }
     }
 
     private static IEnumerable<string> CandidateDirectories()

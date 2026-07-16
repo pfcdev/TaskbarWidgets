@@ -1,0 +1,22 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "system-cpu",
+  "displayName": "CPU",
+  "category": "System",
+  "description": "Live total, user, kernel and per-core CPU utilization.",
+  "defaultSize": { "width": 32, "height": 24 },
+  "assets": [],
+  "settings": [
+    { "key": "meterStyleVersion", "type": "number", "label": "Meter style version", "default": 1 },
+    { "key": "displayMode", "type": "select", "label": "Display mode", "default": "bar", "options": ["bar", "pie", "text"] },
+    { "key": "refreshSeconds", "type": "number", "label": "Refresh interval", "default": 3, "minimum": 0.1, "maximum": 10, "step": 0.1 },
+    { "key": "outlineColor", "type": "text", "label": "Outline color", "default": "#FFFFFFFF" },
+    { "key": "showIndividualCores", "type": "boolean", "label": "Show individual cores", "default": true },
+    { "key": "combineLogicalCores", "type": "boolean", "label": "Combine logical cores", "default": false },
+    { "key": "separateUtilization", "type": "boolean", "label": "Separate user and privileged utilization", "default": true },
+    { "key": "systemColor", "type": "text", "label": "System color", "default": "#FFFFFFFF" },
+    { "key": "userColor", "type": "text", "label": "User color", "default": "systemAccent" },
+    { "key": "cpuColor", "type": "text", "label": "CPU color", "default": "systemAccent" }
+  ]
+}

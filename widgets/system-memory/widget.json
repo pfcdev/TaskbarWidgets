@@ -1,0 +1,17 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "system-memory",
+  "displayName": "Memory",
+  "category": "System",
+  "description": "Live physical memory usage and availability.",
+  "defaultSize": { "width": 32, "height": 24 },
+  "assets": [],
+  "settings": [
+    { "key": "meterStyleVersion", "type": "number", "label": "Meter style version", "default": 1 },
+    { "key": "displayMode", "type": "select", "label": "Display mode", "default": "pie", "options": ["bar", "pie", "text"] },
+    { "key": "refreshSeconds", "type": "number", "label": "Refresh interval", "default": 3, "minimum": 0.1, "maximum": 10, "step": 0.1 },
+    { "key": "outlineColor", "type": "text", "label": "Outline color", "default": "systemAccent" },
+    { "key": "usedColor", "type": "text", "label": "Memory used color", "default": "systemAccent" }
+  ]
+}

@@ -6,6 +6,10 @@ const widgetPresentation = {
   "discord-voice": { icon: "forum", accent: "#5865f2" },
   "media-player": { icon: "play_circle", accent: "#1db954" },
   "steam-download": { icon: "download", accent: "#66c0f4", featured: true },
+  "system-cpu": { icon: "memory", accent: "#60a5fa", featured: true },
+  "system-storage": { icon: "hard_drive", accent: "#34d399" },
+  "system-network": { icon: "swap_vert", accent: "#22d3ee", featured: true },
+  "system-memory": { icon: "developer_board", accent: "#c084fc" },
 };
 
 const widgetCatalog = (window.TASKBAR_WIDGET_CATALOG || []).map((manifest) => ({
@@ -21,6 +25,7 @@ const defaultWidgets = widgetCatalog.map((widget, index) => ({
   moveX: 0,
   positionPct: 100,
   order: index,
+  settings: Object.fromEntries((widget.settings || []).map((setting) => [setting.key, setting.default])),
 }));
 
 const defaults = {
@@ -70,6 +75,7 @@ let state = {
   settings: { ...defaults },
   updateStatus: {},
   mediaStatus: {},
+  systemSources: { disks: [], interfaces: [] },
   releaseTimeline: [],
   releaseTimelineState: "idle",
   search: "",
@@ -85,6 +91,10 @@ let previewTimer = 0;
 let updatePollTimer = 0;
 let updateInstallerLaunchInProgress = false;
 let updateInstallRequested = false;
+let settingsRequestTimer = 0;
+let widgetPositionSyncTimer = 0;
+let widgetPositionSyncInProgress = false;
+const locallyEditedWidgetPositions = new Set();
 
 function widgetById(id) {
   return widgetCatalog.find((item) => item.id === id) || widgetCatalog[0];
@@ -135,12 +145,16 @@ function normalizeWidgets(list, activeDesign, legacyEnabled = true, legacyMoveX 
       moveX: clampNumber(item.moveX ?? item.widgetMoveX ?? 0, -640, 640, 0),
       positionPct: clampNumber(item.positionPct ?? 100, 0, 100, 100),
       order: clampNumber(item.order ?? result.length, 0, 1000, result.length),
+      settings: {
+        ...(defaultWidgets.find((widget) => widget.design === design)?.settings || {}),
+        ...(item.settings || {}),
+      },
     });
   }
 
   for (const widget of defaultWidgets) {
     if (!result.some((item) => item.design === widget.design)) {
-      result.push({ ...widget, enabled: false, moveX: 0, positionPct: 100, order: result.length });
+      result.push({ ...widget, settings: { ...widget.settings }, enabled: false, moveX: 0, positionPct: 100, order: result.length });
     }
   }
 
@@ -174,6 +188,7 @@ function widgetState(id) {
       moveX: 0,
       positionPct: 100,
       order: state.settings.widgets.length,
+      settings: { ...(defaultWidgets.find((item) => item.design === design)?.settings || {}) },
     };
     state.settings.widgets.push(widget);
   }
@@ -197,7 +212,7 @@ function currentPreviewDesign() {
 }
 
 function clampNumber(value, min, max, fallback) {
-  const number = Number.parseInt(value, 10);
+  const number = Number.parseFloat(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, number));
 }
@@ -209,13 +224,72 @@ async function boot() {
     state.settings = mergeSettings(loaded.settings || {});
     state.updateStatus = loaded.updateStatus || {};
     state.mediaStatus = loaded.mediaStatus || {};
+    state.systemSources = loaded.systemSources || { disks: [], interfaces: [] };
   } catch (error) {
     state.status = `Load failed: ${error}`;
   }
   render();
+  await consumeSettingsOpenRequest();
+  settingsRequestTimer = setInterval(consumeSettingsOpenRequest, 500);
+  widgetPositionSyncTimer = setInterval(syncWidgetPositions, 600);
   loadReleaseTimeline();
   startPreviewLoop();
   if (isUpdateBusy(state.updateStatus)) startUpdatePolling();
+}
+
+async function syncWidgetPositions() {
+  if (widgetPositionSyncInProgress) return;
+  widgetPositionSyncInProgress = true;
+  try {
+    const loaded = await invoke("load_state");
+    const incoming = normalizeWidgets(
+      loaded.settings?.widgets,
+      state.settings.activeDesign,
+      state.settings.enabled,
+      state.settings.widgetMoveX,
+    );
+    let changed = false;
+    for (const current of state.settings.widgets) {
+      if (locallyEditedWidgetPositions.has(current.design)) continue;
+      const saved = incoming.find((widget) => widget.design === current.design);
+      if (!saved || (saved.positionPct === current.positionPct && saved.moveX === current.moveX)) continue;
+      current.positionPct = saved.positionPct;
+      current.moveX = saved.moveX;
+      changed = true;
+    }
+    if (!changed) return;
+
+    const active = activeWidget();
+    state.settings.widgetMoveX = active.moveX;
+    state.settings.widgetOffsetPx = Math.max(0, -active.moveX);
+    document.querySelectorAll('[data-widget-setting="positionPct"]').forEach((input) => {
+      input.value = active.positionPct;
+    });
+    document.querySelectorAll('[data-widget-setting="moveX"]').forEach((input) => {
+      input.value = active.moveX;
+    });
+    updateValueLabel("widget", "positionPct", active.positionPct, "%");
+    updateValueLabel("widget", "moveX", active.moveX, "px");
+    renderFloatingTaskbar();
+    setStatus("Taskbar position updated");
+  } catch {
+    // The loader may be replacing config.json atomically; retry on the next tick.
+  } finally {
+    widgetPositionSyncInProgress = false;
+  }
+}
+
+async function consumeSettingsOpenRequest() {
+  try {
+    const widgetId = await invoke("consume_settings_open_request");
+    if (!widgetId || !String(widgetId).startsWith("system-") || !isKnownWidget(widgetId)) return;
+    state.settings.activeDesign = widgetId;
+    state.modalWidgetId = widgetId;
+    state.page = "settings";
+    render();
+  } catch {
+    // A missing or concurrently consumed request is expected.
+  }
 }
 
 function render() {
@@ -446,6 +520,7 @@ function settingsPage() {
             <button class="${state.settings.activeDesign === widget.id ? "active" : ""}" data-select-widget="${widget.id}" type="button">${escapeHtml(widget.title)}</button>
           `).join("")}
         </div>
+        ${systemMeterTabs()}
         ${currentWidgetSettingsFields()}
       </section>
 
@@ -466,8 +541,20 @@ function settingsPage() {
   `;
 }
 
+function systemMeterTabs() {
+  const ids = ["system-cpu", "system-storage", "system-network", "system-memory"];
+  const widgets = state.settings.widgets.filter((widget) => ids.includes(widget.design)).sort((a, b) => a.order - b.order);
+  return `<div class="system-meter-tabs" aria-label="System meter order">
+    ${widgets.map((widget) => `<button draggable="true" data-system-meter-tab="${widget.design}" class="${state.settings.activeDesign === widget.design ? "active" : ""}" type="button">
+      <span class="system-tab-check"><input type="checkbox" data-system-tab-enabled="${widget.design}" ${widget.enabled ? "checked" : ""} aria-label="Enable ${escapeAttr(widgetById(widget.design).title)}" /></span>
+      <span>${escapeHtml(widgetById(widget.design).title)}</span><i></i>
+    </button>`).join("")}
+  </div>`;
+}
+
 function currentWidgetSettingsFields() {
   const id = state.settings.activeDesign;
+  if (id.startsWith("system-")) return systemWidgetSettingsFields(id);
   if (id === "weather-static") {
     return `
       ${textSetting("weatherCity", "City", "Weather location name.", state.settings.weatherCity, "Istanbul")}
@@ -504,12 +591,62 @@ function currentWidgetSettingsFields() {
   `;
 }
 
+function systemWidgetSettingsFields(id) {
+  const widget = activeWidget();
+  const values = widget.settings || (widget.settings = {});
+  const defaultMode = id === "system-cpu" ? "bar" : id === "system-memory" ? "pie" : "text";
+  const mode = values.displayMode || defaultMode;
+  const fields = [
+    instanceRadioSetting("displayMode", "Type", mode, [["bar", "Bar"], ["pie", "Pie"], ["text", "Text"]]),
+    instanceRangeSetting("refreshSeconds", "Refresh Rate", "Sampling interval used by this meter.", Number(values.refreshSeconds ?? 3), 0.1, 10, 0.1, " Seconds"),
+  ];
+  if (mode !== "text") fields.push(instanceColorSetting("outlineColor", "Outline", values.outlineColor || (id === "system-memory" ? "systemAccent" : "#FFFFFFFF")));
+  if (id === "system-cpu") {
+    fields.push(instanceToggle("showIndividualCores", "Show Individual Cores", "Draw one meter for each logical core.", values.showIndividualCores !== false));
+    if (values.showIndividualCores !== false) fields.push(instanceToggle("combineLogicalCores", "Combine Logical Cores", "Combine adjacent logical cores into physical-core pairs.", values.combineLogicalCores === true));
+    fields.push(instanceToggle("separateUtilization", "Separate User / Privileged Utilization", "Show user and privileged activity as separate colors.", values.separateUtilization !== false));
+    if (values.separateUtilization !== false) {
+      fields.push(instanceColorSetting("systemColor", "System", values.systemColor || "#FFFFFFFF"));
+      fields.push(instanceColorSetting("userColor", "User", values.userColor || "systemAccent"));
+    } else {
+      fields.push(instanceColorSetting("cpuColor", "CPU", values.cpuColor || "systemAccent"));
+    }
+  }
+  if (id === "system-storage") {
+    fields.push(instanceColorSetting("readColor", "Read", values.readColor || "#FFFFFFFF"));
+    fields.push(instanceColorSetting("writeColor", "Write", values.writeColor || "#FFFFFFFF"));
+    fields.push(instanceSelectSetting("diskId", "Disk", "Use all physical disks or a counter discovered by the loader.", values.diskId || "_Total", sourceOptions(values.diskId, "_Total", "All disks", state.systemSources.disks)));
+  }
+  if (id === "system-network") {
+    fields.push(instanceColorSetting("sendColor", "Send", values.sendColor || "systemAccent"));
+    fields.push(instanceColorSetting("receiveColor", "Receive", values.receiveColor || "systemAccent"));
+    fields.push(instanceSelectSetting("interfaceId", "Network Interface", "All sums every active interface.", values.interfaceId || "all", sourceOptions(values.interfaceId, "all", "All interfaces", state.systemSources.interfaces)));
+    if (mode !== "text") {
+      fields.push(instanceToggle("autoBandwidth", "Automatically Detect Bandwidth", "Use the link speed reported by Windows.", values.autoBandwidth !== false));
+      if (values.autoBandwidth === false) fields.push(instanceNumberSetting("bandwidthKiloBytes", "Bandwidth (KiloBytes)", "Manual capacity used for bar and pie utilization.", values.bandwidthKiloBytes || 125000, 1, 1000000000, 1));
+    }
+  }
+  if (id === "system-memory") {
+    fields.push(instanceColorSetting("usedColor", "Memory Used", values.usedColor || "systemAccent"));
+  }
+  return fields.join("");
+}
+
+function sourceOptions(current, fallbackId, fallbackName, source) {
+  const options = [[fallbackId, fallbackName]];
+  for (const item of source || []) {
+    if (!options.some(([id]) => id === item.id)) options.push([item.id, item.name || item.id]);
+  }
+  if (current && !options.some(([id]) => id === current)) options.push([current, `${current} (unavailable)`]);
+  return options;
+}
+
 function updatesPage() {
   const update = state.updateStatus || {};
   const busy = isUpdateBusy(update);
   const downloading = update.state === "downloading";
   const installing = update.state === "installing" || updateInstallerLaunchInProgress;
-  const current = update.currentVersion || "0.3.5";
+  const current = update.currentVersion || "0.3.9";
   const latest = update.latestVersion || "Not checked";
   const checked = update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked";
   const isCurrent = update.state === "current" || (latest !== "Not checked" && latest.replace(/^v/i, "") === current.replace(/\.0$/, ""));
@@ -665,6 +802,48 @@ function selectSetting(key, label, hint, value, options) {
       <select class="compact-input" data-setting="${key}">
         ${options.map(([id, text]) => `<option value="${escapeAttr(id)}" ${id === value ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}
       </select>
+    </div>
+  `;
+}
+
+function instanceSelectSetting(key, label, hint, value, options) {
+  return `
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div>
+      <select class="compact-input" data-instance-setting="${escapeAttr(key)}">
+        ${options.map(([id, text]) => `<option value="${escapeAttr(id)}" ${String(id) === String(value) ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}
+      </select>
+    </div>
+  `;
+}
+
+function instanceColorSetting(key, label, value) {
+  const color = /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : /^#[0-9a-f]{8}$/i.test(String(value || "")) ? `#${String(value).slice(3)}` : "#2986cc";
+  return `
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>Hex color or systemAccent.</p></div>
+      <div class="meter-color-control"><input class="color-input" type="color" data-color-target="${escapeAttr(key)}" value="${escapeAttr(color)}" /><input class="compact-input color-text" data-instance-setting="${escapeAttr(key)}" value="${escapeAttr(value || "systemAccent")}" /></div>
+    </div>
+  `;
+}
+
+function instanceRadioSetting(key, label, value, options) {
+  return `<div class="setting-block"><div class="setting-head"><div><strong>${escapeHtml(label)}</strong></div></div><div class="meter-type-radios">${options.map(([id, text]) => `<label><input type="radio" name="meter-${escapeAttr(key)}" data-instance-setting="${escapeAttr(key)}" value="${id}" ${id === value ? "checked" : ""}/><span>${text}</span></label>`).join("")}</div></div>`;
+}
+
+function instanceRangeSetting(key, label, hint, value, min, max, step, unit) {
+  return `<div class="setting-block"><div class="setting-head"><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div><span id="instance-${key}-value">${Number(value).toFixed(1)}${unit}</span></div><input type="range" min="${min}" max="${max}" step="${step}" data-instance-setting="${key}" data-unit="${escapeAttr(unit)}" value="${escapeAttr(value)}" /></div>`;
+}
+
+function instanceNumberSetting(key, label, hint, value, min, max, step) {
+  return `<div class="setting-row"><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div><input class="compact-input" type="number" min="${min}" max="${max}" step="${step}" data-instance-setting="${key}" value="${escapeAttr(value)}" /></div>`;
+}
+
+function instanceToggle(key, label, hint, checked) {
+  return `
+    <div class="setting-row">
+      <div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(hint)}</p></div>
+      <label class="win-toggle"><input type="checkbox" data-instance-setting="${escapeAttr(key)}" ${checked ? "checked" : ""} /><span><i></i></span></label>
     </div>
   `;
 }
@@ -842,6 +1021,7 @@ function runtimeControlPanel() {
 }
 
 function widgetRuntime(id) {
+  if (id.startsWith("system-")) return systemWidgetRuntime(id);
   if (id === "weather-static") {
     return {
       preview: `<div class="native-preview-stage"><div class="native-widget weather-static"><div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Izmir")}</strong><small>21:24 • 15/07</small></div><strong class="weather-temp">26°</strong><img src="./assets/weather/rain.png" alt="" /></div></div>`,
@@ -874,6 +1054,44 @@ function widgetRuntime(id) {
     preview: `<div class="native-preview-stage"><div class="native-widget codex-status"><div class="codex-line"><strong>Antigravity</strong><span class="native-state-icon">&#xE73E;</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div></div></div>`,
     taskbar: `<div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div>`,
   };
+}
+
+function systemWidgetRuntime(id) {
+  const widget = widgetState(id);
+  const values = widget.settings || {};
+  const accent = "#2986cc";
+  const resolve = (value, fallback) => String(value || fallback).toLowerCase() === "systemaccent" ? accent : value || fallback;
+  const defaults = id === "system-cpu"
+    ? { mode: "bar", first: resolve(values.userColor, accent), second: resolve(values.systemColor, "#fff"), outline: resolve(values.outlineColor, "#fff") }
+    : id === "system-storage"
+      ? { mode: "text", first: resolve(values.readColor, "#fff"), second: resolve(values.writeColor, "#fff"), outline: resolve(values.outlineColor, "#fff") }
+      : id === "system-network"
+        ? { mode: "text", first: resolve(values.sendColor, accent), second: resolve(values.receiveColor, accent), outline: resolve(values.outlineColor, "#fff") }
+        : { mode: "pie", first: resolve(values.usedColor, accent), second: "transparent", outline: resolve(values.outlineColor, accent) };
+  const mode = values.displayMode || defaults.mode;
+  const coreValues = [[18, 4], [42, 7], [35, 6], [9, 3], [54, 8], [31, 5], [47, 7], [23, 4]];
+  const perCore = id === "system-cpu" && values.showIndividualCores !== false;
+  const cores = values.combineLogicalCores ? coreValues.reduce((rows, value, index) => {
+    if (index % 2 === 0) rows.push([value[0], value[1]]); else { rows.at(-1)[0] = Math.round((rows.at(-1)[0] + value[0]) / 2); rows.at(-1)[1] = Math.round((rows.at(-1)[1] + value[1]) / 2); } return rows;
+  }, []) : coreValues;
+  const split = values.separateUtilization !== false;
+  const cpuColor = resolve(values.cpuColor, accent);
+  const style = `--primary:${escapeAttr(split ? defaults.first : cpuColor)};--secondary:${escapeAttr(defaults.second)};--meter-outline:${escapeAttr(defaults.outline)}`;
+  let meter = "";
+  if (mode === "text") {
+    if (perCore) meter = `<span class="xmeter-core-text">${cores.map(([user, system]) => `<i><b>${split ? system : user + system}%</b><small>${split ? `${user}%` : ""}</small></i>`).join("")}</span>`;
+    else if (id === "system-storage") meter = `<span class="xmeter-rate-lines"><span><b>24 MB/s</b><i>▲</i></span><span><small>8 MB/s</small><i>▼</i></span></span>`;
+    else if (id === "system-network") meter = `<span class="xmeter-rate-lines"><span><b>2 MB/s</b><i>▲</i></span><span><small>12 MB/s</small><i>▼</i></span></span>`;
+    else meter = `<span class="xmeter-single-text">${id === "system-memory" ? "64%" : "45%"}</span>`;
+  } else if (mode === "bar") {
+    const metrics = perCore ? cores : id === "system-storage" ? [[57, 18]] : id === "system-network" ? [[16, 42]] : id === "system-memory" ? [[64, 0]] : [[37, 8]];
+    meter = `<span class="xmeter-bars">${metrics.map(([first, second]) => `<i class="xmeter-vbar" style="--a:${first};--b:${split || id !== "system-cpu" ? second : 0}"><em></em><b></b></i>`).join("")}</span>`;
+  } else {
+    const metrics = perCore ? cores : id === "system-storage" ? [[57, 18]] : id === "system-network" ? [[16, 42]] : id === "system-memory" ? [[64, 0]] : [[37, 8]];
+    meter = `<span class="xmeter-pies">${metrics.map(([first, second]) => `<i class="xmeter-pie" style="--a:${first};--b:${split || id !== "system-cpu" ? second : 0}"></i>`).join("")}</span>`;
+  }
+  const markup = `<div class="native-widget system-meter ${id} ${mode}" style="${style}">${meter}</div>`;
+  return { preview: `<div class="native-preview-stage">${markup}</div>`, taskbar: markup };
 }
 
 function statusRow(label, value) {
@@ -1022,6 +1240,7 @@ function closeWidgetModal() {
 
 function bindWidgetModal() {
   bindInputs();
+  bindSystemMeterTabs();
   document.querySelectorAll("[data-close-modal]").forEach((button) => {
     button.onclick = () => closeWidgetModal();
   });
@@ -1068,6 +1287,7 @@ async function runRuntimeAction(action) {
 function bindSettingsPage() {
   bindInputs();
   bindWidgetButtons();
+  bindSystemMeterTabs();
   bindRuntimeControls();
   document.getElementById("save-settings")?.addEventListener("click", () => saveSettings());
   document.getElementById("open-packs")?.addEventListener("click", async () => {
@@ -1145,6 +1365,14 @@ function bindUpdatesPage() {
 }
 
 function bindInputs() {
+  document.querySelectorAll("[data-color-target]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const textInput = document.querySelector(`[data-instance-setting="${input.dataset.colorTarget}"]`);
+      if (!textInput) return;
+      textInput.value = input.value.toUpperCase();
+      textInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
   document.querySelectorAll("[data-setting]").forEach((input) => {
     input.addEventListener("input", () => {
       const key = input.dataset.setting;
@@ -1173,6 +1401,9 @@ function bindInputs() {
       } else {
         widget[key] = input.value;
       }
+      if (key === "positionPct" || key === "moveX") {
+        locallyEditedWidgetPositions.add(widget.design);
+      }
       state.settings.enabled = widget.enabled;
       state.settings.widgetMoveX = widget.moveX;
       state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
@@ -1181,6 +1412,63 @@ function bindInputs() {
       renderFloatingTaskbar();
     });
   });
+  document.querySelectorAll("[data-instance-setting]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const widget = activeWidget();
+      widget.settings ||= {};
+      const key = input.dataset.instanceSetting;
+      widget.settings[key] = input.type === "checkbox"
+        ? input.checked
+        : input.type === "number" || input.type === "range"
+          ? clampNumber(input.value, Number(input.min || 0), Number(input.max || 1000000000), Number(widget.settings[key] ?? 0))
+          : input.value;
+      if (input.type === "range") updateValueLabel("instance", key, Number(widget.settings[key]).toFixed(1), input.dataset.unit || "");
+      setDirty(true);
+      scheduleAutosave();
+      renderFloatingTaskbar();
+      if (["displayMode", "showIndividualCores", "separateUtilization", "autoBandwidth"].includes(key)) {
+        if (state.modalWidgetId) renderWidgetModal(); else renderPage();
+      }
+    });
+  });
+}
+
+function bindSystemMeterTabs() {
+  document.querySelectorAll("[data-system-meter-tab]").forEach((tab) => {
+    tab.addEventListener("click", (event) => {
+      if (event.target.matches("[data-system-tab-enabled]")) return;
+      state.settings.activeDesign = tab.dataset.systemMeterTab;
+      if (state.modalWidgetId) state.modalWidgetId = tab.dataset.systemMeterTab;
+      render();
+    });
+    tab.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", tab.dataset.systemMeterTab));
+    tab.addEventListener("dragover", (event) => event.preventDefault());
+    tab.addEventListener("drop", (event) => {
+      event.preventDefault();
+      reorderSystemMeters(event.dataTransfer.getData("text/plain"), tab.dataset.systemMeterTab);
+    });
+  });
+  document.querySelectorAll("[data-system-tab-enabled]").forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", () => {
+      widgetState(checkbox.dataset.systemTabEnabled).enabled = checkbox.checked;
+      setDirty(true); scheduleAutosave(); renderFloatingTaskbar();
+    });
+  });
+}
+
+function reorderSystemMeters(fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return;
+  const all = [...state.settings.widgets].sort((a, b) => a.order - b.order);
+  const slots = all.map((widget, index) => widget.design.startsWith("system-") ? index : -1).filter((index) => index >= 0);
+  const systems = slots.map((index) => all[index]);
+  const from = systems.findIndex((widget) => widget.design === fromId);
+  const to = systems.findIndex((widget) => widget.design === toId);
+  if (from < 0 || to < 0) return;
+  const [moved] = systems.splice(from, 1); systems.splice(to, 0, moved);
+  slots.forEach((slot, index) => { all[slot] = systems[index]; });
+  state.settings.widgets = all.map((widget, index) => ({ ...widget, order: index }));
+  setDirty(true); scheduleAutosave(); render();
 }
 
 function updateValueLabel(prefix, key, value, unit) {
@@ -1207,6 +1495,7 @@ async function saveSettings(successMessage = "Settings saved") {
     state.settings.widgetMoveX = widget.moveX;
     state.settings.widgetOffsetPx = Math.max(0, -widget.moveX);
     await invoke("save_settings", { settings: state.settings });
+    locallyEditedWidgetPositions.clear();
     setDirty(false);
     setStatus(successMessage);
   } catch (error) {
@@ -1219,6 +1508,7 @@ async function refreshState() {
     const loaded = await invoke("load_state");
     state.updateStatus = loaded.updateStatus || {};
     state.mediaStatus = loaded.mediaStatus || {};
+    state.systemSources = loaded.systemSources || state.systemSources;
     if (updateInstallRequested && (state.updateStatus?.state === "ready" || state.updateStatus?.installerPath)) {
       autoLaunchDownloadedInstaller();
     }

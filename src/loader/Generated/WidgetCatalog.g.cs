@@ -10,6 +10,10 @@ internal static class WidgetCatalog
         "discord-voice",
         "media-player",
         "steam-download",
+        "system-cpu",
+        "system-memory",
+        "system-network",
+        "system-storage",
         "weather-static"
     ];
 

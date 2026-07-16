@@ -32,6 +32,12 @@ internal static class AccountManager
     private static readonly string LogPath = Path.Combine(LogsDirectory, "loader.log");
     private static readonly string SettingsAppPath = Path.Combine(AppPaths.InstallDirectory, "TaskbarWidgets.Settings.exe");
     private static readonly string LoaderPath = Path.Combine(AppPaths.InstallDirectory, "TaskbarWidgets.exe");
+    private static readonly string SettingsOpenRequestPath =
+        Path.Combine(AppPaths.RuntimeDirectory, "settings-open-request.json");
+    private static readonly HashSet<string> SystemWidgetIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "system-cpu", "system-storage", "system-network", "system-memory"
+    };
     private static readonly string RealCodexHome = Path.Combine(UserProfile, ".codex");
     private static readonly string MaterializedAccountPath =
         Path.Combine(AppDirectory, "active-codex-account.txt");
@@ -214,11 +220,26 @@ internal static class AccountManager
             }
             else if (string.Equals(command, "openSettings", StringComparison.OrdinalIgnoreCase))
             {
-                OpenSettingsApp();
+                OpenSettingsApp(envelope.WidgetId);
+            }
+            else if (string.Equals(command, "openTaskManager", StringComparison.OrdinalIgnoreCase))
+            {
+                OpenTaskManager();
             }
             else if (string.Equals(command, "mediaToggle", StringComparison.OrdinalIgnoreCase))
             {
                 MediaWorker.RequestToggle();
+            }
+            else if (string.Equals(command, "moveWidget", StringComparison.OrdinalIgnoreCase))
+            {
+                var anchorPercent = node?["positionPct"]?.GetValue<int?>();
+                var offsetPx = node?["offsetPx"]?.GetValue<int?>();
+                var configPath = Path.Combine(AppPaths.DataDirectory, "config.json");
+                if (!WidgetPositionCommandHandler.TryApply(
+                        configPath, envelope.WidgetId, anchorPercent, offsetPx))
+                {
+                    Log($"Invalid widget move command ignored: {Path.GetFileName(path)}");
+                }
             }
             else if (string.Equals(command, "quit", StringComparison.OrdinalIgnoreCase))
             {
@@ -300,12 +321,32 @@ internal static class AccountManager
         Log($"Opened widget libraries folder: {WidgetLibrariesDirectory}");
     }
 
-    private static void OpenSettingsApp()
+    private static void OpenSettingsApp(string? widgetId = null)
     {
         if (!File.Exists(SettingsAppPath))
         {
             Log($"Settings app was not found: {SettingsAppPath}");
             return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(widgetId))
+        {
+            if (!SystemWidgetIds.Contains(widgetId))
+            {
+                Log($"Settings deep link ignored for unknown widget: {widgetId}");
+                widgetId = null;
+            }
+            else
+            {
+                AtomicJson.Write(
+                    SettingsOpenRequestPath,
+                    new SettingsOpenRequest(
+                        1,
+                        Guid.NewGuid().ToString("N"),
+                        widgetId,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                    WidgetConfiguration.JsonOptions());
+            }
         }
 
         using Process? runningSettings = FindRunningSettingsApp();
@@ -323,6 +364,23 @@ internal static class AccountManager
             UseShellExecute = true
         });
         Log($"Opened settings app: {SettingsAppPath}");
+    }
+
+    private static void OpenTaskManager()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskmgr.exe",
+                UseShellExecute = true
+            });
+            Log("Opened Windows Task Manager");
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to open Task Manager: {ex.Message}");
+        }
     }
 
     private static Process? FindRunningSettingsApp()
@@ -401,6 +459,12 @@ internal static class AccountManager
         });
         Log("Quit command requested loader detach");
     }
+
+    private sealed record SettingsOpenRequest(
+        int SchemaVersion,
+        string RequestId,
+        string WidgetId,
+        long CreatedAtUnix);
 
     private static void DeleteActiveAccount(string? requestedAccountId = null)
     {

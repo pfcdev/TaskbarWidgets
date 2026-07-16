@@ -33,7 +33,8 @@ public static class WidgetCommandValidator
     private static readonly HashSet<string> AllowedActions = new(StringComparer.OrdinalIgnoreCase)
     {
         "addAccount", "loginActiveAccount", "deleteActiveAccount", "deleteAccount",
-        "switchAccount", "restartIde", "openSettings", "mediaToggle", "quit"
+        "switchAccount", "restartIde", "openSettings", "openTaskManager", "mediaToggle",
+        "moveWidget", "quit"
     };
 
     public static bool IsValid(WidgetCommand command, long nowUnix)

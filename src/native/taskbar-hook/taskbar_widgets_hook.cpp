@@ -23,7 +23,10 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <winrt/base.h>
@@ -31,6 +34,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Text.h>
 #include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
@@ -41,6 +45,7 @@
 #include <winrt/Windows.UI.Xaml.Shapes.h>
 
 #include "generated/widget_catalog.g.h"
+#include "layout_math.h"
 #include "../common/json_string.h"
 #include "widget_renderer.h"
 
@@ -245,7 +250,10 @@ std::string JsonEscapeUtf8(const std::wstring& value) {
 }
 
 void WriteTaskbarWidgetsCommand(const std::wstring& command,
-                              const std::wstring& accountId = L"") {
+                              const std::wstring& accountId = L"",
+                              const std::wstring& widgetId = L"",
+                              std::optional<int> positionPct = std::nullopt,
+                              std::optional<int> offsetPx = std::nullopt) {
     std::wstring directory = GetTaskbarWidgetsPath(L"Commands");
     if (directory.empty()) {
         return;
@@ -271,6 +279,15 @@ void WriteTaskbarWidgetsCommand(const std::wstring& command,
                        "\",\"createdAtUnix\":" + std::to_string(createdAt);
     if (!accountId.empty()) {
         json += ",\"accountId\":\"" + JsonEscapeUtf8(accountId) + "\"";
+    }
+    if (!widgetId.empty()) {
+        json += ",\"widgetId\":\"" + JsonEscapeUtf8(widgetId) + "\"";
+    }
+    if (positionPct.has_value()) {
+        json += ",\"positionPct\":" + std::to_string(*positionPct);
+    }
+    if (offsetPx.has_value()) {
+        json += ",\"offsetPx\":" + std::to_string(*offsetPx);
     }
     json += "}\n";
 
@@ -416,6 +433,7 @@ bool ExtractJsonInt64(const std::string& json, const char* key, long long& value
 void SetExpandedMode(wux::UIElement const& root, bool expanded);
 void ShowCodexHoverPopup();
 void HideCodexHoverPopup();
+double WidgetDesignWidth(const std::wstring& designId);
 void ShowAccountMenu(wux::FrameworkElement const& root);
 void ShowWeatherMenu(wux::FrameworkElement const& root);
 HWND FindCurrentProcessTaskbarWindow();
@@ -454,6 +472,28 @@ struct WidgetInstanceRuntime {
     long long positionPct = -1;
     long long order = 0;
 };
+
+struct WidgetDragState {
+    bool pressed{};
+    bool dragging{};
+    bool suppressTap{};
+    double startPointerX{};
+    double startLeft{};
+};
+
+struct WidgetDragOverride {
+    double left{};
+    int anchorPercent{};
+    int offsetPx{};
+    bool awaitingConfig{};
+    std::chrono::steady_clock::time_point expiresAt{};
+};
+
+thread_local std::unordered_map<uintptr_t, WidgetDragOverride> g_widgetDragOverrides;
+
+uintptr_t WidgetElementKey(wux::UIElement const& element) noexcept {
+    return reinterpret_cast<uintptr_t>(winrt::get_abi(element));
+}
 
 HWND g_accountMenuWindow = nullptr;
 HWND g_codexHoverWindow = nullptr;
@@ -971,6 +1011,29 @@ wux::FrameworkElement MakeSteamDownloadPanel() {
     return panel;
 }
 
+wux::FrameworkElement MakeSystemMetricPanel() {
+    wuxc::Border panel;
+    panel.Name(L"TaskbarWidgetsSystemPanel");
+    panel.Width(32);
+    panel.Height(24);
+    panel.Visibility(wux::Visibility::Collapsed);
+    panel.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+
+    // XMeters renders directly on the taskbar: no card, title, backdrop or
+    // rounded container. The contents are rebuilt only when the sampled value
+    // changes, keeping Explorer's 33 ms refresh path lightweight.
+    wuxc::StackPanel meter;
+    meter.Name(L"TaskbarWidgetsSystemMeter");
+    meter.Width(32);
+    meter.Height(24);
+    meter.Orientation(wuxc::Orientation::Horizontal);
+    meter.Spacing(3);
+    meter.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    meter.VerticalAlignment(wux::VerticalAlignment::Center);
+    panel.Child(meter);
+    return panel;
+}
+
 void ShowWidgetContextMenu() {
     constexpr UINT_PTR kSettingsCommand = 1001;
     constexpr UINT_PTR kQuitCommand = 1002;
@@ -1167,12 +1230,14 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     root.Children().Append(MakeDiscordPanel().as<wux::UIElement>());
     root.Children().Append(MakeMediaPanel().as<wux::UIElement>());
     root.Children().Append(MakeSteamDownloadPanel().as<wux::UIElement>());
+    root.Children().Append(MakeSystemMetricPanel().as<wux::UIElement>());
 
     wuxc::Border layoutMarker;
     layoutMarker.Name(kTaskbarWidgetsLayoutMarkerName);
     layoutMarker.Visibility(wux::Visibility::Collapsed);
     root.Children().Append(layoutMarker.as<wux::UIElement>());
 
+    auto dragState = std::make_shared<WidgetDragState>();
     root.PointerEntered([root](auto const&, auto const&) {
         auto element = root.as<wux::UIElement>();
         if (GetWidgetDesignFromRoot(element) == L"codex-status") {
@@ -1180,10 +1245,101 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         }
     });
     root.PointerExited([root](auto const&, auto const&) {
-        SetExpandedMode(root.as<wux::UIElement>(), false);
-        HideCodexHoverPopup();
+        auto element = root.as<wux::UIElement>();
+        if (GetWidgetDesignFromRoot(element) == L"codex-status") {
+            SetExpandedMode(element, false);
+            HideCodexHoverPopup();
+        }
     });
-    root.Tapped([root](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+    root.PointerPressed([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
+        auto host = root.Parent().try_as<wux::UIElement>();
+        if (!host) {
+            return;
+        }
+        auto point = args.GetCurrentPoint(host);
+        if (!point.Properties().IsLeftButtonPressed()) {
+            return;
+        }
+
+        dragState->pressed = true;
+        dragState->dragging = false;
+        dragState->suppressTap = false;
+        dragState->startPointerX = point.Position().X;
+        dragState->startLeft = wuxc::Canvas::GetLeft(root);
+        if (!std::isfinite(dragState->startLeft)) {
+            dragState->startLeft = 0.0;
+        }
+        root.CapturePointer(args.Pointer());
+    });
+    root.PointerMoved([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
+        if (!dragState->pressed) {
+            return;
+        }
+        auto host = root.Parent().try_as<wux::FrameworkElement>();
+        if (!host) {
+            return;
+        }
+        auto point = args.GetCurrentPoint(host.as<wux::UIElement>());
+        if (!point.Properties().IsLeftButtonPressed()) {
+            return;
+        }
+
+        double deltaX = point.Position().X - dragState->startPointerX;
+        if (!dragState->dragging && std::abs(deltaX) < 4.0) {
+            return;
+        }
+        dragState->dragging = true;
+        double width = root.ActualWidth() > 0.0 ? root.ActualWidth() : root.Width();
+        double maximumLeft = std::max(0.0, host.ActualWidth() - width);
+        double left = std::clamp(dragState->startLeft + deltaX, 0.0, maximumLeft);
+        wuxc::Canvas::SetLeft(root, left);
+        g_widgetDragOverrides[WidgetElementKey(root.as<wux::UIElement>())] = {
+            left, 0, 0, false, std::chrono::steady_clock::time_point::max()};
+        args.Handled(true);
+    });
+    root.PointerReleased([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
+        if (!dragState->pressed) {
+            return;
+        }
+        dragState->pressed = false;
+        root.ReleasePointerCapture(args.Pointer());
+        if (!dragState->dragging) {
+            g_widgetDragOverrides.erase(WidgetElementKey(root.as<wux::UIElement>()));
+            return;
+        }
+
+        dragState->dragging = false;
+        dragState->suppressTap = true;
+        auto host = root.Parent().try_as<wux::FrameworkElement>();
+        if (!host) {
+            return;
+        }
+        double left = wuxc::Canvas::GetLeft(root);
+        auto design = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
+        double width = WidgetDesignWidth(design);
+        auto position = taskbar_widgets::PositionForIndependentLeft(
+            left, width, host.ActualWidth());
+        g_widgetDragOverrides[WidgetElementKey(root.as<wux::UIElement>())] = {
+            left, position.anchorPercent, position.offsetPx, true,
+            std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+        WriteTaskbarWidgetsCommand(
+            L"moveWidget", L"", design,
+            position.anchorPercent, position.offsetPx);
+        args.Handled(true);
+    });
+    root.PointerCaptureLost([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const&) {
+        if (dragState->pressed) {
+            dragState->pressed = false;
+            dragState->dragging = false;
+            g_widgetDragOverrides.erase(WidgetElementKey(root.as<wux::UIElement>()));
+        }
+    });
+    root.Tapped([root, dragState](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+        if (dragState->suppressTap) {
+            dragState->suppressTap = false;
+            args.Handled(true);
+            return;
+        }
         std::wstring activeDesign = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
         if (activeDesign == L"weather-static") {
             ShowWeatherMenu(root);
@@ -1196,15 +1352,25 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
             } else {
                 ShowWidgetLibraryWindow();
             }
-        } else if (activeDesign == L"steam-download") {
-            ShowWidgetLibraryWindow();
+        } else if (activeDesign == L"steam-download" ||
+                   activeDesign.rfind(L"system-", 0) == 0) {
+            if (activeDesign.rfind(L"system-", 0) == 0) {
+                WriteTaskbarWidgetsCommand(L"openTaskManager");
+            } else {
+                ShowWidgetLibraryWindow();
+            }
         } else {
             ShowAccountMenu(root);
         }
         args.Handled(true);
     });
-    root.RightTapped([](auto const&, wuxi::RightTappedRoutedEventArgs const& args) {
-        ShowWidgetContextMenu();
+    root.RightTapped([root](auto const&, wuxi::RightTappedRoutedEventArgs const& args) {
+        auto design = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
+        if (design.rfind(L"system-", 0) == 0) {
+            WriteTaskbarWidgetsCommand(L"openSettings", L"", design);
+        } else {
+            ShowWidgetContextMenu();
+        }
         args.Handled(true);
     });
 
@@ -1254,6 +1420,10 @@ std::wstring GetMediaStatusPath() {
 
 std::wstring GetSteamDownloadStatusPath() {
     return GetTaskbarWidgetsPath(L"State\\steam-download.json");
+}
+
+std::wstring GetSystemMetricStatusPath(const std::wstring& widgetId) {
+    return GetTaskbarWidgetsPath((L"State\\" + widgetId + L".json").c_str());
 }
 
 std::wstring GetWidgetSettingsPath() {
@@ -1354,11 +1524,12 @@ bool ExtractJsonBool(const std::string& json, const char* key, bool& value) {
 }
 
 bool IsKnownWidgetDesign(const std::wstring& designId) {
-    return _wcsicmp(designId.c_str(), L"codex-status") == 0 ||
-           _wcsicmp(designId.c_str(), L"weather-static") == 0 ||
-           _wcsicmp(designId.c_str(), L"discord-voice") == 0 ||
-           _wcsicmp(designId.c_str(), L"media-player") == 0 ||
-           _wcsicmp(designId.c_str(), L"steam-download") == 0;
+    return std::any_of(
+        taskbar_widgets::generated::kWidgets.begin(),
+        taskbar_widgets::generated::kWidgets.end(),
+        [&designId](const auto& widget) {
+            return _wcsicmp(designId.c_str(), std::wstring(widget.id).c_str()) == 0;
+        });
 }
 
 std::vector<std::wstring> ExtractJsonStringArray(const std::string& json,
@@ -1510,12 +1681,12 @@ bool WriteActiveWidgetDesign(const std::wstring& designId) {
         return false;
     }
 
-    WriteTaskbarWidgetsCommand(L"openSettings", designId);
+    WriteTaskbarWidgetsCommand(L"openSettings", L"", designId);
     return true;
 }
 
 std::vector<std::string> ExtractJsonObjectArray(const std::string& json,
-                                                const char* key) {
+                                                 const char* key) {
     std::vector<std::string> objects;
     std::string pattern = "\"";
     pattern += key;
@@ -1566,6 +1737,81 @@ std::vector<std::string> ExtractJsonObjectArray(const std::string& json,
     }
 
     return objects;
+}
+
+bool ExtractJsonDouble(const std::string& json, const char* key, double& value);
+
+struct SystemMetricWidgetSettings {
+    std::wstring displayMode = L"bar";
+    std::wstring outlineColor = L"#FFFFFFFF";
+    std::wstring firstColor = L"systemAccent";
+    std::wstring secondColor = L"#FFFFFFFF";
+    bool showIndividualCores = true;
+    bool combineLogicalCores = false;
+    bool separateUtilization = true;
+    bool autoBandwidth = true;
+    double bandwidthKiloBytes = 125000.0;
+};
+
+double SystemMetricWidgetWidth(const std::wstring& widgetId);
+
+SystemMetricWidgetSettings ReadSystemMetricWidgetSettings(
+    const std::wstring& widgetId) {
+    SystemMetricWidgetSettings settings;
+    if (widgetId == L"system-storage") {
+        settings.displayMode = L"text";
+        settings.firstColor = L"#FFFFFFFF";
+        settings.secondColor = L"#FFFFFFFF";
+    } else if (widgetId == L"system-network") {
+        settings.displayMode = L"text";
+        settings.firstColor = L"systemAccent";  // send
+        settings.secondColor = L"systemAccent"; // receive
+    } else if (widgetId == L"system-memory") {
+        settings.displayMode = L"pie";
+        settings.firstColor = L"systemAccent";
+        settings.secondColor = L"systemAccent";
+        settings.outlineColor = L"systemAccent";
+    }
+
+    std::string json = ReadUtf8File(GetWidgetSettingsPath());
+    for (const auto& object : ExtractJsonObjectArray(json, "widgets")) {
+        std::wstring id;
+        if (!ExtractJsonString(object, "id", id) ||
+            _wcsicmp(id.c_str(), widgetId.c_str()) != 0) {
+            continue;
+        }
+
+        ExtractJsonString(object, "displayMode", settings.displayMode);
+        ExtractJsonString(object, "outlineColor", settings.outlineColor);
+        if (widgetId == L"system-cpu") {
+            ExtractJsonString(object, "userColor", settings.firstColor);
+            ExtractJsonString(object, "systemColor", settings.secondColor);
+            ExtractJsonBool(object, "showIndividualCores", settings.showIndividualCores);
+            ExtractJsonBool(object, "combineLogicalCores", settings.combineLogicalCores);
+            ExtractJsonBool(object, "separateUtilization", settings.separateUtilization);
+            if (!settings.separateUtilization) {
+                ExtractJsonString(object, "cpuColor", settings.firstColor);
+            }
+        } else if (widgetId == L"system-storage") {
+            ExtractJsonString(object, "readColor", settings.firstColor);
+            ExtractJsonString(object, "writeColor", settings.secondColor);
+        } else if (widgetId == L"system-network") {
+            ExtractJsonString(object, "sendColor", settings.firstColor);
+            ExtractJsonString(object, "receiveColor", settings.secondColor);
+            ExtractJsonBool(object, "autoBandwidth", settings.autoBandwidth);
+            ExtractJsonDouble(object, "bandwidthKiloBytes", settings.bandwidthKiloBytes);
+        } else if (widgetId == L"system-memory") {
+            ExtractJsonString(object, "usedColor", settings.firstColor);
+        }
+        break;
+    }
+
+    if (settings.displayMode != L"text" && settings.displayMode != L"bar" &&
+        settings.displayMode != L"pie") {
+        settings.displayMode = L"text";
+    }
+    settings.bandwidthKiloBytes = std::clamp(settings.bandwidthKiloBytes, 1.0, 1000000000.0);
+    return settings;
 }
 
 std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
@@ -3209,6 +3455,164 @@ SteamDownloadSnapshot ReadSteamDownloadSnapshot() {
     return snapshot;
 }
 
+struct CpuCoreMetricSnapshot {
+    std::wstring id;
+    double percent{};
+    double userPercent{};
+    double kernelPercent{};
+};
+
+struct SystemMetricSnapshot {
+    bool loaded{};
+    double totalPercent{};
+    double userPercent{};
+    double kernelPercent{};
+    std::vector<CpuCoreMetricSnapshot> cores;
+    double primaryRate{};
+    double secondaryRate{};
+    double primaryPercent{};
+    double secondaryPercent{};
+    long long receiveLinkSpeedBitsPerSecond{};
+    long long sendLinkSpeedBitsPerSecond{};
+    long long usedBytes{};
+    long long totalBytes{};
+    double usedPercent{};
+};
+
+SystemMetricSnapshot ReadSystemMetricSnapshot(const std::wstring& widgetId) {
+    SystemMetricSnapshot snapshot;
+    std::string json = ReadUtf8File(GetSystemMetricStatusPath(widgetId));
+    if (json.empty()) return snapshot;
+
+    long long schemaVersion = 0;
+    long long updatedAtUnix = 0;
+    std::wstring snapshotWidgetId;
+    std::wstring status;
+    if (!ExtractJsonInt64(json, "schemaVersion", schemaVersion) ||
+        schemaVersion != 1 ||
+        !ExtractJsonInt64(json, "updatedAtUnix", updatedAtUnix) ||
+        updatedAtUnix < CurrentUnixTime() - 60 ||
+        updatedAtUnix > CurrentUnixTime() + 300 ||
+        !ExtractJsonString(json, "widgetId", snapshotWidgetId) ||
+        _wcsicmp(snapshotWidgetId.c_str(), widgetId.c_str()) != 0 ||
+        !ExtractJsonString(json, "status", status) ||
+        _wcsicmp(status.c_str(), L"ok") != 0) {
+        return snapshot;
+    }
+
+    snapshot.loaded = true;
+    if (widgetId == L"system-cpu") {
+        ExtractJsonDouble(json, "totalPercent", snapshot.totalPercent);
+        ExtractJsonDouble(json, "userPercent", snapshot.userPercent);
+        ExtractJsonDouble(json, "kernelPercent", snapshot.kernelPercent);
+        for (const auto& object : ExtractJsonObjectArray(json, "cores")) {
+            CpuCoreMetricSnapshot core;
+            ExtractJsonString(object, "id", core.id);
+            ExtractJsonDouble(object, "percent", core.percent);
+            ExtractJsonDouble(object, "userPercent", core.userPercent);
+            ExtractJsonDouble(object, "kernelPercent", core.kernelPercent);
+            core.percent = std::clamp(core.percent, 0.0, 100.0);
+            core.userPercent = std::clamp(core.userPercent, 0.0, 100.0);
+            core.kernelPercent = std::clamp(core.kernelPercent, 0.0, 100.0);
+            if (!std::isfinite(core.percent)) core.percent = 0;
+            if (!std::isfinite(core.userPercent)) core.userPercent = 0;
+            if (!std::isfinite(core.kernelPercent)) core.kernelPercent = 0;
+            if (!core.id.empty()) snapshot.cores.push_back(core);
+        }
+        snapshot.totalPercent = std::clamp(snapshot.totalPercent, 0.0, 100.0);
+        snapshot.userPercent = std::clamp(snapshot.userPercent, 0.0, 100.0);
+        snapshot.kernelPercent = std::clamp(snapshot.kernelPercent, 0.0, 100.0);
+        if (!std::isfinite(snapshot.totalPercent)) snapshot.totalPercent = 0;
+        if (!std::isfinite(snapshot.userPercent)) snapshot.userPercent = 0;
+        if (!std::isfinite(snapshot.kernelPercent)) snapshot.kernelPercent = 0;
+    } else if (widgetId == L"system-storage") {
+        ExtractJsonDouble(json, "readBytesPerSecond", snapshot.primaryRate);
+        ExtractJsonDouble(json, "writeBytesPerSecond", snapshot.secondaryRate);
+        ExtractJsonDouble(json, "readPercent", snapshot.primaryPercent);
+        ExtractJsonDouble(json, "writePercent", snapshot.secondaryPercent);
+    } else if (widgetId == L"system-network") {
+        ExtractJsonDouble(json, "receiveBytesPerSecond", snapshot.primaryRate);
+        ExtractJsonDouble(json, "sendBytesPerSecond", snapshot.secondaryRate);
+        ExtractJsonInt64(json, "receiveLinkSpeedBitsPerSecond", snapshot.receiveLinkSpeedBitsPerSecond);
+        ExtractJsonInt64(json, "sendLinkSpeedBitsPerSecond", snapshot.sendLinkSpeedBitsPerSecond);
+    } else if (widgetId == L"system-memory") {
+        ExtractJsonInt64(json, "usedBytes", snapshot.usedBytes);
+        ExtractJsonInt64(json, "totalBytes", snapshot.totalBytes);
+        ExtractJsonDouble(json, "usedPercent", snapshot.usedPercent);
+        snapshot.usedBytes = std::max(0LL, snapshot.usedBytes);
+        snapshot.totalBytes = std::max(0LL, snapshot.totalBytes);
+        snapshot.usedPercent = std::clamp(snapshot.usedPercent, 0.0, 100.0);
+    }
+    snapshot.primaryRate = std::max(0.0, snapshot.primaryRate);
+    snapshot.secondaryRate = std::max(0.0, snapshot.secondaryRate);
+    if (!std::isfinite(snapshot.primaryRate)) snapshot.primaryRate = 0;
+    if (!std::isfinite(snapshot.secondaryRate)) snapshot.secondaryRate = 0;
+    snapshot.primaryPercent = std::isfinite(snapshot.primaryPercent)
+                                  ? std::clamp(snapshot.primaryPercent, 0.0, 100.0)
+                                  : 0;
+    snapshot.secondaryPercent = std::isfinite(snapshot.secondaryPercent)
+                                    ? std::clamp(snapshot.secondaryPercent, 0.0, 100.0)
+                                    : 0;
+    snapshot.receiveLinkSpeedBitsPerSecond = std::max(0LL, snapshot.receiveLinkSpeedBitsPerSecond);
+    snapshot.sendLinkSpeedBitsPerSecond = std::max(0LL, snapshot.sendLinkSpeedBitsPerSecond);
+    return snapshot;
+}
+
+double SystemMetricWidgetWidth(const std::wstring& widgetId) {
+    auto settings = ReadSystemMetricWidgetSettings(widgetId);
+    if (widgetId == L"system-storage" || widgetId == L"system-network") {
+        return settings.displayMode == L"text" ? 93.0
+             : settings.displayMode == L"bar" ? 8.0 : 24.0;
+    }
+    if (widgetId == L"system-memory") {
+        return settings.displayMode == L"bar" ? 8.0
+             : settings.displayMode == L"pie" ? 24.0 : 44.0;
+    }
+
+    size_t count = 1;
+    if (settings.showIndividualCores) {
+        auto snapshot = ReadSystemMetricSnapshot(widgetId);
+        count = std::max<size_t>(1, snapshot.cores.size());
+        if (settings.combineLogicalCores) count = (count + 1) / 2;
+    }
+    double unit = settings.displayMode == L"bar" ? 8.0
+                : settings.displayMode == L"pie" ? 24.0 : 44.0;
+    return unit * static_cast<double>(count) + 3.0 * static_cast<double>(count - 1);
+}
+
+std::wstring FormatMetricRate(double bytesPerSecond) {
+    const wchar_t* unit = L"B/s";
+    double value = std::max(0.0, bytesPerSecond);
+    if (value >= 1024.0 * 1024.0 * 1024.0) {
+        value /= 1024.0 * 1024.0 * 1024.0;
+        unit = L"GB/s";
+    } else if (value >= 1024.0 * 1024.0) {
+        value /= 1024.0 * 1024.0;
+        unit = L"MB/s";
+    } else if (value >= 1024.0) {
+        value /= 1024.0;
+        unit = L"KB/s";
+    }
+    WCHAR buffer[32]{};
+    swprintf_s(buffer, L"%.0f %s", value, unit);
+    return buffer;
+}
+
+std::wstring FormatMetricBytes(long long bytes) {
+    double value = static_cast<double>(std::max(0LL, bytes));
+    const wchar_t* unit = L"B";
+    if (value >= 1024.0 * 1024.0 * 1024.0) {
+        value /= 1024.0 * 1024.0 * 1024.0;
+        unit = L"GB";
+    } else if (value >= 1024.0 * 1024.0) {
+        value /= 1024.0 * 1024.0;
+        unit = L"MB";
+    }
+    WCHAR buffer[24]{};
+    swprintf_s(buffer, value >= 100 ? L"%.0f %s" : L"%.1f %s", value, unit);
+    return buffer;
+}
+
 void DrawWeatherIcon(HDC dc,
                      const std::wstring& assetName,
                      int x,
@@ -4101,22 +4505,24 @@ int HexDigit(wchar_t value) {
 
 bool ParseHexColor(const std::wstring& value,
                    winrt::Windows::UI::Color& color) {
-    if (value.size() != 7 || value[0] != L'#') {
+    if ((value.size() != 7 && value.size() != 9) || value[0] != L'#') {
         return false;
     }
 
-    BYTE channels[3]{};
-    for (int i = 0; i < 3; ++i) {
+    BYTE channels[4]{0xFF, 0, 0, 0};
+    int channelCount = value.size() == 9 ? 4 : 3;
+    int destinationOffset = value.size() == 9 ? 0 : 1;
+    for (int i = 0; i < channelCount; ++i) {
         int high = HexDigit(value[1 + i * 2]);
         int low = HexDigit(value[2 + i * 2]);
         if (high < 0 || low < 0) {
             return false;
         }
-        channels[i] = static_cast<BYTE>((high << 4) | low);
+        channels[destinationOffset + i] = static_cast<BYTE>((high << 4) | low);
     }
 
     color = winrt::Windows::UI::Color{
-        0xFF, channels[0], channels[1], channels[2]};
+        channels[0], channels[1], channels[2], channels[3]};
     return true;
 }
 
@@ -4136,6 +4542,423 @@ wuxm::Brush MakeMediaGradientBrush(const winrt::Windows::UI::Color& left,
     rightStop.Offset(1.0);
     brush.GradientStops().Append(rightStop);
     return brush;
+}
+
+wuxc::TextBlock MakeXMeterTextLine(const std::wstring& text,
+                                   double width,
+                                   double fontSize,
+                                   const winrt::Windows::UI::Color& color,
+                                   wux::TextAlignment alignment) {
+    auto block = MakeText(text.c_str(), fontSize, 0xFF);
+    block.Width(width);
+    block.Height(12);
+    block.LineHeight(12);
+    block.FontFamily(wuxm::FontFamily(L"Segoe UI"));
+    block.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
+    block.Foreground(wuxm::SolidColorBrush(color));
+    block.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    block.VerticalAlignment(wux::VerticalAlignment::Center);
+    block.TextAlignment(alignment);
+    block.TextTrimming(wux::TextTrimming::None);
+    return block;
+}
+
+wux::UIElement MakeXMeterTextPair(const std::wstring& top,
+                                  const std::wstring& bottom,
+                                  double width,
+                                  double fontSize,
+                                  const winrt::Windows::UI::Color& primary,
+                                  const winrt::Windows::UI::Color& secondary,
+                                  wux::TextAlignment alignment = wux::TextAlignment::Center) {
+    wuxc::Grid grid;
+    grid.Width(width);
+    grid.Height(24);
+    grid.VerticalAlignment(wux::VerticalAlignment::Center);
+    wuxc::RowDefinition firstRow;
+    firstRow.Height(wux::GridLengthHelper::FromPixels(12));
+    wuxc::RowDefinition secondRow;
+    secondRow.Height(wux::GridLengthHelper::FromPixels(12));
+    grid.RowDefinitions().Append(firstRow);
+    grid.RowDefinitions().Append(secondRow);
+
+    auto first = MakeXMeterTextLine(top, width, fontSize, primary, alignment);
+    auto second = MakeXMeterTextLine(bottom, width, fontSize, secondary, alignment);
+    wuxc::Grid::SetRow(second, 1);
+    grid.Children().Append(first.as<wux::UIElement>());
+    grid.Children().Append(second.as<wux::UIElement>());
+    return grid;
+}
+
+wux::UIElement MakeXMeterRatePair(const std::wstring& top,
+                                  const std::wstring& bottom,
+                                  bool showTopArrow,
+                                  bool showBottomArrow,
+                                  const winrt::Windows::UI::Color& topColor,
+                                  const winrt::Windows::UI::Color& bottomColor) {
+    wuxc::Grid grid;
+    grid.Width(93);
+    grid.Height(24);
+    wuxc::ColumnDefinition valueColumn;
+    valueColumn.Width(wux::GridLengthHelper::FromPixels(69));
+    wuxc::ColumnDefinition gapColumn;
+    gapColumn.Width(wux::GridLengthHelper::FromPixels(3));
+    wuxc::ColumnDefinition arrowColumn;
+    arrowColumn.Width(wux::GridLengthHelper::FromPixels(21));
+    grid.ColumnDefinitions().Append(valueColumn);
+    grid.ColumnDefinitions().Append(gapColumn);
+    grid.ColumnDefinitions().Append(arrowColumn);
+    wuxc::RowDefinition topRow;
+    topRow.Height(wux::GridLengthHelper::FromPixels(12));
+    wuxc::RowDefinition bottomRow;
+    bottomRow.Height(wux::GridLengthHelper::FromPixels(12));
+    grid.RowDefinitions().Append(topRow);
+    grid.RowDefinitions().Append(bottomRow);
+
+    auto topValue = MakeXMeterTextLine(top, 69, 10, topColor, wux::TextAlignment::Right);
+    auto bottomValue = MakeXMeterTextLine(bottom, 69, 10, bottomColor, wux::TextAlignment::Right);
+    auto topArrow = MakeXMeterTextLine(showTopArrow ? L"\x25B2" : L"", 21, 10, topColor, wux::TextAlignment::Center);
+    auto bottomArrow = MakeXMeterTextLine(showBottomArrow ? L"\x25BC" : L"", 21, 10, bottomColor, wux::TextAlignment::Center);
+    topArrow.FontFamily(wuxm::FontFamily(L"Arial"));
+    bottomArrow.FontFamily(wuxm::FontFamily(L"Arial"));
+    wuxc::Grid::SetRow(bottomValue, 1);
+    wuxc::Grid::SetRow(bottomArrow, 1);
+    wuxc::Grid::SetColumn(topArrow, 2);
+    wuxc::Grid::SetColumn(bottomArrow, 2);
+    grid.Children().Append(topValue.as<wux::UIElement>());
+    grid.Children().Append(bottomValue.as<wux::UIElement>());
+    grid.Children().Append(topArrow.as<wux::UIElement>());
+    grid.Children().Append(bottomArrow.as<wux::UIElement>());
+    return grid;
+}
+
+wux::UIElement MakeXMeterVerticalBar(double primaryPercent,
+                                     double secondaryPercent,
+                                     double width,
+                                     const winrt::Windows::UI::Color& primary,
+                                     const winrt::Windows::UI::Color& secondary,
+                                     const winrt::Windows::UI::Color& outlineColor) {
+    constexpr double kBarHeight = 24.0;
+    constexpr double kInnerHeight = 20.0;
+    wuxc::Border outline;
+    outline.Width(width);
+    outline.Height(kBarHeight);
+    outline.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+    outline.BorderBrush(wuxm::SolidColorBrush(outlineColor));
+    outline.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    outline.Padding(wux::ThicknessHelper::FromUniformLength(1));
+    outline.VerticalAlignment(wux::VerticalAlignment::Center);
+
+    wuxc::StackPanel fills;
+    fills.Width(std::max(1.0, width - 4.0));
+    fills.Height(kInnerHeight);
+    fills.VerticalAlignment(wux::VerticalAlignment::Bottom);
+
+    double first = std::clamp(primaryPercent, 0.0, 100.0);
+    double second = std::clamp(secondaryPercent, 0.0, 100.0 - first);
+    double emptyHeight = kInnerHeight * (100.0 - first - second) / 100.0;
+    wuxc::Border empty;
+    empty.Height(emptyHeight);
+    empty.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    fills.Children().Append(empty.as<wux::UIElement>());
+
+    if (second > 0.0) {
+        wuxc::Border secondaryFill;
+        secondaryFill.Height(kInnerHeight * second / 100.0);
+        secondaryFill.Background(wuxm::SolidColorBrush(secondary));
+        fills.Children().Append(secondaryFill.as<wux::UIElement>());
+    }
+    if (first > 0.0) {
+        wuxc::Border primaryFill;
+        primaryFill.Height(kInnerHeight * first / 100.0);
+        primaryFill.Background(wuxm::SolidColorBrush(primary));
+        fills.Children().Append(primaryFill.as<wux::UIElement>());
+    }
+    outline.Child(fills);
+    return outline;
+}
+
+wux::UIElement MakeXMeterPie(double percent,
+                             double secondaryPercent,
+                             double diameter,
+                             const winrt::Windows::UI::Color& fillColor,
+                             const winrt::Windows::UI::Color& secondaryColor,
+                             const winrt::Windows::UI::Color& outlineColor) {
+    double value = std::clamp(percent, 0.0, 100.0);
+    double secondValue = std::clamp(secondaryPercent, 0.0, 100.0 - value);
+    double radius = std::max(1.0, diameter / 2.0 - 1.0);
+    float center = static_cast<float>(diameter / 2.0);
+
+    wuxc::Grid pie;
+    pie.Width(diameter);
+    pie.Height(diameter);
+    pie.VerticalAlignment(wux::VerticalAlignment::Center);
+
+    if (value >= 99.999) {
+        wuxs::Ellipse full;
+        full.Width(diameter - 2.0);
+        full.Height(diameter - 2.0);
+        full.Fill(wuxm::SolidColorBrush(fillColor));
+        full.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        full.VerticalAlignment(wux::VerticalAlignment::Center);
+        pie.Children().Append(full.as<wux::UIElement>());
+    } else if (value > 0.001) {
+        constexpr double kPi = 3.14159265358979323846;
+        double endAngle = (-90.0 + value * 3.6) * kPi / 180.0;
+        wf::Point start{center, static_cast<float>(center - radius)};
+        wf::Point end{
+            static_cast<float>(center + radius * std::cos(endAngle)),
+            static_cast<float>(center + radius * std::sin(endAngle))};
+
+        wuxm::PathFigure figure;
+        figure.StartPoint(wf::Point{center, center});
+        figure.IsClosed(true);
+        wuxm::LineSegment startLine;
+        startLine.Point(start);
+        figure.Segments().Append(startLine);
+        wuxm::ArcSegment arc;
+        arc.Point(end);
+        arc.Size(wf::Size{static_cast<float>(radius), static_cast<float>(radius)});
+        arc.IsLargeArc(value > 50.0);
+        arc.SweepDirection(wuxm::SweepDirection::Clockwise);
+        figure.Segments().Append(arc);
+
+        wuxm::PathGeometry geometry;
+        geometry.Figures().Append(figure);
+        wuxs::Path wedge;
+        wedge.Width(diameter);
+        wedge.Height(diameter);
+        wedge.Data(geometry);
+        wedge.Fill(wuxm::SolidColorBrush(fillColor));
+        pie.Children().Append(wedge.as<wux::UIElement>());
+    }
+
+    if (secondValue > 0.001) {
+        constexpr double kPi = 3.14159265358979323846;
+        double startAngle = (-90.0 + value * 3.6) * kPi / 180.0;
+        double endAngle = (-90.0 + (value + secondValue) * 3.6) * kPi / 180.0;
+        wf::Point start{static_cast<float>(center + radius * std::cos(startAngle)),
+                        static_cast<float>(center + radius * std::sin(startAngle))};
+        wf::Point end{static_cast<float>(center + radius * std::cos(endAngle)),
+                      static_cast<float>(center + radius * std::sin(endAngle))};
+        wuxm::PathFigure figure;
+        figure.StartPoint(wf::Point{center, center});
+        figure.IsClosed(true);
+        wuxm::LineSegment startLine;
+        startLine.Point(start);
+        figure.Segments().Append(startLine);
+        wuxm::ArcSegment arc;
+        arc.Point(end);
+        arc.Size(wf::Size{static_cast<float>(radius), static_cast<float>(radius)});
+        arc.IsLargeArc(secondValue > 50.0);
+        arc.SweepDirection(wuxm::SweepDirection::Clockwise);
+        figure.Segments().Append(arc);
+        wuxm::PathGeometry geometry;
+        geometry.Figures().Append(figure);
+        wuxs::Path wedge;
+        wedge.Width(diameter);
+        wedge.Height(diameter);
+        wedge.Data(geometry);
+        wedge.Fill(wuxm::SolidColorBrush(secondaryColor));
+        pie.Children().Append(wedge.as<wux::UIElement>());
+    }
+
+    wuxs::Ellipse outline;
+    outline.Width(diameter - 1.0);
+    outline.Height(diameter - 1.0);
+    outline.Fill(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    outline.Stroke(wuxm::SolidColorBrush(outlineColor));
+    outline.StrokeThickness(1);
+    outline.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    outline.VerticalAlignment(wux::VerticalAlignment::Center);
+    pie.Children().Append(outline.as<wux::UIElement>());
+    return pie;
+}
+
+void ClearXMeterChildren(const wuxc::StackPanel& meter) {
+    auto children = meter.Children();
+    while (children.Size() > 0) {
+        children.RemoveAt(children.Size() - 1);
+    }
+}
+
+void UpdateSystemMetricPanel(wux::UIElement const& root,
+                             const std::wstring& widgetId) {
+    SystemMetricSnapshot snapshot = ReadSystemMetricSnapshot(widgetId);
+    SystemMetricWidgetSettings settings = ReadSystemMetricWidgetSettings(widgetId);
+    COLORREF systemHighlight = GetSysColor(COLOR_HIGHLIGHT);
+    winrt::Windows::UI::Color accent{
+        0xFF, GetRValue(systemHighlight), GetGValue(systemHighlight), GetBValue(systemHighlight)};
+    auto resolveColor = [&accent](const std::wstring& value,
+                                  const winrt::Windows::UI::Color& fallback) {
+        if (_wcsicmp(value.c_str(), L"systemAccent") == 0) return accent;
+        auto result = fallback;
+        ParseHexColor(value, result);
+        return result;
+    };
+    auto primary = resolveColor(settings.firstColor, accent);
+    auto secondary = resolveColor(settings.secondColor,
+        winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
+    auto outline = resolveColor(settings.outlineColor,
+        winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
+
+    std::wstring primaryText = L"--";
+    std::wstring secondaryText;
+    double primaryRatio = 0;
+    double secondaryRatio = 0;
+
+    if (snapshot.loaded && widgetId == L"system-cpu") {
+        primaryRatio = snapshot.totalPercent;
+        if (settings.separateUtilization) {
+            primaryRatio = snapshot.userPercent;
+            secondaryRatio = snapshot.kernelPercent;
+            primaryText = std::to_wstring(static_cast<int>(std::round(snapshot.userPercent))) + L"%";
+            secondaryText = std::to_wstring(static_cast<int>(std::round(snapshot.kernelPercent))) + L"%";
+        } else {
+            primaryText = std::to_wstring(static_cast<int>(std::round(snapshot.totalPercent))) + L"%";
+        }
+    } else if (snapshot.loaded && widgetId == L"system-storage") {
+        primaryText = FormatMetricRate(snapshot.primaryRate);
+        secondaryText = FormatMetricRate(snapshot.secondaryRate);
+        primaryRatio = snapshot.primaryPercent;
+        secondaryRatio = snapshot.secondaryPercent;
+    } else if (snapshot.loaded && widgetId == L"system-network") {
+        primaryText = FormatMetricRate(snapshot.secondaryRate); // Send, top.
+        secondaryText = FormatMetricRate(snapshot.primaryRate); // Receive, bottom.
+        double manualCapacity = settings.bandwidthKiloBytes * 1000.0;
+        double sendCapacity = settings.autoBandwidth
+            ? static_cast<double>(snapshot.sendLinkSpeedBitsPerSecond) / 8.0
+            : manualCapacity;
+        double receiveCapacity = settings.autoBandwidth
+            ? static_cast<double>(snapshot.receiveLinkSpeedBitsPerSecond) / 8.0
+            : manualCapacity;
+        primaryRatio = sendCapacity > 0 ? snapshot.secondaryRate * 100.0 / sendCapacity : 0;
+        secondaryRatio = receiveCapacity > 0 ? snapshot.primaryRate * 100.0 / receiveCapacity : 0;
+    } else if (snapshot.loaded && widgetId == L"system-memory") {
+        primaryText = std::to_wstring(static_cast<int>(std::round(snapshot.usedPercent))) + L"%";
+        primaryRatio = snapshot.usedPercent;
+    }
+    primaryRatio = std::isfinite(primaryRatio) ? std::clamp(primaryRatio, 0.0, 100.0) : 0;
+    secondaryRatio = std::isfinite(secondaryRatio) ? std::clamp(secondaryRatio, 0.0, 100.0) : 0;
+
+    auto meterElement = FindNamedFrameworkElement(root, L"TaskbarWidgetsSystemMeter");
+    auto meter = meterElement ? meterElement.try_as<wuxc::StackPanel>() : nullptr;
+    if (!meter) return;
+    double widgetWidth = SystemMetricWidgetWidth(widgetId);
+    if (auto rootElement = root.try_as<wux::FrameworkElement>()) {
+        rootElement.Width(widgetWidth);
+        rootElement.Margin(wux::ThicknessHelper::FromLengths(0, 0, 0, 0));
+    }
+    if (auto panel = FindNamedFrameworkElement(root, L"TaskbarWidgetsSystemPanel")) {
+        panel.Width(widgetWidth);
+        panel.Height(24);
+    }
+    meter.Width(widgetWidth);
+    meter.Height(24);
+
+    std::wstring signature = widgetId + L"|" + settings.displayMode + L"|" +
+                             settings.firstColor + L"|" + settings.secondColor + L"|" + settings.outlineColor + L"|" +
+                             primaryText + L"|" + secondaryText;
+    if (widgetId == L"system-cpu" && settings.showIndividualCores) {
+        for (const auto& core : snapshot.cores) {
+            signature += L"|" + core.id + L":" +
+                         std::to_wstring(static_cast<int>(std::round(core.percent))) + L":" +
+                         std::to_wstring(static_cast<int>(std::round(core.userPercent))) + L":" +
+                         std::to_wstring(static_cast<int>(std::round(core.kernelPercent)));
+        }
+    }
+    auto tag = meter.Tag();
+    if (tag && std::wstring(winrt::unbox_value_or<winrt::hstring>(tag, L"").c_str()) == signature) {
+        return;
+    }
+    meter.Tag(winrt::box_value(winrt::hstring(signature)));
+    ClearXMeterChildren(meter);
+
+    if (!snapshot.loaded) {
+        meter.Children().Append(MakeXMeterTextPair(L"--", L"", std::max(8.0, widgetWidth), 10, primary, secondary));
+        return;
+    }
+
+    bool perCore = widgetId == L"system-cpu" && settings.showIndividualCores &&
+                   !snapshot.cores.empty();
+    std::vector<CpuCoreMetricSnapshot> cores = snapshot.cores;
+    if (perCore && settings.combineLogicalCores) {
+        std::vector<CpuCoreMetricSnapshot> combined;
+        for (size_t i = 0; i < cores.size(); i += 2) {
+            auto merged = cores[i];
+            if (i + 1 < cores.size()) {
+                merged.id += L"+" + cores[i + 1].id;
+                merged.percent = (merged.percent + cores[i + 1].percent) / 2.0;
+                merged.userPercent = (merged.userPercent + cores[i + 1].userPercent) / 2.0;
+                merged.kernelPercent = (merged.kernelPercent + cores[i + 1].kernelPercent) / 2.0;
+            }
+            combined.push_back(merged);
+        }
+        cores = std::move(combined);
+    }
+
+    if (settings.displayMode == L"text") {
+        if (perCore) {
+            for (size_t index = 0; index < cores.size(); ++index) {
+                const auto& core = cores[index];
+                double user = core.userPercent;
+                double kernel = core.kernelPercent;
+                if (user <= 0.0 && kernel <= 0.0) user = core.percent;
+                std::wstring top = std::to_wstring(static_cast<int>(std::round(
+                    settings.separateUtilization ? kernel : core.percent))) + L"%";
+                std::wstring bottom = settings.separateUtilization
+                    ? std::to_wstring(static_cast<int>(std::round(user))) + L"%"
+                    : L"";
+                meter.Children().Append(MakeXMeterTextPair(
+                    top, bottom, 44, 10, secondary, primary));
+            }
+        } else if (widgetId == L"system-storage") {
+            meter.Children().Append(MakeXMeterRatePair(
+                primaryText, secondaryText, snapshot.primaryRate >= 1000.0,
+                snapshot.secondaryRate >= 1000.0, primary, secondary));
+        } else if (widgetId == L"system-network") {
+            meter.Children().Append(MakeXMeterRatePair(
+                primaryText, secondaryText, snapshot.secondaryRate >= 1000.0,
+                snapshot.primaryRate >= 1000.0, primary, secondary));
+        } else {
+            meter.Children().Append(MakeXMeterTextPair(
+                primaryText, secondaryText, 44, 10.0,
+                widgetId == L"system-cpu" && settings.separateUtilization ? secondary : primary,
+                primary));
+        }
+    } else if (settings.displayMode == L"bar") {
+        if (perCore) {
+            for (size_t index = 0; index < cores.size(); ++index) {
+                const auto& core = cores[index];
+                double user = core.userPercent;
+                double kernel = core.kernelPercent;
+                if (user <= 0.0 && kernel <= 0.0) user = core.percent;
+                meter.Children().Append(MakeXMeterVerticalBar(
+                    settings.separateUtilization ? user : core.percent,
+                    settings.separateUtilization ? kernel : 0.0,
+                    8, primary, secondary, outline));
+            }
+        } else {
+            meter.Children().Append(MakeXMeterVerticalBar(
+                primaryRatio, widgetId == L"system-memory" ? 0.0 : secondaryRatio,
+                8, primary, secondary, outline));
+        }
+    } else {
+        if (perCore) {
+            for (size_t index = 0; index < cores.size(); ++index) {
+                double user = cores[index].userPercent;
+                double kernel = cores[index].kernelPercent;
+                if (user <= 0.0 && kernel <= 0.0) user = cores[index].percent;
+                meter.Children().Append(MakeXMeterPie(
+                    settings.separateUtilization ? user : cores[index].percent,
+                    settings.separateUtilization ? kernel : 0.0,
+                    24, primary, secondary, outline));
+            }
+        } else {
+            meter.Children().Append(MakeXMeterPie(
+                primaryRatio, widgetId == L"system-memory" ? 0.0 : secondaryRatio,
+                24, primary, secondary, outline));
+        }
+    }
 }
 
 void ApplyMediaTheme(wux::UIElement const& root,
@@ -4413,6 +5236,9 @@ void SetExpandedMode(wux::UIElement const& root, bool expanded) {
             } else if (activeDesign == L"discord-voice") {
                 rootElement.Width(196);
                 rootElement.Height(36);
+            } else if (activeDesign.rfind(L"system-", 0) == 0) {
+                rootElement.Width(176);
+                rootElement.Height(36);
             } else {
                 rootElement.Width(240);
                 rootElement.Height(36);
@@ -4456,6 +5282,28 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
     }
 
     std::wstring activeDesign = instance.designId;
+    bool isSystemMetric = activeDesign == L"system-cpu" ||
+                          activeDesign == L"system-storage" ||
+                          activeDesign == L"system-network" ||
+                          activeDesign == L"system-memory";
+    SetNamedVisibility(root, L"TaskbarWidgetsSystemPanel",
+                       isSystemMetric ? wux::Visibility::Visible
+                                      : wux::Visibility::Collapsed);
+    if (isSystemMetric) {
+        if (rootElement) {
+            rootElement.Width(SystemMetricWidgetWidth(activeDesign));
+            rootElement.Height(24);
+            rootElement.Margin(wux::ThicknessHelper::FromLengths(0, 0, 0, 0));
+        }
+        SetNamedVisibility(root, L"TaskbarWidgetsCompactPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsExpandedPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsWeatherPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsDiscordPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsSteamPanel", wux::Visibility::Collapsed);
+        UpdateSystemMetricPanel(root, activeDesign);
+        return;
+    }
     if (activeDesign == L"media-player") {
         MediaSnapshot media = ReadMediaSnapshot();
         WidgetRuntimeSettings settings = ReadWidgetRuntimeSettings();
@@ -4750,6 +5598,7 @@ void RebuildWidgetHostIfNeeded(wux::UIElement const& root,
         return;
     }
 
+    g_widgetDragOverrides.clear();
     ClearPanelChildren(host);
     for (const auto& widget : widgets) {
         if (!widget.enabled) {
@@ -4763,6 +5612,9 @@ void RebuildWidgetHostIfNeeded(wux::UIElement const& root,
 }
 
 double WidgetDesignWidth(const std::wstring& designId) {
+    if (designId.rfind(L"system-", 0) == 0) {
+        return SystemMetricWidgetWidth(designId);
+    }
     if (designId == L"media-player" ||
         designId == L"steam-download") {
         return 230.0;
@@ -4777,6 +5629,9 @@ double WidgetDesignWidth(const std::wstring& designId) {
 }
 
 double WidgetDesignHeight(const std::wstring& designId) {
+    if (designId.rfind(L"system-", 0) == 0) {
+        return 24.0;
+    }
     if (designId == L"media-player" ||
         designId == L"steam-download") {
         return 44.0;
@@ -4851,10 +5706,28 @@ void ApplyWidgetCanvasLayout(wux::UIElement const& root,
         double height = WidgetDesignHeight(widget.designId);
         double left = 0;
         if (widget.positionPct >= 0) {
-            double usableWidth = std::max(0.0, canvasWidth - width);
-            left = usableWidth * (static_cast<double>(widget.positionPct) / 100.0);
+            left = taskbar_widgets::IndependentLeftForWidget(
+                taskbar_widgets::PositionedWidget{
+                    width, static_cast<int>(widget.positionPct),
+                    static_cast<int>(widget.moveX)},
+                canvasWidth);
         } else {
             left = canvasWidth + static_cast<double>(widget.moveX) - width;
+        }
+        auto overrideIt = g_widgetDragOverrides.find(WidgetElementKey(child));
+        if (overrideIt != g_widgetDragOverrides.end()) {
+            auto& dragOverride = overrideIt->second;
+            const bool configurationApplied =
+                dragOverride.awaitingConfig &&
+                widget.positionPct == dragOverride.anchorPercent &&
+                widget.moveX == dragOverride.offsetPx;
+            const bool expired = dragOverride.awaitingConfig &&
+                std::chrono::steady_clock::now() >= dragOverride.expiresAt;
+            if (configurationApplied || expired) {
+                g_widgetDragOverrides.erase(overrideIt);
+            } else {
+                left = dragOverride.left;
+            }
         }
         left = std::clamp(left, 0.0, std::max(0.0, canvasWidth - width));
         double top = std::max(0.0, (48.0 - height) / 2.0);

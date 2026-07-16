@@ -1,0 +1,21 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "system-network",
+  "displayName": "Network",
+  "category": "System",
+  "description": "Live network receive and send throughput.",
+  "defaultSize": { "width": 93, "height": 24 },
+  "assets": [],
+  "settings": [
+    { "key": "displayMode", "type": "select", "label": "Display mode", "default": "text", "options": ["text", "bar", "pie"] },
+    { "key": "meterStyleVersion", "type": "number", "label": "Meter style version", "default": 1 },
+    { "key": "refreshSeconds", "type": "number", "label": "Refresh interval", "default": 3, "minimum": 0.1, "maximum": 10, "step": 0.1 },
+    { "key": "outlineColor", "type": "text", "label": "Outline color", "default": "#FFFFFFFF" },
+    { "key": "receiveColor", "type": "text", "label": "Receive color", "default": "systemAccent" },
+    { "key": "sendColor", "type": "text", "label": "Send color", "default": "systemAccent" },
+    { "key": "interfaceId", "type": "select", "label": "Network adapter", "default": "all", "options": ["all"] },
+    { "key": "autoBandwidth", "type": "boolean", "label": "Automatically detect bandwidth", "default": true },
+    { "key": "bandwidthKiloBytes", "type": "number", "label": "Bandwidth (KiloBytes)", "default": 125000, "minimum": 1, "maximum": 1000000000 }
+  ]
+}

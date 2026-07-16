@@ -12,6 +12,10 @@ const WEATHER_DESIGN: &str = "weather-static";
 const DISCORD_DESIGN: &str = "discord-voice";
 const MEDIA_DESIGN: &str = "media-player";
 const STEAM_DESIGN: &str = "steam-download";
+const SYSTEM_CPU_DESIGN: &str = "system-cpu";
+const SYSTEM_STORAGE_DESIGN: &str = "system-storage";
+const SYSTEM_NETWORK_DESIGN: &str = "system-network";
+const SYSTEM_MEMORY_DESIGN: &str = "system-memory";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +30,8 @@ struct WidgetInstanceSettings {
     position_pct: Option<i32>,
     #[serde(default)]
     order: i32,
+    #[serde(default)]
+    settings: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,6 +119,9 @@ struct RotationConfig {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotEnvelope<T> {
+    schema_version: Option<u32>,
+    widget_id: Option<String>,
+    status: Option<String>,
     data: Option<T>,
 }
 
@@ -154,6 +163,44 @@ struct AppState {
     settings: WidgetSettings,
     update_status: UpdateStatus,
     media_status: MediaStatus,
+    system_sources: SystemSources,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemSources {
+    disks: Vec<SourceOption>,
+    interfaces: Vec<SourceOption>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceOption {
+    id: String,
+    name: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsOpenRequest {
+    schema_version: u32,
+    request_id: String,
+    widget_id: String,
+    created_at_unix: i64,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageSourcesSnapshot {
+    #[serde(default)]
+    available_disks: Vec<SourceOption>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkSourcesSnapshot {
+    #[serde(default)]
+    available_interfaces: Vec<SourceOption>,
 }
 
 fn default_settings() -> WidgetSettings {
@@ -172,6 +219,10 @@ fn default_settings() -> WidgetSettings {
             DISCORD_DESIGN.to_owned(),
             MEDIA_DESIGN.to_owned(),
             STEAM_DESIGN.to_owned(),
+            SYSTEM_CPU_DESIGN.to_owned(),
+            SYSTEM_STORAGE_DESIGN.to_owned(),
+            SYSTEM_NETWORK_DESIGN.to_owned(),
+            SYSTEM_MEMORY_DESIGN.to_owned(),
         ]),
         codex_api_endpoint: None,
         codex_project_filter: None,
@@ -193,6 +244,10 @@ fn default_widget_instances() -> Vec<WidgetInstanceSettings> {
         DISCORD_DESIGN,
         MEDIA_DESIGN,
         STEAM_DESIGN,
+        SYSTEM_CPU_DESIGN,
+        SYSTEM_STORAGE_DESIGN,
+        SYSTEM_NETWORK_DESIGN,
+        SYSTEM_MEMORY_DESIGN,
     ]
     .iter()
     .enumerate()
@@ -203,8 +258,44 @@ fn default_widget_instances() -> Vec<WidgetInstanceSettings> {
         move_x: 0,
         position_pct: Some(100),
         order: index as i32,
+        settings: system_meter_defaults(design).unwrap_or_default(),
     })
     .collect()
+}
+
+fn system_meter_defaults(design: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let value = match design {
+        SYSTEM_CPU_DESIGN => serde_json::json!({
+            "meterStyleVersion": 1, "displayMode": "bar", "refreshSeconds": 3.0,
+            "outlineColor": "#FFFFFFFF", "showIndividualCores": true,
+            "combineLogicalCores": false, "separateUtilization": true,
+            "systemColor": "#FFFFFFFF", "userColor": "systemAccent", "cpuColor": "systemAccent"
+        }),
+        SYSTEM_STORAGE_DESIGN => serde_json::json!({
+            "meterStyleVersion": 1, "displayMode": "text", "refreshSeconds": 3.0,
+            "outlineColor": "#FFFFFFFF", "readColor": "#FFFFFFFF", "writeColor": "#FFFFFFFF",
+            "diskId": "_Total"
+        }),
+        SYSTEM_NETWORK_DESIGN => serde_json::json!({
+            "meterStyleVersion": 1, "displayMode": "text", "refreshSeconds": 3.0,
+            "outlineColor": "#FFFFFFFF", "receiveColor": "systemAccent", "sendColor": "systemAccent",
+            "interfaceId": "all", "autoBandwidth": true, "bandwidthKiloBytes": 125000.0
+        }),
+        SYSTEM_MEMORY_DESIGN => serde_json::json!({
+            "meterStyleVersion": 1, "displayMode": "pie", "refreshSeconds": 3.0,
+            "outlineColor": "systemAccent", "usedColor": "systemAccent"
+        }),
+        _ => return None,
+    };
+    value.as_object().cloned()
+}
+
+fn normalize_system_meter_settings(widget: &mut WidgetInstanceSettings) {
+    let Some(defaults) = system_meter_defaults(&widget.design) else { return; };
+    let version = widget.settings.get("meterStyleVersion").and_then(|value| value.as_u64());
+    if version != Some(1) {
+        widget.settings = defaults;
+    }
 }
 
 fn install_dir() -> Result<PathBuf, String> {
@@ -277,12 +368,37 @@ fn read_media_status_from(app_dir: &Path) -> MediaStatus {
         .unwrap_or_default()
 }
 
+fn read_system_sources_from(app_dir: &Path) -> SystemSources {
+    let storage = fs::read_to_string(app_dir.join("State").join("system-storage.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str::<SnapshotEnvelope<StorageSourcesSnapshot>>(&data).ok())
+        .and_then(|snapshot| {
+            if snapshot.schema_version == Some(1) && snapshot.widget_id.as_deref() == Some(SYSTEM_STORAGE_DESIGN) && snapshot.status.as_deref() == Some("ok") { snapshot.data } else { None }
+        })
+        .unwrap_or_default();
+    let network = fs::read_to_string(app_dir.join("State").join("system-network.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str::<SnapshotEnvelope<NetworkSourcesSnapshot>>(&data).ok())
+        .and_then(|snapshot| {
+            if snapshot.schema_version == Some(1) && snapshot.widget_id.as_deref() == Some(SYSTEM_NETWORK_DESIGN) && snapshot.status.as_deref() == Some("ok") { snapshot.data } else { None }
+        })
+        .unwrap_or_default();
+    SystemSources {
+        disks: storage.available_disks,
+        interfaces: network.available_interfaces,
+    }
+}
+
 fn normalize_design(id: &str) -> &str {
     match id {
         WEATHER_DESIGN => WEATHER_DESIGN,
         DISCORD_DESIGN => DISCORD_DESIGN,
         MEDIA_DESIGN => MEDIA_DESIGN,
         STEAM_DESIGN => STEAM_DESIGN,
+        SYSTEM_CPU_DESIGN => SYSTEM_CPU_DESIGN,
+        SYSTEM_STORAGE_DESIGN => SYSTEM_STORAGE_DESIGN,
+        SYSTEM_NETWORK_DESIGN => SYSTEM_NETWORK_DESIGN,
+        SYSTEM_MEMORY_DESIGN => SYSTEM_MEMORY_DESIGN,
         _ => CODEX_DESIGN,
     }
 }
@@ -295,6 +411,10 @@ fn normalize_rotation_designs(saved: Option<Vec<String>>) -> Vec<String> {
             DISCORD_DESIGN.to_owned(),
             MEDIA_DESIGN.to_owned(),
             STEAM_DESIGN.to_owned(),
+            SYSTEM_CPU_DESIGN.to_owned(),
+            SYSTEM_STORAGE_DESIGN.to_owned(),
+            SYSTEM_NETWORK_DESIGN.to_owned(),
+            SYSTEM_MEMORY_DESIGN.to_owned(),
         ]
     });
 
@@ -336,6 +456,10 @@ fn normalize_widget_instances(
         DISCORD_DESIGN,
         MEDIA_DESIGN,
         STEAM_DESIGN,
+        SYSTEM_CPU_DESIGN,
+        SYSTEM_STORAGE_DESIGN,
+        SYSTEM_NETWORK_DESIGN,
+        SYSTEM_MEMORY_DESIGN,
     ];
 
     widgets.retain(|widget| widget.design != "btc-fees" && widget.id != "btc-fees");
@@ -351,6 +475,7 @@ fn normalize_widget_instances(
         }
         widget.move_x = widget.move_x.clamp(-640, 640);
         widget.position_pct = Some(widget.position_pct.unwrap_or(100).clamp(0, 100));
+        normalize_system_meter_settings(widget);
     }
 
     widgets.sort_by_key(|widget| widget.order);
@@ -363,6 +488,7 @@ fn normalize_widget_instances(
                 move_x: 0,
                 position_pct: Some(100),
                 order: index as i32,
+                settings: system_meter_defaults(design).unwrap_or_default(),
             });
         }
     }
@@ -415,6 +541,7 @@ fn config_to_transport(config: ConfigV2) -> WidgetSettings {
             move_x: widget.position.offset_px,
             position_pct: Some(widget.position.anchor_percent),
             order: widget.order,
+            settings: widget.settings.clone(),
         }).collect()),
         rotation_enabled: Some(config.layout.mode == "rotation"),
         rotation_interval_secs: Some(config.rotation.interval_seconds),
@@ -439,7 +566,7 @@ fn string_setting(map: &mut serde_json::Map<String, serde_json::Value>, key: &st
 fn transport_to_config(settings: &WidgetSettings) -> ConfigV2 {
     let widgets = settings.widgets.clone().unwrap_or_else(default_widget_instances);
     let config_widgets = widgets.into_iter().map(|widget| {
-        let mut values = serde_json::Map::new();
+        let mut values = widget.settings.clone();
         match widget.design.as_str() {
             CODEX_DESIGN => {
                 string_setting(&mut values, "apiEndpoint", settings.codex_api_endpoint.as_ref());
@@ -495,6 +622,7 @@ fn load_state() -> Result<AppState, String> {
         settings: read_settings_from(&dir),
         update_status: read_update_status_from(&dir),
         media_status: read_media_status_from(&dir),
+        system_sources: read_system_sources_from(&dir),
     })
 }
 
@@ -522,6 +650,30 @@ fn save_settings(settings: WidgetSettings) -> Result<(), String> {
     let temp = dir.join("config.json.tmp");
     fs::write(&temp, format!("{json}\n")).map_err(|e| e.to_string())?;
     fs::rename(temp, path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn consume_settings_open_request() -> Result<Option<String>, String> {
+    let path = data_dir(&install_dir()?).join("Runtime").join("settings-open-request.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let request = fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|json| serde_json::from_str::<SettingsOpenRequest>(&json).map_err(|e| e.to_string()));
+    let _ = fs::remove_file(&path);
+    let request = request?;
+    let known = [SYSTEM_CPU_DESIGN, SYSTEM_STORAGE_DESIGN, SYSTEM_NETWORK_DESIGN, SYSTEM_MEMORY_DESIGN];
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs() as i64)
+        .unwrap_or_default();
+    if request.schema_version != 1 || request.request_id.is_empty() ||
+       !known.contains(&request.widget_id.as_str()) ||
+       request.created_at_unix <= 0 || (now - request.created_at_unix).abs() > 300 {
+        return Ok(None);
+    }
+    Ok(Some(request.widget_id))
 }
 
 #[tauri::command]
@@ -678,12 +830,41 @@ fn resolve_installer_path(app_dir: &Path, status: &UpdateStatus) -> Result<PathB
     ))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_widget_settings_round_trip() {
+        let mut settings = default_settings();
+        let widgets = settings.widgets.as_mut().expect("default widgets");
+        let network = widgets
+            .iter_mut()
+            .find(|widget| widget.design == SYSTEM_NETWORK_DESIGN)
+            .expect("system network widget");
+        network.enabled = true;
+        network.settings.insert("displayMode".to_owned(), serde_json::json!("pie"));
+        network.settings.insert("interfaceId".to_owned(), serde_json::json!("adapter-test"));
+
+        let config = transport_to_config(&settings);
+        let saved = config.widgets.iter().find(|widget| widget.id == SYSTEM_NETWORK_DESIGN).unwrap();
+        assert_eq!(saved.settings.get("displayMode"), Some(&serde_json::json!("pie")));
+
+        let restored = config_to_transport(config);
+        let restored_network = restored.widgets.unwrap().into_iter()
+            .find(|widget| widget.design == SYSTEM_NETWORK_DESIGN)
+            .unwrap();
+        assert_eq!(restored_network.settings.get("interfaceId"), Some(&serde_json::json!("adapter-test")));
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             load_state,
+            consume_settings_open_request,
             save_settings,
             open_widget_libraries,
             run_loader_command,

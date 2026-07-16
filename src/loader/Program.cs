@@ -129,6 +129,14 @@ internal static class Program
             "media-player", () => MediaWorker.RunAsync(cancellation.Token), cancellation.Token);
         var steamDownloadTask = RunProviderIsolatedAsync(
             "steam-download", () => SteamDownloadWorker.RunAsync(cancellation.Token), cancellation.Token);
+        var systemCpuTask = RunProviderIsolatedAsync(
+            "system-cpu", () => SystemMetricsWorker.RunAsync("system-cpu", cancellation.Token), cancellation.Token);
+        var systemStorageTask = RunProviderIsolatedAsync(
+            "system-storage", () => SystemMetricsWorker.RunAsync("system-storage", cancellation.Token), cancellation.Token);
+        var systemNetworkTask = RunProviderIsolatedAsync(
+            "system-network", () => SystemMetricsWorker.RunAsync("system-network", cancellation.Token), cancellation.Token);
+        var systemMemoryTask = RunProviderIsolatedAsync(
+            "system-memory", () => SystemMetricsWorker.RunAsync("system-memory", cancellation.Token), cancellation.Token);
         var watchdogTask = Task.Run(
             () => RunExplorerWatchdogAsync(hookPath, cancellation.Token),
             cancellation.Token);
@@ -154,6 +162,10 @@ internal static class Program
                 discordTask,
                 mediaTask,
                 steamDownloadTask,
+                systemCpuTask,
+                systemStorageTask,
+                systemNetworkTask,
+                systemMemoryTask,
                 watchdogTask,
                 accountCommandsTask);
         }

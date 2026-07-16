@@ -35,6 +35,7 @@
         "default": {},
         "minimum": { "type": "number" },
         "maximum": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
         "options": { "type": "array", "items": { "type": "string" } }
       }
     }

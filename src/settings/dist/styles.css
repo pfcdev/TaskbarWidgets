@@ -972,6 +972,156 @@ button {
   background: rgba(203, 213, 225, .28);
 }
 
+.native-widget.system-meter {
+  width: max-content;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: #f8fafc;
+  background: transparent;
+}
+
+.xmeter-rate-lines b,
+.xmeter-rate-lines small,
+.xmeter-core-text b,
+.xmeter-core-text small,
+.xmeter-single-text {
+  display: block;
+  height: 16px;
+  overflow: visible;
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 10px;
+  line-height: 12px;
+  white-space: nowrap;
+}
+
+.xmeter-rate-lines b,
+.xmeter-core-text b {
+  color: var(--primary);
+}
+
+.xmeter-rate-lines small,
+.xmeter-core-text small {
+  color: var(--secondary);
+}
+
+.xmeter-core-text {
+  width: max-content;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.xmeter-core-text i {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 24px;
+  text-align: center;
+  font-style: normal;
+}
+
+.xmeter-core-text b,
+.xmeter-core-text small {
+  font-size: 10px;
+}
+
+.xmeter-rate-lines { width: 93px; height: 24px; display: grid; grid-template-rows: 12px 12px; }
+.xmeter-rate-lines > span { display: grid; grid-template-columns: 69px 21px; column-gap: 3px; align-items: center; }
+.xmeter-rate-lines b, .xmeter-rate-lines small { text-align: right; }
+.xmeter-rate-lines i { font-family: Arial, sans-serif; font-size: 10px; line-height: 12px; font-style: normal; text-align: center; color: var(--primary); }
+.xmeter-rate-lines span:last-child i { color: var(--secondary); }
+.xmeter-single-text { width: 44px; height: 24px; display: grid; place-items: center; color: var(--primary); }
+
+.xmeter-bars {
+  width: max-content;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.xmeter-vbar {
+  position: relative;
+  width: 8px;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid var(--meter-outline);
+  background: transparent;
+  font-style: normal;
+}
+
+.xmeter-vbar em,
+.xmeter-vbar b {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: block;
+  background: var(--primary);
+}
+
+.xmeter-vbar em {
+  height: calc(var(--a) * 1%);
+}
+
+.xmeter-vbar b {
+  bottom: calc(1px + var(--a) * 1%);
+  height: calc(var(--b) * 1%);
+  background: var(--secondary);
+}
+
+.xmeter-vbar.secondary em {
+  background: var(--secondary);
+}
+
+.xmeter-pies {
+  width: max-content;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.xmeter-pie {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid var(--meter-outline);
+  border-radius: 50%;
+  background: conic-gradient(var(--primary) 0 calc(var(--a) * 1%), var(--secondary) 0 calc((var(--a) + var(--b)) * 1%), transparent 0);
+}
+
+.system-meter-tabs { display:flex; align-items:stretch; margin:16px 0 20px; border-bottom:1px solid var(--outline-variant); }
+.system-meter-tabs button { position:relative; display:flex; align-items:center; gap:8px; padding:10px 14px; border:0; color:var(--text-secondary); background:transparent; cursor:grab; }
+.system-meter-tabs button.active { color:var(--text-primary); }
+.system-meter-tabs button i { position:absolute; right:8px; bottom:-1px; left:8px; height:2px; background:transparent; }
+.system-meter-tabs button.active i { background:var(--accent); }
+.system-tab-check input { width:15px; height:15px; accent-color:var(--accent); }
+.meter-type-radios { display:flex; gap:10px; }
+.meter-type-radios label input { position:absolute; opacity:0; }
+.meter-type-radios label span { display:block; padding:7px 18px; border:1px solid var(--outline-variant); border-radius:4px; cursor:pointer; }
+.meter-type-radios label input:checked + span { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 18%, transparent); }
+.meter-color-control { display:flex; align-items:center; gap:8px; }
+.meter-color-control .color-text { width:132px; }
+
+.color-input {
+  width: 46px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 7px;
+  background: var(--surface-highest);
+}
+
 .widget-library-copy {
   min-width: 0;
 }
