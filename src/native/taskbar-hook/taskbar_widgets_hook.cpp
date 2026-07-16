@@ -32,6 +32,7 @@
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
@@ -53,6 +54,7 @@
 #include <cstdio>
 
 namespace wf = winrt::Windows::Foundation;
+namespace wdj = winrt::Windows::Data::Json;
 namespace wuc = winrt::Windows::UI::Core;
 namespace wux = winrt::Windows::UI::Xaml;
 namespace wuxc = winrt::Windows::UI::Xaml::Controls;
@@ -74,7 +76,7 @@ constexpr PCWSTR kTaskbarWidgetsLayoutMarkerName =
 constexpr double kTaskbarWidgetsExplicitColumnRightGap = 10.0;
 constexpr double kTaskbarWidgetsOverlayTrayGap = 28.0;
 constexpr double kTaskbarWidgetsOverlayMinRightReserve = 220.0;
-constexpr double kTaskbarWidgetsMaxWidgetWidth = 240.0;
+constexpr double kTaskbarWidgetsMaxWidgetWidth = 480.0;
 HWND g_win32ProofWindow = nullptr;
 HWND g_win32ProofParent = nullptr;
 HMODULE g_hookModule = nullptr;
@@ -216,6 +218,21 @@ std::string WideToUtf8(const std::wstring& value) {
     WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
                         static_cast<int>(value.size()), result.data(), length,
                         nullptr, nullptr);
+    return result;
+}
+
+std::wstring Utf8ToWide(const std::string& value) {
+    if (value.empty()) {
+        return {};
+    }
+    int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                                     static_cast<int>(value.size()), nullptr, 0);
+    if (length <= 0) {
+        return {};
+    }
+    std::wstring result(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                        static_cast<int>(value.size()), result.data(), length);
     return result;
 }
 
@@ -425,6 +442,9 @@ wuxm::SolidColorBrush MakeBrush(BYTE a, BYTE r, BYTE g, BYTE b) {
 }
 
 std::vector<std::wstring> GetAntigravityProjectTitles();
+struct WidgetInstanceRuntime;
+struct DynamicWidgetDefinition;
+const DynamicWidgetDefinition* FindDynamicWidget(const std::wstring& id);
 std::wstring ReadActiveWidgetDesign();
 wux::UIElement MakePngImage(PCWSTR assetName, double width, double height);
 long long CurrentUnixTime();
@@ -434,10 +454,23 @@ void SetExpandedMode(wux::UIElement const& root, bool expanded);
 void ShowCodexHoverPopup();
 void HideCodexHoverPopup();
 double WidgetDesignWidth(const std::wstring& designId);
+wux::UIElement MakeXMeterVerticalBar(
+    double primaryPercent, double secondaryPercent, double width,
+    const winrt::Windows::UI::Color& primary,
+    const winrt::Windows::UI::Color& secondary,
+    const winrt::Windows::UI::Color& outlineColor);
+wux::UIElement MakeXMeterPie(
+    double percent, double secondaryPercent, double diameter,
+    const winrt::Windows::UI::Color& fillColor,
+    const winrt::Windows::UI::Color& secondaryColor,
+    const winrt::Windows::UI::Color& outlineColor);
+bool ParseHexColor(const std::wstring& value, winrt::Windows::UI::Color& color);
 void ShowAccountMenu(wux::FrameworkElement const& root);
 void ShowWeatherMenu(wux::FrameworkElement const& root);
 HWND FindCurrentProcessTaskbarWindow();
 void UpdateTaskbarWidgetsRoot(wux::UIElement const& root);
+void UpdateDynamicWidgetPanel(wux::UIElement const& root,
+                              const WidgetInstanceRuntime& instance);
 void ShowWidgetLibraryWindow();
 void RefreshInsertedTaskbarWidgetsRoots();
 void ApplyTaskbarWidgetsAnchorMargin(wux::FrameworkElement const& root,
@@ -466,6 +499,7 @@ struct WidgetLibraryHitItem {
 
 struct WidgetInstanceRuntime {
     std::wstring id;
+    std::wstring instanceId;
     std::wstring designId;
     bool enabled = true;
     long long moveX = 0;
@@ -1034,6 +1068,16 @@ wux::FrameworkElement MakeSystemMetricPanel() {
     return panel;
 }
 
+wux::FrameworkElement MakeDynamicWidgetPanel() {
+    wuxc::Border panel;
+    panel.Name(L"TaskbarWidgetsDynamicPanel");
+    panel.Width(96);
+    panel.Height(24);
+    panel.Visibility(wux::Visibility::Collapsed);
+    panel.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    return panel;
+}
+
 void ShowWidgetContextMenu() {
     constexpr UINT_PTR kSettingsCommand = 1001;
     constexpr UINT_PTR kQuitCommand = 1002;
@@ -1091,10 +1135,22 @@ std::wstring GetWidgetDesignFromRoot(wux::UIElement const& root) {
     return std::wstring(designId.c_str());
 }
 
+std::wstring GetWidgetInstanceFromRoot(wux::UIElement const& root) {
+    auto frameworkElement = root.try_as<wux::FrameworkElement>();
+    if (!frameworkElement || !frameworkElement.DataContext()) {
+        return GetWidgetDesignFromRoot(root);
+    }
+    auto instanceId = winrt::unbox_value_or<winrt::hstring>(
+        frameworkElement.DataContext(), L"");
+    return instanceId.empty() ? GetWidgetDesignFromRoot(root)
+                              : std::wstring(instanceId.c_str());
+}
+
 wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& instance) {
     wuxc::Grid root;
     root.Name(L"TaskbarWidgetsWidget");
     root.Tag(winrt::box_value(winrt::hstring(instance.designId)));
+    root.DataContext(winrt::box_value(winrt::hstring(instance.instanceId)));
     root.VerticalAlignment(wux::VerticalAlignment::Center);
     root.HorizontalAlignment(wux::HorizontalAlignment::Right);
     root.Height(36);
@@ -1231,6 +1287,7 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     root.Children().Append(MakeMediaPanel().as<wux::UIElement>());
     root.Children().Append(MakeSteamDownloadPanel().as<wux::UIElement>());
     root.Children().Append(MakeSystemMetricPanel().as<wux::UIElement>());
+    root.Children().Append(MakeDynamicWidgetPanel().as<wux::UIElement>());
 
     wuxc::Border layoutMarker;
     layoutMarker.Name(kTaskbarWidgetsLayoutMarkerName);
@@ -1323,7 +1380,7 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
             left, position.anchorPercent, position.offsetPx, true,
             std::chrono::steady_clock::now() + std::chrono::seconds(3)};
         WriteTaskbarWidgetsCommand(
-            L"moveWidget", L"", design,
+            L"moveWidget", L"", GetWidgetInstanceFromRoot(root.as<wux::UIElement>()),
             position.anchorPercent, position.offsetPx);
         args.Handled(true);
     });
@@ -1341,7 +1398,9 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
             return;
         }
         std::wstring activeDesign = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
-        if (activeDesign == L"weather-static") {
+        if (FindDynamicWidget(activeDesign)) {
+            WriteTaskbarWidgetsCommand(L"openSettings", L"", activeDesign);
+        } else if (activeDesign == L"weather-static") {
             ShowWeatherMenu(root);
         } else if (activeDesign == L"discord-voice") {
             ShowWidgetLibraryWindow();
@@ -1366,7 +1425,7 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     });
     root.RightTapped([root](auto const&, wuxi::RightTappedRoutedEventArgs const& args) {
         auto design = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
-        if (design.rfind(L"system-", 0) == 0) {
+        if (design.rfind(L"system-", 0) == 0 || FindDynamicWidget(design)) {
             WriteTaskbarWidgetsCommand(L"openSettings", L"", design);
         } else {
             ShowWidgetContextMenu();
@@ -1523,13 +1582,113 @@ bool ExtractJsonBool(const std::string& json, const char* key, bool& value) {
     return false;
 }
 
+struct DynamicWidgetDefinition {
+    std::wstring id;
+    std::wstring displayName;
+    double width = 96.0;
+    double height = 24.0;
+    wdj::JsonObject layout{nullptr};
+};
+
+thread_local unsigned long long g_dynamicCatalogVersion = 0;
+thread_local std::unordered_map<std::wstring, DynamicWidgetDefinition> g_dynamicWidgets;
+
+double JsonNumber(const wdj::JsonObject& object, PCWSTR key, double fallback) {
+    try {
+        return object && object.HasKey(key) ? object.GetNamedNumber(key) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::wstring JsonString(const wdj::JsonObject& object, PCWSTR key,
+                        const std::wstring& fallback = L"") {
+    try {
+        if (!object || !object.HasKey(key)) {
+            return fallback;
+        }
+        auto value = object.GetNamedString(key);
+        return std::wstring(value.c_str());
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool JsonBool(const wdj::JsonObject& object, PCWSTR key, bool fallback) {
+    try {
+        return object && object.HasKey(key) ? object.GetNamedBoolean(key) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+void RefreshDynamicWidgetCatalog() {
+    std::wstring path = GetTaskbarWidgetsPath(L"Runtime\\WidgetCatalog.json");
+    unsigned long long version = GetFileWriteVersion(path);
+    if (version == g_dynamicCatalogVersion) {
+        return;
+    }
+    g_dynamicCatalogVersion = version;
+    g_dynamicWidgets.clear();
+    try {
+        std::string json = ReadUtf8File(path);
+        std::wstring wide = Utf8ToWide(json);
+        if (wide.empty()) {
+            return;
+        }
+        auto catalog = wdj::JsonObject::Parse(winrt::hstring(wide));
+        if (!catalog.HasKey(L"widgets")) {
+            return;
+        }
+        auto widgets = catalog.GetNamedArray(L"widgets");
+        for (uint32_t index = 0; index < widgets.Size(); ++index) {
+            auto item = widgets.GetObjectAt(index);
+            if (!JsonBool(item, L"valid", false) ||
+                _wcsicmp(JsonString(item, L"renderer").c_str(), L"declarative") != 0 ||
+                !item.HasKey(L"layout")) {
+                continue;
+            }
+            DynamicWidgetDefinition definition;
+            definition.id = JsonString(item, L"id");
+            definition.displayName = JsonString(item, L"displayName", definition.id);
+            definition.width = std::clamp(JsonNumber(item, L"width", 96.0), 32.0, 480.0);
+            definition.height = std::clamp(JsonNumber(item, L"height", 24.0), 24.0, 48.0);
+            definition.layout = item.GetNamedObject(L"layout");
+            if (!definition.id.empty() && definition.layout) {
+                g_dynamicWidgets[definition.id] = definition;
+            }
+        }
+    } catch (...) {
+        g_dynamicWidgets.clear();
+    }
+}
+
+const DynamicWidgetDefinition* FindDynamicWidget(const std::wstring& id) {
+    RefreshDynamicWidgetCatalog();
+    auto found = g_dynamicWidgets.find(id);
+    return found == g_dynamicWidgets.end() ? nullptr : &found->second;
+}
+
 bool IsKnownWidgetDesign(const std::wstring& designId) {
-    return std::any_of(
+    if (std::any_of(
         taskbar_widgets::generated::kWidgets.begin(),
         taskbar_widgets::generated::kWidgets.end(),
         [&designId](const auto& widget) {
             return _wcsicmp(designId.c_str(), std::wstring(widget.id).c_str()) == 0;
-        });
+        })) {
+        return true;
+    }
+    return FindDynamicWidget(designId) != nullptr;
+}
+
+bool IsSafeWidgetInstanceId(const std::wstring& id) {
+    if (id.empty() || id.size() > 160) return false;
+    return std::all_of(id.begin(), id.end(), [](wchar_t value) {
+        return (value >= L'a' && value <= L'z') ||
+               (value >= L'A' && value <= L'Z') ||
+               (value >= L'0' && value <= L'9') ||
+               value == L'.' || value == L'-' || value == L'_';
+    });
 }
 
 std::vector<std::wstring> ExtractJsonStringArray(const std::string& json,
@@ -1824,7 +1983,11 @@ std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
         WidgetInstanceRuntime widget;
         widget.order = order++;
         ExtractJsonString(object, "id", widget.id);
-        ExtractJsonString(object, "design", widget.designId);
+        ExtractJsonString(object, "instanceId", widget.instanceId);
+        ExtractJsonString(object, "widgetId", widget.designId);
+        if (widget.designId.empty()) {
+            ExtractJsonString(object, "design", widget.designId);
+        }
         if (widget.designId.empty()) {
             ExtractJsonString(object, "designId", widget.designId);
         }
@@ -1861,6 +2024,12 @@ std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
         if (widget.id.empty()) {
             widget.id = widget.designId;
         }
+        if (widget.instanceId.empty()) {
+            widget.instanceId = widget.id;
+        }
+        if (!IsSafeWidgetInstanceId(widget.instanceId)) {
+            continue;
+        }
         widgets.push_back(widget);
     }
 
@@ -1869,6 +2038,7 @@ std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
         if (legacy.enabled) {
             WidgetInstanceRuntime widget;
             widget.id = legacy.activeDesign;
+            widget.instanceId = widget.id;
             widget.designId = ReadActiveWidgetDesign();
             widget.enabled = true;
             widget.moveX = legacy.widgetMoveX;
@@ -4961,6 +5131,257 @@ void UpdateSystemMetricPanel(wux::UIElement const& root,
     }
 }
 
+winrt::Windows::UI::Color ResolveDynamicColor(
+    const std::wstring& value,
+    const winrt::Windows::UI::Color& fallback =
+        winrt::Windows::UI::Color{0xFF, 0xF8, 0xFA, 0xFC}) {
+    if (_wcsicmp(value.c_str(), L"systemAccent") == 0) {
+        COLORREF accent = GetSysColor(COLOR_HIGHLIGHT);
+        return winrt::Windows::UI::Color{
+            0xFF, GetRValue(accent), GetGValue(accent), GetBValue(accent)};
+    }
+    auto result = fallback;
+    ParseHexColor(value, result);
+    return result;
+}
+
+wdj::IJsonValue ResolveDynamicBinding(const wdj::JsonObject& context,
+                                      const std::wstring& path) {
+    if (!context || path.empty()) return nullptr;
+    try {
+        wdj::IJsonValue current = context;
+        size_t start = 0;
+        while (start < path.size()) {
+            size_t dot = path.find(L'.', start);
+            std::wstring key = path.substr(
+                start, dot == std::wstring::npos ? std::wstring::npos : dot - start);
+            if (key.empty() || current.ValueType() != wdj::JsonValueType::Object) {
+                return nullptr;
+            }
+            auto object = current.GetObject();
+            if (!object.HasKey(winrt::hstring(key))) return nullptr;
+            current = object.GetNamedValue(winrt::hstring(key));
+            if (dot == std::wstring::npos) return current;
+            start = dot + 1;
+        }
+    } catch (...) {
+    }
+    return nullptr;
+}
+
+double DynamicNumber(const wdj::JsonObject& node,
+                     const wdj::JsonObject& context,
+                     PCWSTR key,
+                     double fallback = 0.0) {
+    try {
+        if (!node || !node.HasKey(key)) return fallback;
+        auto value = node.GetNamedValue(key);
+        if (value.ValueType() == wdj::JsonValueType::Number) return value.GetNumber();
+        if (value.ValueType() == wdj::JsonValueType::Object) {
+            auto binding = value.GetObject();
+            auto resolved = ResolveDynamicBinding(context, JsonString(binding, L"bind"));
+            if (resolved && resolved.ValueType() == wdj::JsonValueType::Number) {
+                return resolved.GetNumber();
+            }
+        }
+    } catch (...) {
+    }
+    return fallback;
+}
+
+std::wstring FormatDynamicValue(const wdj::IJsonValue& value,
+                                const std::wstring& format) {
+    if (!value) return L"--";
+    try {
+        if (value.ValueType() == wdj::JsonValueType::String) {
+            return std::wstring(value.GetString().c_str());
+        }
+        if (value.ValueType() == wdj::JsonValueType::Boolean) {
+            return value.GetBoolean() ? L"true" : L"false";
+        }
+        if (value.ValueType() != wdj::JsonValueType::Number) return L"--";
+        double number = value.GetNumber();
+        if (!std::isfinite(number)) return L"--";
+        if (_wcsicmp(format.c_str(), L"bytesPerSecond") == 0) {
+            return FormatMetricRate(std::max(0.0, number));
+        }
+        if (_wcsicmp(format.c_str(), L"percent") == 0) {
+            return std::to_wstring(static_cast<int>(std::round(number))) + L"%";
+        }
+        if (_wcsicmp(format.c_str(), L"duration") == 0) {
+            long long seconds = static_cast<long long>(std::max(0.0, number));
+            return std::to_wstring(seconds / 60) + L":" +
+                   (seconds % 60 < 10 ? L"0" : L"") + std::to_wstring(seconds % 60);
+        }
+        double rounded = std::round(number);
+        if (std::abs(number - rounded) < 0.001) {
+            return std::to_wstring(static_cast<long long>(rounded));
+        }
+        wchar_t buffer[48]{};
+        swprintf_s(buffer, L"%.2f", number);
+        return buffer;
+    } catch (...) {
+        return L"--";
+    }
+}
+
+std::wstring DynamicText(const wdj::JsonObject& node,
+                         const wdj::JsonObject& context) {
+    std::wstring text = JsonString(node, L"text");
+    try {
+        if (node.HasKey(L"bind")) {
+            text += FormatDynamicValue(
+                ResolveDynamicBinding(context, JsonString(node, L"bind")),
+                JsonString(node, L"format"));
+        }
+        if (node.HasKey(L"segments")) {
+            text.clear();
+            auto segments = node.GetNamedArray(L"segments");
+            for (uint32_t i = 0; i < segments.Size(); ++i) {
+                auto segment = segments.GetObjectAt(i);
+                text += JsonString(segment, L"text");
+                auto bind = JsonString(segment, L"bind");
+                if (!bind.empty()) {
+                    text += FormatDynamicValue(
+                        ResolveDynamicBinding(context, bind),
+                        JsonString(segment, L"format"));
+                }
+            }
+        }
+    } catch (...) {
+        return L"--";
+    }
+    return text.empty() ? L"--" : text;
+}
+
+wux::UIElement BuildDynamicElement(const wdj::JsonObject& node,
+                                   const wdj::JsonObject& context) {
+    std::wstring type = JsonString(node, L"type");
+    if (type == L"row" || type == L"column") {
+        wuxc::StackPanel panel;
+        panel.Orientation(type == L"row" ? wuxc::Orientation::Horizontal
+                                          : wuxc::Orientation::Vertical);
+        panel.Spacing(std::clamp(JsonNumber(node, L"gap", 0.0), 0.0, 24.0));
+        panel.VerticalAlignment(wux::VerticalAlignment::Center);
+        try {
+            auto children = node.GetNamedArray(L"children");
+            for (uint32_t i = 0; i < children.Size(); ++i) {
+                panel.Children().Append(BuildDynamicElement(children.GetObjectAt(i), context));
+            }
+        } catch (...) {
+            panel.Children().Append(MakeText(L"--", 10));
+        }
+        return panel;
+    }
+    if (type == L"text" || type == L"icon") {
+        auto block = MakeText(
+            type == L"icon" ? JsonString(node, L"glyph", L"\xE7C3").c_str()
+                              : DynamicText(node, context).c_str(),
+            std::clamp(JsonNumber(node, L"fontSize", 10.0), 8.0, 18.0));
+        block.Foreground(wuxm::SolidColorBrush(
+            ResolveDynamicColor(JsonString(node, L"color", L"#FFF8FAFC"))));
+        block.VerticalAlignment(wux::VerticalAlignment::Center);
+        return block;
+    }
+    if (type == L"spacer") {
+        wuxc::Border spacer;
+        spacer.Width(std::clamp(JsonNumber(node, L"width", 3.0), 0.0, 96.0));
+        spacer.Height(std::clamp(JsonNumber(node, L"height", 1.0), 0.0, 48.0));
+        return spacer;
+    }
+    if (type == L"divider") {
+        wuxc::Border divider;
+        divider.Width(std::max(1.0, JsonNumber(node, L"width", 1.0)));
+        divider.Height(std::max(1.0, JsonNumber(node, L"height", 16.0)));
+        divider.Background(wuxm::SolidColorBrush(ResolveDynamicColor(
+            JsonString(node, L"color", L"#66FFFFFF"))));
+        return divider;
+    }
+
+    double value = DynamicNumber(node, context, L"value", 0.0);
+    double percent = value <= 1.0 ? value * 100.0 : value;
+    percent = std::clamp(std::isfinite(percent) ? percent : 0.0, 0.0, 100.0);
+    auto color = ResolveDynamicColor(JsonString(node, L"color", L"systemAccent"));
+    auto outline = ResolveDynamicColor(JsonString(node, L"outlineColor", L"#99FFFFFF"));
+    if (type == L"bar") {
+        return MakeXMeterVerticalBar(percent, 0.0,
+            std::clamp(JsonNumber(node, L"width", 8.0), 4.0, 48.0),
+            color, color, outline);
+    }
+    if (type == L"pie") {
+        double diameter = std::clamp(JsonNumber(node, L"diameter", 24.0), 8.0, 48.0);
+        return MakeXMeterPie(percent, 0.0, diameter, color, color, outline);
+    }
+    if (type == L"progress" || type == L"sparkline") {
+        double width = std::clamp(JsonNumber(node, L"width", 48.0), 8.0, 240.0);
+        double height = std::clamp(JsonNumber(node, L"height", 4.0), 2.0, 24.0);
+        wuxc::Grid track;
+        track.Width(width);
+        track.Height(height);
+        track.Background(MakeBrush(0x30, 0xFF, 0xFF, 0xFF));
+        wuxc::Border fill;
+        fill.Width(width * percent / 100.0);
+        fill.Height(height);
+        fill.HorizontalAlignment(wux::HorizontalAlignment::Left);
+        fill.Background(wuxm::SolidColorBrush(color));
+        track.Children().Append(fill);
+        return track;
+    }
+    if (type == L"image") {
+        auto placeholder = MakeText(L"\xE91B", 12);
+        placeholder.Foreground(wuxm::SolidColorBrush(color));
+        return placeholder;
+    }
+    return MakeText(L"--", 10);
+}
+
+wdj::JsonObject ReadDynamicWidgetContext(const WidgetInstanceRuntime& instance) {
+    wdj::JsonObject context;
+    context.Insert(L"data", wdj::JsonObject());
+    context.Insert(L"settings", wdj::JsonObject());
+    try {
+        std::wstring path = GetTaskbarWidgetsPath(
+            (L"State\\" + instance.instanceId + L".json").c_str());
+        std::wstring json = Utf8ToWide(ReadUtf8File(path));
+        if (json.empty()) return context;
+        auto snapshot = wdj::JsonObject::Parse(winrt::hstring(json));
+        if (snapshot.HasKey(L"data")) context.SetNamedValue(L"data", snapshot.GetNamedValue(L"data"));
+        if (snapshot.HasKey(L"settings")) context.SetNamedValue(L"settings", snapshot.GetNamedValue(L"settings"));
+    } catch (...) {
+    }
+    return context;
+}
+
+void UpdateDynamicWidgetPanel(wux::UIElement const& root,
+                              const WidgetInstanceRuntime& instance) {
+    auto definition = FindDynamicWidget(instance.designId);
+    auto element = FindNamedFrameworkElement(root, L"TaskbarWidgetsDynamicPanel");
+    auto panel = element ? element.try_as<wuxc::Border>() : nullptr;
+    if (!panel || !definition) return;
+    panel.Width(definition->width);
+    panel.Height(definition->height);
+    if (auto rootElement = root.try_as<wux::FrameworkElement>()) {
+        rootElement.Width(definition->width);
+        rootElement.Height(definition->height);
+        rootElement.Margin(wux::ThicknessHelper::FromLengths(0, 0, 0, 0));
+    }
+    std::wstring statePath = GetTaskbarWidgetsPath(
+        (L"State\\" + instance.instanceId + L".json").c_str());
+    std::wstring signature = instance.designId + L"|" +
+        std::to_wstring(g_dynamicCatalogVersion) + L"|" +
+        std::to_wstring(GetFileWriteVersion(statePath));
+    auto tag = panel.Tag();
+    if (tag && std::wstring(winrt::unbox_value_or<winrt::hstring>(tag, L"").c_str()) == signature) {
+        return;
+    }
+    panel.Tag(winrt::box_value(winrt::hstring(signature)));
+    try {
+        panel.Child(BuildDynamicElement(definition->layout, ReadDynamicWidgetContext(instance)));
+    } catch (...) {
+        panel.Child(MakeText(L"--", 10));
+    }
+}
+
 void ApplyMediaTheme(wux::UIElement const& root,
                      bool darkMode,
                      bool active,
@@ -5279,9 +5700,25 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
     auto rootElement = root.try_as<wux::FrameworkElement>();
     if (rootElement) {
         rootElement.Tag(winrt::box_value(winrt::hstring(instance.designId)));
+        rootElement.DataContext(winrt::box_value(winrt::hstring(instance.instanceId)));
     }
 
     std::wstring activeDesign = instance.designId;
+    bool isDynamic = FindDynamicWidget(activeDesign) != nullptr;
+    SetNamedVisibility(root, L"TaskbarWidgetsDynamicPanel",
+                       isDynamic ? wux::Visibility::Visible
+                                 : wux::Visibility::Collapsed);
+    if (isDynamic) {
+        SetNamedVisibility(root, L"TaskbarWidgetsSystemPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsCompactPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsExpandedPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsWeatherPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsDiscordPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPanel", wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsSteamPanel", wux::Visibility::Collapsed);
+        UpdateDynamicWidgetPanel(root, instance);
+        return;
+    }
     bool isSystemMetric = activeDesign == L"system-cpu" ||
                           activeDesign == L"system-storage" ||
                           activeDesign == L"system-network" ||
@@ -5560,6 +5997,8 @@ std::wstring BuildWidgetSignature(
         }
         signature += widget.id;
         signature += L":";
+        signature += widget.instanceId;
+        signature += L":";
         signature += widget.designId;
         signature += L":";
         signature += std::to_wstring(widget.moveX);
@@ -5612,6 +6051,9 @@ void RebuildWidgetHostIfNeeded(wux::UIElement const& root,
 }
 
 double WidgetDesignWidth(const std::wstring& designId) {
+    if (auto dynamic = FindDynamicWidget(designId)) {
+        return dynamic->width;
+    }
     if (designId.rfind(L"system-", 0) == 0) {
         return SystemMetricWidgetWidth(designId);
     }
@@ -5629,6 +6071,9 @@ double WidgetDesignWidth(const std::wstring& designId) {
 }
 
 double WidgetDesignHeight(const std::wstring& designId) {
+    if (auto dynamic = FindDynamicWidget(designId)) {
+        return dynamic->height;
+    }
     if (designId.rfind(L"system-", 0) == 0) {
         return 24.0;
     }

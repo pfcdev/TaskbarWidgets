@@ -105,7 +105,9 @@ if (-not (Test-Path (Join-Path $ProductDir "TaskbarWidgets.exe"))) {
 & (Join-Path $PSScriptRoot "sign-artifacts.ps1") -Paths @(
     (Join-Path $ProductDir "TaskbarWidgets.exe"),
     (Join-Path $ProductDir "TaskbarWidgets.Settings.exe"),
-    (Join-Path $ProductDir "TaskbarWidgets.MediaHelper.exe")
+    (Join-Path $ProductDir "TaskbarWidgets.MediaHelper.exe"),
+    (Join-Path $ProductDir "TaskbarWidgets.WidgetHost.exe"),
+    (Join-Path $ProductDir "twdev.exe")
 )
 
 if (-not (Test-SubPath -BasePath $ArtifactDir -TargetPath $StagingRoot)) {
@@ -119,6 +121,8 @@ $RequiredFiles = @(
     "TaskbarWidgets.exe",
     "TaskbarWidgets.Settings.exe",
     "TaskbarWidgets.MediaHelper.exe",
+    "TaskbarWidgets.WidgetHost.exe",
+    "twdev.exe",
     "README-PORTABLE.txt"
 )
 
@@ -133,6 +137,7 @@ foreach ($FileName in $RequiredFiles) {
 
 Copy-Item -Path (Join-Path $ProductDir "Assets") -Destination (Join-Path $PackageRoot "Assets") -Recurse -Force
 Copy-Item -Path (Join-Path $ProductDir "Widgets") -Destination (Join-Path $PackageRoot "Widgets") -Recurse -Force
+Copy-Item -Path (Join-Path $ProductDir "CommunitySDK") -Destination (Join-Path $PackageRoot "CommunitySDK") -Recurse -Force
 
 $CleanupPaths = @(
     $InstallerOutput,

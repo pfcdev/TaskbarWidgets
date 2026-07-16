@@ -321,7 +321,7 @@ internal static class AccountManager
         Log($"Opened widget libraries folder: {WidgetLibrariesDirectory}");
     }
 
-    private static void OpenSettingsApp(string? widgetId = null)
+    internal static void OpenSettingsApp(string? widgetId = null)
     {
         if (!File.Exists(SettingsAppPath))
         {
@@ -331,7 +331,7 @@ internal static class AccountManager
 
         if (!string.IsNullOrWhiteSpace(widgetId))
         {
-            if (!SystemWidgetIds.Contains(widgetId))
+            if (!SystemWidgetIds.Contains(widgetId) && !CommunityWidgetRegistry.IsInstalled(widgetId))
             {
                 Log($"Settings deep link ignored for unknown widget: {widgetId}");
                 widgetId = null;

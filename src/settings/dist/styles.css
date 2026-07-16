@@ -653,6 +653,13 @@ button {
   font-weight: 600;
 }
 
+.library-toolbar-actions,
+.installed-widget-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .widget-library-list {
   display: grid;
   gap: 8px;
@@ -662,7 +669,7 @@ button {
   min-width: 0;
   min-height: 76px;
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr) 34px;
+  grid-template-columns: 264px minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 9px 12px 9px 9px;
@@ -1170,6 +1177,110 @@ button {
   line-height: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.installed-author {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.installed-update,
+.update-version-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  color: #76dcff;
+  font-size: 11px;
+}
+
+.installed-update {
+  margin-left: 14px;
+}
+
+.installed-update span,
+.update-version-line span {
+  color: var(--muted);
+}
+
+.compact-action {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.danger-action {
+  color: #ff9ca4;
+}
+
+.danger-action:hover {
+  border-color: rgba(255, 93, 108, .45);
+  background: rgba(255, 93, 108, .10);
+}
+
+.remote-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.remote-widget-card {
+  display: flex;
+  min-height: 260px;
+  padding: 20px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remote-widget-card h3,
+.remote-widget-card p {
+  margin: 0;
+}
+
+.remote-widget-card p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.remote-widget-card > button {
+  margin-top: auto;
+  justify-content: center;
+}
+
+.remote-widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.remote-author {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-author strong {
+  color: var(--text);
+}
+
+.permission-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.permission-chips span {
+  padding: 4px 7px;
+  border: 1px solid rgba(95, 212, 255, .2);
+  border-radius: 999px;
+  background: rgba(95, 212, 255, .07);
+  color: #a9dff0;
+  font-size: 10px;
+}
+
+.library-unavailable {
+  max-width: 720px;
 }
 
 .library-empty {
@@ -2348,6 +2459,100 @@ button {
   border-bottom: 1px solid rgba(255, 255, 255, .08);
 }
 
+.install-modal {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.install-loading,
+.install-error {
+  display: grid;
+  min-height: 190px;
+  padding: 32px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.install-loading .material-symbols-outlined {
+  color: var(--accent);
+  font-size: 30px;
+  animation: spin 1.1s linear infinite;
+}
+
+.install-loading p,
+.install-error p,
+.install-summary p,
+.permission-review p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.install-summary,
+.permission-review {
+  margin: 0 22px 16px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  background: rgba(255,255,255,.025);
+}
+
+.install-meta {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 8px 12px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.install-meta span {
+  color: var(--muted);
+}
+
+.permission-review > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.permission-review h4 {
+  margin: 0 0 4px;
+}
+
+.permission-review ul {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0 0;
+  padding-left: 24px;
+  color: #dff7ff;
+  font-size: 12px;
+}
+
+.permission-none {
+  margin-top: 14px !important;
+}
+
+.install-enable {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 24px 16px;
+  font-size: 12px;
+}
+
+.install-warning {
+  margin: 0 24px 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, .32);
+  border-radius: 9px;
+  background: rgba(245, 158, 11, .08);
+  color: #ffd38a;
+  font-size: 12px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .modal-head h3,
 .modal-head p {
   margin: 0;
@@ -2523,13 +2728,17 @@ button {
   }
 
   .widget-library-row {
-    grid-template-columns: minmax(0, 1fr) 34px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
 
   .native-preview-button {
     grid-column: 1 / -1;
     justify-self: center;
+  }
+
+  .installed-widget-actions {
+    justify-content: flex-end;
   }
 
   .sequence-item {

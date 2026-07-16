@@ -1,0 +1,4 @@
+{
+  "displayName": "Community CPU Pulse",
+  "description": "Shows total CPU usage using the safe system-metrics provider API."
+}

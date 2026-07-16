@@ -17,6 +17,8 @@ $updates = @(
     @{ Path = "src\native\CMakeLists.txt"; Pattern = 'project\(TaskbarWidgetsNative VERSION [^ ]+'; Replacement = "project(TaskbarWidgetsNative VERSION $Version" },
     @{ Path = "src\settings\dist\app.js"; Pattern = 'const current = update\.currentVersion \|\| "[^"]+";'; Replacement = "const current = update.currentVersion || `"$Version`";" },
     @{ Path = "widgets\codex-status\provider\CodexStatusWorker.cs"; Pattern = '(?m)^(\s*)version = "[^"]+"$'; Replacement = "`$1version = `"$Version`"" }
+    @{ Path = "src\widget-host\TaskbarWidgets.WidgetHost.csproj"; Pattern = '<Version>[^<]+</Version>'; Replacement = "<Version>$Version</Version>" }
+    @{ Path = "src\twdev\twdev.csproj"; Pattern = '<Version>[^<]+</Version>'; Replacement = "<Version>$Version</Version>" }
 )
 
 $changed = @()

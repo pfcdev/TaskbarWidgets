@@ -3,12 +3,19 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.Win32;
+using TaskbarWidgets.Loader.Core;
 using TaskbarWidgets.Loader.Migration;
 
 namespace TaskbarWidgets.Loader;
 
 internal static class Program
 {
+    private sealed record WidgetInstallRequest(
+        int SchemaVersion,
+        string RequestId,
+        string Source,
+        long CreatedAtUnix);
+
     private const string AppName = "TaskbarWidgets";
     private static readonly string AppDirectory = AppPaths.DataDirectory;
     private static readonly string RuntimeRoot = AppPaths.RuntimeDirectory;
@@ -20,12 +27,13 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
-        LegacyMigration.Run();
         Directory.CreateDirectory(AppDirectory);
         Directory.CreateDirectory(RuntimeRoot);
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(AppPaths.StateDirectory);
         Directory.CreateDirectory(AppPaths.CommandsDirectory);
+        CommunityWidgetRegistry.Initialize();
+        LegacyMigration.Run();
 
         s_consoleEnabled = args.Any(arg => string.Equals(arg, "--console", StringComparison.OrdinalIgnoreCase));
         if (s_consoleEnabled)
@@ -45,6 +53,18 @@ internal static class Program
         if (args.Any(arg => string.Equals(arg, "--settings", StringComparison.OrdinalIgnoreCase)))
         {
             LaunchSettings();
+            return 0;
+        }
+
+        var installWidgetIndex = Array.FindIndex(args, arg =>
+            string.Equals(arg, "--install-widget", StringComparison.OrdinalIgnoreCase));
+        if (installWidgetIndex >= 0)
+        {
+            if (installWidgetIndex + 1 >= args.Length || !TryOpenWidgetInstaller(args[installWidgetIndex + 1]))
+            {
+                Log("Rejected invalid --install-widget request");
+                return 2;
+            }
             return 0;
         }
 
@@ -143,6 +163,15 @@ internal static class Program
         var accountCommandsTask = Task.Run(
             () => AccountManager.RunCommandWatcherAsync(cancellation.Token),
             cancellation.Token);
+        var communityRegistryTask = Task.Run(
+            () => CommunityWidgetRegistry.RunWatcherAsync(cancellation.Token),
+            cancellation.Token);
+        var communityProvidersTask = Task.Run(
+            () => CommunityProviderSupervisor.RunAsync(cancellation.Token),
+            cancellation.Token);
+        var communityUpdateTask = Task.Run(
+            () => CommunityWidgetUpdateChecker.RunAsync(cancellation.Token),
+            cancellation.Token);
         if (!args.Any(arg => string.Equals(arg, "--no-update-check", StringComparison.OrdinalIgnoreCase)))
         {
             _ = Task.Run(async () =>
@@ -166,6 +195,9 @@ internal static class Program
                 systemStorageTask,
                 systemNetworkTask,
                 systemMemoryTask,
+                communityRegistryTask,
+                communityProvidersTask,
+                communityUpdateTask,
                 watchdogTask,
                 accountCommandsTask);
         }
@@ -370,6 +402,36 @@ internal static class Program
             WorkingDirectory = AppPaths.InstallDirectory,
             UseShellExecute = true
         });
+    }
+
+    private static bool TryOpenWidgetInstaller(string sourceArgument)
+    {
+        try
+        {
+            var source = Path.GetFullPath(sourceArgument);
+            if (!File.Exists(source) ||
+                !string.Equals(Path.GetExtension(source), ".twidget", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            AtomicJson.Write(
+                AppPaths.WidgetInstallRequestPath,
+                new WidgetInstallRequest(
+                    1,
+                    Guid.NewGuid().ToString("N"),
+                    source,
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                WidgetConfiguration.JsonOptions());
+            AccountManager.OpenSettingsApp();
+            Log($"Opened widget installer for: {source}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"Widget installer request failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static bool IsHookLoaded(Process process, string hookPath)

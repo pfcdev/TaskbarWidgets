@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "widgets": [
+    "com.example.clock"
+  ]
+}

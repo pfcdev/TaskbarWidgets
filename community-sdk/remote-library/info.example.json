@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "com.example.clock",
+  "version": "1.0.0",
+  "displayName": "Example Clock",
+  "description": "Shows a customizable clock on the taskbar.",
+  "author": {
+    "name": "Example Author",
+    "website": "https://example.com"
+  },
+  "category": "Time",
+  "package": "com.example.clock.twidget",
+  "sha256": "REPLACE_WITH_THE_64_CHARACTER_PACKAGE_SHA256",
+  "permissions": {},
+  "preview": "preview.png"
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/widget-v2.schema.json",
+  "schemaVersion": 2,
+  "id": "com.pfc.community-cpu-pulse",
+  "version": "1.0.0",
+  "minHostVersion": "0.4.0",
+  "displayName": "Community CPU Pulse",
+  "description": "Shows total CPU usage using the safe system-metrics provider API.",
+  "category": "Community",
+  "author": {
+    "name": "PFC Community Lab",
+    "website": "https://github.com/pfcdev"
+  },
+  "size": {
+    "width": 124,
+    "height": 24
+  },
+  "entry": {
+    "layout": "layout.json",
+    "provider": {
+      "type": "javascript",
+      "path": "provider.js",
+      "refreshSeconds": 1
+    }
+  },
+  "permissions": {
+    "systemMetrics": [
+      "cpu"
+    ]
+  },
+  "supportsMultipleInstances": true,
+  "settings": [
+    {
+      "key": "label",
+      "type": "string",
+      "label": "Label",
+      "description": "Text shown before the CPU value.",
+      "default": "CPU"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "../../schemas/layout-v1.schema.json",
+  "type": "row",
+  "gap": 5,
+  "children": [
+    {
+      "type": "icon",
+      "glyph": "\uE950",
+      "fontSize": 11,
+      "color": "systemAccent"
+    },
+    {
+      "type": "text",
+      "fontSize": 10,
+      "segments": [
+        {
+          "bind": "settings.label"
+        },
+        {
+          "text": " "
+        },
+        {
+          "bind": "data.usage",
+          "format": "percent"
+        }
+      ],
+      "color": "#FFF8FAFC"
+    },
+    {
+      "type": "progress",
+      "value": {
+        "bind": "data.usage"
+      },
+      "width": 42,
+      "height": 4,
+      "color": "systemAccent"
+    }
+  ]
+}

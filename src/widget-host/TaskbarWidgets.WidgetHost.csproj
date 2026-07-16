@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TaskbarWidgets.WidgetHost</AssemblyName>
+    <RootNamespace>TaskbarWidgets.WidgetHost</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <Version>0.4.2</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Jint" Version="4.3.0" />
+  </ItemGroup>
+</Project>

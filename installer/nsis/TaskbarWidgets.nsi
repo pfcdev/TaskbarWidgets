@@ -118,6 +118,7 @@ Function StopTaskbarWidgets
     ExecWait '"$INSTDIR\TaskbarWidgets.exe" --detach'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.MediaHelper.exe /F /T'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.WidgetHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.Settings.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarStats.exe /F /T'
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "TaskbarStats"
@@ -173,6 +174,14 @@ Section "Taskbar Widgets" SecMain
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "NoRepair" 1
 
+  ; Double-clicking a .twidget always opens the Settings permission review.
+  WriteRegStr HKCU "Software\Classes\.twidget" "" "TaskbarWidgets.WidgetPackage"
+  WriteRegStr HKCU "Software\Classes\.twidget\OpenWithProgids" "TaskbarWidgets.WidgetPackage" ""
+  WriteRegStr HKCU "Software\Classes\TaskbarWidgets.WidgetPackage" "" "Taskbar Widgets Package"
+  WriteRegStr HKCU "Software\Classes\TaskbarWidgets.WidgetPackage\DefaultIcon" "" "$INSTDIR\TaskbarWidgets.exe,0"
+  WriteRegStr HKCU "Software\Classes\TaskbarWidgets.WidgetPackage\shell\open\command" "" '$\"$INSTDIR\TaskbarWidgets.exe$\" --install-widget $\"%1$\"'
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+
   ; A silent legacy updater has no finish page and its old apply script only
   ; knows how to restart TaskbarStats.exe. Start the new loader here instead.
   ${If} $LegacyUpgrade == "1"
@@ -203,19 +212,28 @@ FunctionEnd
 Section "Uninstall"
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.MediaHelper.exe /F /T'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.WidgetHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.Settings.exe /F /T'
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "TaskbarWidgets"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets"
+  DeleteRegKey HKCU "Software\Classes\TaskbarWidgets.WidgetPackage"
+  DeleteRegValue HKCU "Software\Classes\.twidget\OpenWithProgids" "TaskbarWidgets.WidgetPackage"
+  DeleteRegKey /ifempty HKCU "Software\Classes\.twidget\OpenWithProgids"
+  DeleteRegKey /ifempty HKCU "Software\Classes\.twidget"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   Delete "$DESKTOP\Taskbar Widgets.lnk"
   RMDir /r "$SMPROGRAMS\Taskbar Widgets"
 
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.exe"
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.Settings.exe"
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.MediaHelper.exe"
+  Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.WidgetHost.exe"
+  Delete /REBOOTOK "$INSTDIR\twdev.exe"
   Delete /REBOOTOK "$INSTDIR\README-PORTABLE.txt"
   Delete /REBOOTOK "$INSTDIR\Uninstall Taskbar Widgets.exe"
   RMDir /r /REBOOTOK "$INSTDIR\Assets"
   RMDir /r /REBOOTOK "$INSTDIR\Widgets"
+  RMDir /r /REBOOTOK "$INSTDIR\CommunitySDK"
   ${If} $RemoveUserData == "1"
     RMDir /r /REBOOTOK "$INSTDIR\Data"
   ${EndIf}

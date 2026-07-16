@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taskbarwidgets.dev/schemas/layout-v1.schema.json",
+  "title": "Taskbar Widgets Native Layout DSL v1",
+  "$ref": "#/$defs/node",
+  "$defs": {
+    "binding": {
+      "oneOf": [
+        { "type": "number" },
+        { "type": "object", "required": ["bind"], "properties": { "bind": { "pattern": "^(data|settings)\\." } } }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["row", "column", "spacer", "divider", "text", "icon", "image", "progress", "bar", "pie", "sparkline"] },
+        "gap": { "type": "number", "minimum": 0, "maximum": 24 },
+        "children": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/node" } },
+        "text": { "type": "string", "maxLength": 256 },
+        "bind": { "type": "string", "pattern": "^(data|settings)\\." },
+        "format": { "enum": ["bytesPerSecond", "percent", "number", "duration", "dateTime"] },
+        "value": { "$ref": "#/$defs/binding" },
+        "color": { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" },
+        "outlineColor": { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" },
+        "width": { "type": "number", "minimum": 0, "maximum": 480 },
+        "height": { "type": "number", "minimum": 0, "maximum": 48 },
+        "diameter": { "type": "number", "minimum": 8, "maximum": 48 },
+        "fontSize": { "type": "number", "minimum": 8, "maximum": 18 }
+      }
+    }
+  }
+}

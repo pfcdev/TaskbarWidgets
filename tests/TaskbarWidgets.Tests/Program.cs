@@ -12,6 +12,9 @@ Run("updater asset selection", TestUpdaterAssetSelection);
 Run("system metric math", TestSystemMetricMath);
 Run("system meter settings reset", TestSystemMeterSettingsReset);
 Run("system PDH sampler", TestSystemPdhSampler);
+Run("community widget validation", TestCommunityWidgetValidation);
+Run("community widget update version", TestCommunityWidgetUpdateVersion);
+Run("unsafe instance id normalization", TestUnsafeInstanceIdNormalization);
 
 if (failures.Count > 0)
 {
@@ -51,12 +54,13 @@ void TestLegacyMigration()
     }
     """);
     var config = WidgetConfiguration.FromLegacy(document.RootElement);
-    Assert(config.ConfigVersion == 2, "configVersion");
+    Assert(config.ConfigVersion == 3, "configVersion");
     Assert(config.Layout.Mode == "rotation", "layout mode");
     Assert(config.Rotation.IntervalSeconds == 5, "rotation minimum");
     Assert(config.Widgets.All(widget => widget.Id != "btc-fees"), "crypto removal");
     Assert(config.Widgets.Single(widget => widget.Id == "future-widget").Enabled == false, "unknown widget disabled");
     var weather = config.Widgets.Single(widget => widget.Id == "weather-static");
+    Assert(weather.WidgetId == "weather-static" && weather.InstanceId == "weather-static", "v3 widget identity migration");
     Assert(weather.Position.AnchorPercent == 65 && weather.Position.OffsetPx == 12, "position migration");
     Assert(config.Widgets.Single(widget => widget.Id == "system-cpu").Enabled == false, "new system widget default");
 }
@@ -230,6 +234,84 @@ void TestSystemPdhSampler()
     var combinedSample = combined.GetSample(1);
     Assert(combinedSample.Memory.TotalBytes > 0 && combinedSample.Memory.UsedBytes <= combinedSample.Memory.TotalBytes, "invalid memory sample");
     Assert(combinedSample.Network.Interfaces.All(adapter => adapter.ReceiveBytesPerSecond >= 0 && adapter.SendBytesPerSecond >= 0), "negative network rate");
+}
+
+void TestCommunityWidgetValidation()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"com.example.test-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var id = Path.GetFileName(directory).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "widget.json"), $$"""
+        {
+          "schemaVersion": 2,
+          "id": "{{id}}",
+          "version": "1.0.0",
+          "minHostVersion": "0.4.0",
+          "displayName": "Test",
+          "description": "Test widget",
+          "author": { "name": "Test Author", "website": "https://example.com" },
+          "size": { "width": 96, "height": 24 },
+          "entry": { "layout": "layout.json", "provider": { "type": "clock" } },
+          "permissions": {},
+          "settings": []
+        }
+        """);
+        File.WriteAllText(Path.Combine(directory, "layout.json"), """
+        { "type": "row", "children": [{ "type": "text", "bind": "data.time" }] }
+        """);
+        var valid = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(valid.Valid && valid.Id == id, valid.Error ?? "valid package rejected");
+
+        File.WriteAllText(Path.Combine(directory, "layout.json"), """
+        { "type": "image", "bind": "../../secret" }
+        """);
+        var invalid = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!invalid.Valid && invalid.Error?.Contains("Bindings must start") == true,
+            "unsafe binding accepted");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+void TestCommunityWidgetUpdateVersion()
+{
+    Assert(CommunityWidgetUpdateChecker.IsNewerVersion("1.0.1", "1.0.0"), "patch update not detected");
+    Assert(CommunityWidgetUpdateChecker.IsNewerVersion("1.10.0", "1.9.9"), "numeric minor update not detected");
+    Assert(!CommunityWidgetUpdateChecker.IsNewerVersion("1.0.0", "1.0.0"), "same version accepted as update");
+    Assert(!CommunityWidgetUpdateChecker.IsNewerVersion("invalid", "1.0.0"), "invalid version accepted");
+}
+
+void TestUnsafeInstanceIdNormalization()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"taskbar-widgets-instance-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var path = Path.Combine(directory, "config.json");
+        File.WriteAllText(path, """
+        {
+          "configVersion": 3,
+          "layout": { "mode": "row" },
+          "widgets": [
+            { "id": "../escape", "instanceId": "../escape", "widgetId": "weather-static", "enabled": true, "order": 0, "position": { "anchorPercent": 100, "offsetPx": 0 }, "settings": {} },
+            { "id": "weather-static", "instanceId": "weather-static", "widgetId": "weather-static", "enabled": true, "order": 1, "position": { "anchorPercent": 100, "offsetPx": 0 }, "settings": {} }
+          ],
+          "rotation": { "intervalSeconds": 30, "widgetIds": [], "instanceIds": [] }
+        }
+        """);
+        var config = WidgetConfiguration.LoadOrCreate(path);
+        Assert(config.Widgets.All(widget => WidgetConfiguration.IsSafeInstanceId(widget.InstanceId)), "unsafe instance id retained");
+        Assert(config.Widgets.Select(widget => widget.InstanceId).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2,
+            "duplicate instance ids retained");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
 }
 
 void Assert(bool condition, string message)

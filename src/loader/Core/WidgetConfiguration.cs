@@ -5,7 +5,7 @@ namespace TaskbarWidgets.Loader.Core;
 
 internal sealed class WidgetConfiguration
 {
-    public int ConfigVersion { get; set; } = 2;
+    public int ConfigVersion { get; set; } = 3;
     public LayoutConfiguration Layout { get; set; } = new();
     public List<WidgetInstanceConfiguration> Widgets { get; set; } = DefaultWidgets();
     public RotationConfiguration Rotation { get; set; } = new();
@@ -22,11 +22,16 @@ internal sealed class WidgetConfiguration
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         if (document.RootElement.TryGetProperty("configVersion", out var version) &&
-            version.GetInt32() == 2)
+            version.GetInt32() is 2 or 3)
         {
             var configuration = JsonSerializer.Deserialize<WidgetConfiguration>(
                 document.RootElement.GetRawText(), JsonOptions()) ?? new WidgetConfiguration();
-            normalized = configuration.Normalize();
+            if (configuration.ConfigVersion != 3)
+            {
+                configuration.ConfigVersion = 3;
+                normalized = true;
+            }
+            normalized |= configuration.Normalize();
             return configuration;
         }
 
@@ -40,15 +45,44 @@ internal sealed class WidgetConfiguration
             ? "rotation"
             : "row";
         Rotation.IntervalSeconds = Math.Clamp(Rotation.IntervalSeconds, 5, 3600);
-        foreach (var widget in Widgets)
+        var instanceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < Widgets.Count; index++)
         {
+            var widget = Widgets[index];
+            if (string.IsNullOrWhiteSpace(widget.WidgetId))
+            {
+                widget.WidgetId = widget.Id;
+                changed = true;
+            }
+            if (string.IsNullOrWhiteSpace(widget.Id))
+            {
+                widget.Id = widget.WidgetId;
+                changed = true;
+            }
+            if (string.IsNullOrWhiteSpace(widget.InstanceId))
+            {
+                widget.InstanceId = widget.WidgetId;
+                changed = true;
+            }
+            if (!IsSafeInstanceId(widget.InstanceId) || !instanceIds.Add(widget.InstanceId))
+            {
+                var baseId = IsSafeInstanceId(widget.WidgetId) ? widget.WidgetId : "widget";
+                var suffix = index + 1;
+                do
+                {
+                    widget.InstanceId = $"{baseId}-{suffix++}";
+                }
+                while (!instanceIds.Add(widget.InstanceId));
+                widget.Id = widget.InstanceId;
+                changed = true;
+            }
             widget.Position.AnchorPercent = Math.Clamp(widget.Position.AnchorPercent, 0, 100);
             widget.Position.OffsetPx = Math.Clamp(widget.Position.OffsetPx, -4000, 4000);
-            if (!WidgetCatalog.IsKnown(widget.Id))
+            if (!IsKnownWidget(widget.WidgetId))
             {
                 widget.Enabled = false;
             }
-            if (SystemMeterDefaults.TryGetValue(widget.Id, out var defaults) &&
+            if (SystemMeterDefaults.TryGetValue(widget.WidgetId, out var defaults) &&
                 (!widget.Settings.TryGetPropertyValue("meterStyleVersion", out var versionNode) ||
                  versionNode?.GetValue<int?>() != 1))
             {
@@ -57,7 +91,23 @@ internal sealed class WidgetConfiguration
             }
         }
         Rotation.WidgetIds = Rotation.WidgetIds
-            .Where(WidgetCatalog.IsKnown)
+            .Where(IsKnownWidget)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (Rotation.InstanceIds.Count == 0 && Rotation.WidgetIds.Count > 0)
+        {
+            Rotation.InstanceIds = Rotation.WidgetIds
+                .Select(id => Widgets.FirstOrDefault(widget =>
+                    string.Equals(widget.WidgetId, id, StringComparison.OrdinalIgnoreCase))?.InstanceId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            changed = true;
+        }
+        Rotation.InstanceIds = Rotation.InstanceIds
+            .Where(id => Widgets.Any(widget =>
+                string.Equals(widget.InstanceId, id, StringComparison.OrdinalIgnoreCase)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         return changed;
@@ -117,7 +167,7 @@ internal sealed class WidgetConfiguration
     {
         var result = new WidgetConfiguration();
         var active = ReadString(legacy, "activeDesign") ?? "codex-status";
-        if (!WidgetCatalog.IsKnown(active))
+        if (!IsKnownWidget(active))
         {
             active = "codex-status";
         }
@@ -141,7 +191,9 @@ internal sealed class WidgetConfiguration
                 items.Add(new WidgetInstanceConfiguration
                 {
                     Id = id,
-                    Enabled = WidgetCatalog.IsKnown(id) && (ReadBool(item, "enabled") ?? false),
+                    WidgetId = id,
+                    InstanceId = id,
+                    Enabled = IsKnownWidget(id) && (ReadBool(item, "enabled") ?? false),
                     Order = ReadInt(item, "order") ?? items.Count,
                     Position = new WidgetPosition
                     {
@@ -162,7 +214,13 @@ internal sealed class WidgetConfiguration
         {
             if (items.All(item => !string.Equals(item.Id, knownId, StringComparison.OrdinalIgnoreCase)))
             {
-                items.Add(new WidgetInstanceConfiguration { Id = knownId, Order = items.Count });
+                items.Add(new WidgetInstanceConfiguration
+                {
+                    Id = knownId,
+                    WidgetId = knownId,
+                    InstanceId = knownId,
+                    Order = items.Count
+                });
             }
         }
 
@@ -174,14 +232,15 @@ internal sealed class WidgetConfiguration
             result.Rotation.WidgetIds = rotation.EnumerateArray()
                 .Where(item => item.ValueKind == JsonValueKind.String)
                 .Select(item => item.GetString()!)
-                .Where(WidgetCatalog.IsKnown)
+                .Where(IsKnownWidget)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
         result.Rotation.WidgetIds = result.Rotation.WidgetIds.Count == 0
-            ? result.Widgets.Where(item => item.Enabled && WidgetCatalog.IsKnown(item.Id)).Select(item => item.Id).ToList()
+            ? result.Widgets.Where(item => item.Enabled && IsKnownWidget(item.WidgetId)).Select(item => item.WidgetId).ToList()
             : result.Rotation.WidgetIds;
+        result.Rotation.InstanceIds = result.Rotation.WidgetIds.ToList();
         return result;
     }
 
@@ -189,6 +248,8 @@ internal sealed class WidgetConfiguration
         WidgetCatalog.KnownIds.Select((id, index) => new WidgetInstanceConfiguration
         {
             Id = id,
+            WidgetId = id,
+            InstanceId = id,
             Enabled = id == "codex-status",
             Order = index
         }).ToList();
@@ -201,6 +262,13 @@ internal sealed class WidgetConfiguration
 
     private static int? ReadInt(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : null;
+
+    internal static bool IsKnownWidget(string? id) =>
+        WidgetCatalog.IsKnown(id) || CommunityWidgetRegistry.IsInstalled(id);
+
+    internal static bool IsSafeInstanceId(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && id.Length <= 160 && id.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_');
 
     internal static JsonSerializerOptions JsonOptions() => new()
     {
@@ -216,7 +284,10 @@ internal sealed class LayoutConfiguration
 
 internal sealed class WidgetInstanceConfiguration
 {
+    // Kept in config v3 for compatibility with 0.3.x Settings builds.
     public string Id { get; set; } = "";
+    public string InstanceId { get; set; } = "";
+    public string WidgetId { get; set; } = "";
     public bool Enabled { get; set; }
     public int Order { get; set; }
     public WidgetPosition Position { get; set; } = new();
@@ -233,9 +304,9 @@ internal static class WidgetPositionCommandHandler
 {
     private static readonly object SyncRoot = new();
 
-    internal static bool TryApply(string path, string? widgetId, int? anchorPercent, int? offsetPx)
+    internal static bool TryApply(string path, string? instanceId, int? anchorPercent, int? offsetPx)
     {
-        if (string.IsNullOrWhiteSpace(widgetId) || !WidgetCatalog.IsKnown(widgetId) ||
+        if (string.IsNullOrWhiteSpace(instanceId) ||
             anchorPercent is null or < 0 or > 100 || offsetPx is null or < -640 or > 640)
         {
             return false;
@@ -245,7 +316,8 @@ internal static class WidgetPositionCommandHandler
         {
             var configuration = WidgetConfiguration.LoadOrCreate(path);
             var widget = configuration.Widgets.FirstOrDefault(
-                item => string.Equals(item.Id, widgetId, StringComparison.OrdinalIgnoreCase));
+                item => string.Equals(item.InstanceId, instanceId, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(item.Id, instanceId, StringComparison.OrdinalIgnoreCase));
             if (widget is null)
             {
                 return false;
@@ -263,4 +335,5 @@ internal sealed class RotationConfiguration
 {
     public int IntervalSeconds { get; set; } = 30;
     public List<string> WidgetIds { get; set; } = WidgetCatalog.KnownIds.ToList();
+    public List<string> InstanceIds { get; set; } = WidgetCatalog.KnownIds.ToList();
 }

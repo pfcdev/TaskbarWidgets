@@ -14,6 +14,8 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid version: $Ver
 $NativeSource = Join-Path $RepoRoot "src\native"
 $NativeBuild = Join-Path $RepoRoot "artifacts\native-build"
 $LoaderProject = Join-Path $RepoRoot "src\loader\TaskbarWidgets.csproj"
+$WidgetHostProject = Join-Path $RepoRoot "src\widget-host\TaskbarWidgets.WidgetHost.csproj"
+$TwDevProject = Join-Path $RepoRoot "src\twdev\twdev.csproj"
 $SettingsProject = Join-Path $RepoRoot "src\settings\src-tauri"
 $SettingsTargetDir = if ($env:TASKBARWIDGETS_TAURI_TARGET_DIR) {
     $env:TASKBARWIDGETS_TAURI_TARGET_DIR
@@ -27,6 +29,12 @@ $AssemblyVersion = if ($Version.Split('.').Count -eq 3) { "$Version.0" } else { 
 function Find-CMake {
     $command = Get-Command cmake -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
+    foreach ($candidate in @(
+        (Join-Path $RepoRoot "artifacts\tools\python-cmake\cmake\data\bin\cmake.exe"),
+        (Join-Path $RepoRoot "artifacts\tools\cmake-python\cmake\data\bin\cmake.exe")
+    )) {
+        if (Test-Path $candidate) { return $candidate }
+    }
     $roots = @(
         "C:\Program Files\Microsoft Visual Studio\2022",
         "C:\Program Files (x86)\Microsoft Visual Studio\2022"
@@ -77,6 +85,20 @@ if ($LASTEXITCODE -ne 0) { throw "Loader publish failed." }
 Copy-Item -Force $SettingsBuildOutput (Join-Path $PublishDir "TaskbarWidgets.Settings.exe")
 Copy-Item -Force $MediaHelperOutput (Join-Path $PublishDir "TaskbarWidgets.MediaHelper.exe")
 
+Write-Host "Publishing sandboxed community WidgetHost..."
+dotnet publish $WidgetHostProject -c $Configuration -r win-x64 --self-contained true `
+    -p:Version=$Version -p:PublishSingleFile=true -o (Join-Path $PublishDir "widget-host-publish")
+if ($LASTEXITCODE -ne 0) { throw "WidgetHost publish failed." }
+Copy-Item -Force (Join-Path $PublishDir "widget-host-publish\TaskbarWidgets.WidgetHost.exe") (Join-Path $PublishDir "TaskbarWidgets.WidgetHost.exe")
+Remove-Item -Recurse -Force (Join-Path $PublishDir "widget-host-publish")
+
+Write-Host "Publishing twdev community widget CLI..."
+dotnet publish $TwDevProject -c $Configuration -r win-x64 --self-contained true `
+    -p:Version=$Version -p:PublishSingleFile=true -o (Join-Path $PublishDir "twdev-publish")
+if ($LASTEXITCODE -ne 0) { throw "twdev publish failed." }
+Copy-Item -Force (Join-Path $PublishDir "twdev-publish\twdev.exe") (Join-Path $PublishDir "twdev.exe")
+Remove-Item -Recurse -Force (Join-Path $PublishDir "twdev-publish")
+
 $AssetsOutput = Join-Path $PublishDir "Assets"
 Remove-Item -Recurse -Force $AssetsOutput -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $AssetsOutput | Out-Null
@@ -92,6 +114,8 @@ Get-ChildItem (Join-Path $RepoRoot "widgets") -Filter widget.json -Recurse -File
     $id = (Get-Content $_.FullName -Raw | ConvertFrom-Json).id
     Copy-Item $_.FullName (Join-Path $ManifestOutput "$id.json")
 }
+
+Copy-Item -Path (Join-Path $RepoRoot "community-sdk") -Destination (Join-Path $PublishDir "CommunitySDK") -Recurse -Force
 
 $PortableReadme = Join-Path $PublishDir "README-PORTABLE.txt"
 Set-Content $PortableReadme "Run TaskbarWidgets.exe. User data is stored in the Data folder beside the executable." -Encoding UTF8
