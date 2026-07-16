@@ -9,6 +9,14 @@ live widgets directly on the taskbar. The first catalog contains Codex Status,
 Weather, Discord Voice, Media Player, and Steam Downloads. Widgets can be shown
 side by side or in an optional rotation layout.
 
+## Widget showcase
+
+<p align="center">
+  <img src="assets/readme/widget-showcase.png" alt="Weather, Steam Downloads, Codex Status, and Media Player widgets running side by side on the Windows taskbar" />
+</p>
+
+<p align="center"><sub>Real taskbar output with multiple widgets enabled in row mode.</sub></p>
+
 > [!WARNING]
 > The Explorer integration uses private Windows 11 XAML surfaces. Unsupported
 > Windows builds are detected at runtime and the hook fails closed, but this is
