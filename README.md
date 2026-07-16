@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/readme/widget-showcase.png" alt="Weather, Steam Downloads, Codex Status, and Media Player widgets running side by side on the Windows taskbar" />
+  <img src="sf.gif" alt="Taskbar Widgets showcase" />
 </p>
 
 Taskbar Widgets is an open-source Windows 11 x64 application that places useful,
