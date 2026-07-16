@@ -86,27 +86,14 @@ the current speaker after Discord RPC authorization is configured in Settings.
 The Media Player derives its background, accent and control colors from the
 current cover art. These clips are cropped directly from a live taskbar session:
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <img src="assets/readme/media-dynamic/media-palette-01.gif" alt="Media Player dynamic color palette variation 1" />
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/readme/media-dynamic/media-palette-02.gif" alt="Media Player dynamic color palette variation 2" />
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/readme/media-dynamic/media-palette-03.gif" alt="Media Player dynamic color palette variation 3" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%" colspan="1">
-      <img src="assets/readme/media-dynamic/media-palette-04.gif" alt="Media Player dynamic color palette variation 4" />
-    </td>
-    <td align="center" width="50%" colspan="2">
-      <img src="assets/readme/media-dynamic/media-palette-05.gif" alt="Media Player dynamic color palette variation 5" />
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/readme/media-dynamic/media-palette-01.gif" alt="Media Player dynamic color palette variation 1" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-02.gif" alt="Media Player dynamic color palette variation 2" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-03.gif" alt="Media Player dynamic color palette variation 3" width="280" />
+  <br />
+  <img src="assets/readme/media-dynamic/media-palette-04.gif" alt="Media Player dynamic color palette variation 4" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-05.gif" alt="Media Player dynamic color palette variation 5" width="280" />
+</p>
 
 ### Codex accounts and IDE controls
 
