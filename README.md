@@ -156,6 +156,10 @@ $actual -eq $expected
 The Settings application provides a widget library, per-widget configuration,
 taskbar positioning, rotation sequencing, update controls and runtime load/unload.
 
+<p align="center">
+  <img src="assets/readme/widget-settings-dialog.png" alt="Media Player widget settings with enable, taskbar position, horizontal offset and dark mode controls" />
+</p>
+
 - **Row mode:** shows every enabled widget side by side in the configured order.
 - **Rotation mode:** shows widgets from a selected queue at a configurable interval.
 - **Positioning:** combines a taskbar anchor percentage with a fine pixel offset.
