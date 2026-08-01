@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics;
+using TaskbarWidgets.Loader.Core;
 
 namespace TaskbarWidgets.Loader;
 
@@ -42,6 +43,12 @@ internal static class MediaWorker
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                if (!ProviderActivation.IsEnabled("media-player"))
+                {
+                    StopHelper(ref helper);
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                    continue;
+                }
                 try
                 {
                     if (helper is null || helper.HasExited)
@@ -61,28 +68,34 @@ internal static class MediaWorker
                     helper = null;
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             }
         }
         finally
         {
-            try
+            StopHelper(ref helper);
+        }
+    }
+
+    private static void StopHelper(ref Process? helper)
+    {
+        try
+        {
+            if (helper is not null && !helper.HasExited)
             {
-                if (helper is not null && !helper.HasExited)
-                {
-                    helper.Kill(entireProcessTree: true);
-                    helper.WaitForExit(3000);
-                    Log("Media helper stopped");
-                }
+                helper.Kill(entireProcessTree: true);
+                helper.WaitForExit(3000);
+                Log("Media helper stopped");
             }
-            catch
-            {
-                // Best effort shutdown.
-            }
-            finally
-            {
-                helper?.Dispose();
-            }
+        }
+        catch
+        {
+            // Best effort shutdown.
+        }
+        finally
+        {
+            helper?.Dispose();
+            helper = null;
         }
     }
 

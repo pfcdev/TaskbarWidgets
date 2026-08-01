@@ -1,0 +1,72 @@
+{
+  "$schema": "../../schemas/widget-v4.schema.json",
+  "schemaVersion": 4,
+  "id": "com.pfc.community-media",
+  "version": "1.0.1",
+  "minHostVersion": "0.5.4",
+  "displayName": "Community Media",
+  "description": "A community SDK implementation of the native Media Player widget using Windows media sessions, live cover art, adaptive colors and playback control.",
+  "author": {
+    "name": "PFC Community SDK Demo",
+    "website": "https://pfcsoft.com"
+  },
+  "category": "Media",
+  "size": {
+    "width": 220,
+    "height": 44
+  },
+  "renderer": {
+    "type": "native",
+    "entry": "compact.json"
+  },
+  "runtime": {
+    "type": "process",
+    "entry": "provider.ps1",
+    "arguments": [],
+    "protocol": "json-lines-v1",
+    "lifetime": "persistent",
+    "runAs": "user",
+    "workingDirectory": "package"
+  },
+  "permissions": {
+    "required": [
+      {
+        "id": "system.fullAccess",
+        "reason": "Runs the packaged PowerShell provider with the current Windows user's permissions so it can use Windows media APIs and cache album artwork."
+      },
+      {
+        "id": "media.sessions.read",
+        "reason": "Reads the active Windows media session title, artist, playback state, source application and thumbnail."
+      },
+      {
+        "id": "media.playback.control",
+        "reason": "Toggles play and pause only when the user presses the widget's playback button."
+      },
+      {
+        "id": "windows.winrt",
+        "scope": "Windows.Media.Control",
+        "reason": "Uses the public Global System Media Transport Controls WinRT API exposed by Windows."
+      },
+      {
+        "id": "filesystem.write",
+        "scope": "{dataDir}\\CommunityMediaCache",
+        "reason": "Caches the active session thumbnail in the Taskbar Widgets data directory for native XAML rendering."
+      },
+      {
+        "id": "system.background",
+        "reason": "Keeps a low-priority provider active while the widget is enabled and checks the media session once per second."
+      }
+    ],
+    "optional": []
+  },
+  "supportsMultipleInstances": true,
+  "settings": [
+    {
+      "key": "darkMode",
+      "type": "boolean",
+      "label": "Dark appearance",
+      "description": "Use album-art adaptive dark colors instead of the light media card.",
+      "default": true
+    }
+  ]
+}

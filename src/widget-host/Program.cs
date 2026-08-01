@@ -11,6 +11,8 @@ internal sealed record HostRequest(
     string Source,
     JsonObject Settings,
     string[] NetworkHosts,
+    bool NetworkUnrestricted,
+    JsonObject Permissions,
     JsonObject SystemMetrics,
     string WidgetId,
     string InstanceId);
@@ -18,19 +20,24 @@ internal sealed record HostRequest(
 internal sealed class BrokerHttp
 {
     private readonly HashSet<string> _hosts;
+    private readonly bool _unrestricted;
     private readonly HttpClient _client = new(new HttpClientHandler
     {
         AllowAutoRedirect = false,
         AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
     }) { Timeout = TimeSpan.FromSeconds(4) };
 
-    public BrokerHttp(IEnumerable<string> hosts) =>
+    public BrokerHttp(IEnumerable<string> hosts, bool unrestricted)
+    {
         _hosts = new HashSet<string>(hosts, StringComparer.OrdinalIgnoreCase);
+        _unrestricted = unrestricted;
+    }
 
     public object GetJson(string address)
     {
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps || !_hosts.Contains(uri.IdnHost))
+            uri.Scheme != Uri.UriSchemeHttps ||
+            (!_unrestricted && !_hosts.Contains(uri.IdnHost)))
         {
             throw new InvalidOperationException("HTTP target is not allowed by the widget manifest.");
         }
@@ -100,7 +107,7 @@ internal static partial class Program
                 .LimitMemory(64_000_000)
                 .MaxStatements(100_000)
                 .Strict());
-            var broker = new BrokerHttp(request.NetworkHosts);
+            var broker = new BrokerHttp(request.NetworkHosts, request.NetworkUnrestricted);
             engine.SetValue("__httpGetJson", new Func<string, object>(broker.GetJson));
             var settingsJson = request.Settings.ToJsonString();
             var systemMetricsJson = (request.SystemMetrics ?? new JsonObject()).ToJsonString();

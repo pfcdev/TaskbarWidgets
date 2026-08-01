@@ -1,9 +1,19 @@
 const { invoke } = window.__TAURI__.core;
 
+const supportLinks = {
+  github: "https://github.com/pfcdev/TaskbarWidgets",
+  reddit: "https://www.reddit.com/r/windowsapps/comments/1v5n3qs/i_built_an_opensource_windows_11_app_that_adds/",
+  x: "https://x.com/pfcdev",
+  feedback: "https://github.com/pfcdev/TaskbarWidgets/issues/new?labels=feedback&title=%5BFeedback%5D%20",
+};
+
+const widgetThumbnailTemplate = "./assets/widgets/widget-thumbnail-template.svg";
+
 const widgetPresentation = {
   "codex-status": { icon: "terminal", accent: "#5fd4ff", featured: true },
   "weather-static": { icon: "partly_cloudy_day", accent: "#f59e0b", featured: true },
   "discord-voice": { icon: "forum", accent: "#5865f2" },
+  "parking-lot": { icon: "inventory_2", accent: "#94a3b8", featured: true },
   "media-player": { icon: "play_circle", accent: "#1db954" },
   "steam-download": { icon: "download", accent: "#66c0f4", featured: true },
   "system-cpu": { icon: "memory", accent: "#60a5fa", featured: true },
@@ -46,10 +56,8 @@ const defaults = {
   weatherTempUnit: "C",
   discordEnabled: false,
   discordBackgroundEnabled: true,
+  discordRealTimeVoiceEnabled: false,
   mediaDarkMode: true,
-  discordClientId: "",
-  discordClientSecret: "",
-  discordRedirectUri: "http://127.0.0.1/callback",
 };
 
 const pageMeta = {
@@ -67,7 +75,7 @@ const pageMeta = {
   },
   rotation: {
     title: "Slider Rotation",
-    description: "Configure the active queue, timing, and taskbar preview for rotating widgets.",
+    description: "Configure the active widget queue, order, transitions, and timing.",
   },
   updates: {
     title: "System Updates",
@@ -77,6 +85,10 @@ const pageMeta = {
     title: "Settings",
     description: "Manage TaskbarWidgets behavior, widget settings, and system integrations.",
   },
+  help: {
+    title: "Help & Resources",
+    description: "Find documentation, community discussions, and project support.",
+  },
 };
 
 let state = {
@@ -85,6 +97,9 @@ let state = {
   settings: { ...defaults },
   updateStatus: {},
   mediaStatus: {},
+  webRenderHealth: {},
+  voiceHelperInstalled: false,
+  voiceHelperBusy: false,
   systemSources: { disks: [], interfaces: [] },
   runtimeCatalog: { widgets: [] },
   communityWidgetsDir: "",
@@ -93,13 +108,13 @@ let state = {
   search: "",
   dirty: false,
   status: "",
-  previewMode: "bottom",
-  previewIndex: 0,
   modalWidgetId: "",
   installPreview: null,
   installSource: "",
   installError: "",
   installEnable: true,
+  installAdvertisedPermissions: null,
+  installOptionalGrants: [],
   remoteLibrary: [],
   remoteLibraryState: "idle",
   remoteLibraryError: "",
@@ -109,7 +124,6 @@ let state = {
 };
 
 let autosaveTimer = 0;
-let previewTimer = 0;
 let updatePollTimer = 0;
 let updateInstallerLaunchInProgress = false;
 let updateInstallRequested = false;
@@ -131,7 +145,8 @@ function applyRuntimeCatalog(runtimeCatalog) {
   state.runtimeCatalog = runtimeCatalog && Array.isArray(runtimeCatalog.widgets)
     ? runtimeCatalog
     : { widgets: [] };
-  for (const manifest of state.runtimeCatalog.widgets.filter((item) => item.valid && item.renderer === "declarative")) {
+  for (const manifest of state.runtimeCatalog.widgets.filter((item) =>
+    item.valid && (item.renderer === "declarative" || item.renderer === "native" || item.renderer === "web"))) {
     const existingIndex = widgetCatalog.findIndex((item) => item.id === manifest.id);
     const widget = {
       ...(existingIndex >= 0 ? widgetCatalog[existingIndex] : {}),
@@ -262,13 +277,14 @@ function enabledWidgets() {
     .map((widget) => widget.design);
 }
 
-function currentPreviewDesign() {
-  const rotationQueue = state.settings.rotationEnabled
-    ? state.settings.rotationDesigns.filter((id) => state.settings.widgets.some((widget) => widget.design === id && widget.enabled))
-    : [];
-  const queue = rotationQueue.length ? rotationQueue : enabledWidgets();
-  if (!queue.length) return state.settings.activeDesign;
-  return queue[state.previewIndex % queue.length];
+function availableCommunityPosition(widget) {
+  if (widget.positionPct !== 100 || widget.moveX !== 0) return widget.positionPct;
+  const occupied = state.settings.widgets
+    .filter((item) => item.enabled && item.id !== widget.id)
+    .map((item) => Number(item.positionPct ?? 100));
+  const candidates = [75, 50, 25, 0, 100];
+  return candidates.find((candidate) =>
+    occupied.every((position) => Math.abs(position - candidate) >= 18)) ?? 50;
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -286,6 +302,8 @@ async function boot() {
     state.settings = mergeSettings(loaded.settings || {});
     state.updateStatus = loaded.updateStatus || {};
     state.mediaStatus = loaded.mediaStatus || {};
+    state.webRenderHealth = loaded.webRenderHealth || {};
+    state.voiceHelperInstalled = Boolean(loaded.voiceHelperInstalled);
     state.systemSources = loaded.systemSources || { disks: [], interfaces: [] };
     applyCommunityUpdateState(loaded.communityUpdateState);
   } catch (error) {
@@ -298,7 +316,6 @@ async function boot() {
   setInterval(consumeWidgetInstallRequest, 700);
   widgetPositionSyncTimer = setInterval(syncWidgetPositions, 600);
   loadReleaseTimeline();
-  startPreviewLoop();
   if (isUpdateBusy(state.updateStatus)) startUpdatePolling();
   bindCommunityDropTarget();
   setTimeout(() => loadRemoteLibrary(false), 1200);
@@ -325,6 +342,7 @@ async function syncWidgetPositions() {
   widgetPositionSyncInProgress = true;
   try {
     const loaded = await invoke("load_state");
+    state.voiceHelperInstalled = Boolean(loaded.voiceHelperInstalled);
     const updatesChanged = applyCommunityUpdateState(loaded.communityUpdateState);
     const incoming = normalizeWidgets(
       loaded.settings?.widgets,
@@ -391,7 +409,6 @@ async function consumeWidgetInstallRequest() {
 function render() {
   renderNavigation();
   renderPage();
-  renderFloatingTaskbar();
   renderWidgetModal();
   renderInstallModal();
   localizeIcons();
@@ -399,20 +416,22 @@ function render() {
 
 function localizeIcons() {
   const glyphs = {
-    widgets: "▦", terminal: "⌘", partly_cloudy_day: "☀", forum: "●",
-    play_circle: "▶", download: "↓", rebase_edit: "⇄", system_update: "↻",
-    settings: "⚙", help: "?", chat_bubble: "◌", search: "⌕",
-    pending: "◷", check_circle: "✓", check: "✓", add: "+", view_timeline: "≡",
-    desktop_windows: "▣", drag_indicator: "⋮", keyboard_arrow_up: "↑",
-    keyboard_arrow_down: "↓", close: "×", tune: "⚙", extension: "◇",
-    warning: "!", new_releases: "★", hourglass_top: "◷", sync: "↻",
-    system_update_alt: "↓", history: "↶", save: "✓", folder_open: "□",
-    grid_view: "▦", folder: "□", language: "◎", expand_less: "⌃", wifi: "⌁",
-    volume_up: "◖", window: "⊞", eject: "■", play_arrow: "▶", light_mode: "☀", shield: "◆", delete: "×"
+    widgets: "\uE71D", terminal: "\uE756", partly_cloudy_day: "\uE706", forum: "\uE8BD",
+    play_circle: "\uE768", download: "\uE896", rebase_edit: "\uE8AB", system_update: "\uE895",
+    settings: "\uE713", help: "\uE897", chat_bubble: "\uE8F2", search: "\uE721",
+    pending: "\uE823", check_circle: "\uE73E", check: "\uE73E", add: "\uE710", view_timeline: "\uE8A5",
+    desktop_windows: "\uE7F4", drag_indicator: "\uE700", keyboard_arrow_up: "\uE70E",
+    keyboard_arrow_down: "\uE70D", close: "\uE711", tune: "\uE9E9", extension: "\uE74C",
+    warning: "\uE7BA", new_releases: "\uEA8F", hourglass_top: "\uE916", sync: "\uE895",
+    system_update_alt: "\uE896", history: "\uE81C", save: "\uE74E", folder_open: "\uE838",
+    grid_view: "\uE80A", folder: "\uE8B7", language: "\uE774", expand_less: "\uE70E", wifi: "\uE701",
+    volume_up: "\uE767", window: "\uE737", eject: "\uF847", play_arrow: "\uE768", light_mode: "\uE706",
+    shield: "\uEA18", delete: "\uE74D", memory: "\uE950", hard_drive: "\uEDA2", swap_vert: "\uE8D4",
+    developer_board: "\uE950", play_circle_filled: "\uE768", refresh: "\uE72C", open_in_new: "\uE8A7"
   };
   document.querySelectorAll(".material-symbols-outlined:not([data-localized-icon])").forEach((element) => {
     const name = element.textContent.trim();
-    element.textContent = glyphs[name] || "◇";
+    element.textContent = glyphs[name] || "\uE74C";
     element.dataset.localizedIcon = name || "unknown";
     element.setAttribute("aria-hidden", "true");
   });
@@ -433,6 +452,9 @@ function renderNavigation() {
       }
     };
   });
+  document.querySelectorAll("[data-external-link]").forEach((button) => {
+    button.onclick = () => openExternalUrl(supportLinks[button.dataset.externalLink]);
+  });
 }
 
 function renderPage() {
@@ -452,6 +474,9 @@ function renderPage() {
   } else if (state.page === "developer") {
     page.innerHTML = developerPage();
     bindDeveloperPage();
+  } else if (state.page === "help") {
+    page.innerHTML = helpPage();
+    bindExternalLinks();
   } else {
     page.innerHTML = libraryPage();
     bindLibraryPage();
@@ -467,7 +492,7 @@ function explorePage() {
   const body = state.remoteLibraryState === "loading"
     ? `<div class="library-empty"><strong>Loading community library…</strong><span>Reading index.json and widget details.</span></div>`
     : state.remoteLibraryState === "error"
-      ? `<section class="glass-panel channel-card library-unavailable"><span class="status-chip">Library offline</span><h3>The remote library is not ready yet</h3><p>${escapeHtml(state.remoteLibraryError || "The server did not return a valid index.json.")}</p><button class="secondary-action" id="retry-remote-library" type="button"><span class="material-symbols-outlined">sync</span><span>Try Again</span></button></section>`
+      ? `<section class="fluent-card channel-card library-unavailable"><span class="status-chip">Library offline</span><h3>The remote library is not ready yet</h3><p>${escapeHtml(state.remoteLibraryError || "The server did not return a valid index.json.")}</p><button class="secondary-action" id="retry-remote-library" type="button"><span class="material-symbols-outlined">sync</span><span>Try Again</span></button></section>`
       : widgets.length
         ? `<section class="remote-widget-grid">${widgets.map(remoteWidgetCard).join("")}</section>`
         : `<div class="library-empty"><strong>No community widgets found</strong><span>${query ? "Try another search." : "The catalog is valid but currently empty."}</span></div>`;
@@ -480,14 +505,91 @@ function explorePage() {
     ${inlineStatus()}`;
 }
 
+const permissionCatalog = {
+  "accounts.list.read": ["high", "Kayıtlı hesapları görebilir", "Taskbar Widgets içinde kayıtlı hesapların listesini okuyabilir."],
+  "accounts.profile.read": ["high", "Hesap profillerini okuyabilir", "Kayıtlı hesapların profil ve kimlik bilgilerini okuyabilir."],
+  "accounts.history.read": ["critical", "Tüm hesap geçmişini okuyabilir", "Taskbar Widgets içindeki hesapların geçmiş kullanım bilgilerine erişebilir."],
+  "accounts.tokens.read": ["critical", "Hesap oturum bilgilerini okuyabilir", "Kayıtlı token ve oturum verilerine erişebilir."],
+  "accounts.active.write": ["high", "Aktif hesabı değiştirebilir", "Taskbar Widgets tarafından kullanılan aktif hesabı değiştirebilir."],
+  "accounts.delete": ["critical", "Hesapları silebilir", "Taskbar Widgets içinde kayıtlı hesapları silebilir."],
+  "filesystem.read": ["high", "Dosyaları okuyabilir", "Belirtilen dosya ve klasörlerin içeriğini okuyabilir."],
+  "filesystem.write": ["high", "Dosyaları değiştirebilir", "Belirtilen dosya ve klasörlerde veri oluşturabilir veya değiştirebilir."],
+  "filesystem.delete": ["critical", "Dosyaları silebilir", "Belirtilen dosya ve klasörlerdeki verileri silebilir."],
+  "filesystem.watch": ["medium", "Dosya değişikliklerini izleyebilir", "Belirtilen klasörlerdeki değişiklikleri arka planda takip edebilir."],
+  "filesystem.all": ["critical", "Tüm kullanıcı dosyalarına erişebilir", "Windows hesabınızın erişebildiği bütün dosyaları okuyabilir, değiştirebilir veya silebilir."],
+  "registry.read": ["high", "Registry verilerini okuyabilir", "Belirtilen Windows Registry anahtarlarını okuyabilir."],
+  "registry.write": ["high", "Registry verilerini değiştirebilir", "Belirtilen Windows Registry anahtarlarını oluşturabilir veya değiştirebilir."],
+  "registry.delete": ["critical", "Registry verilerini silebilir", "Belirtilen Windows Registry anahtarlarını silebilir."],
+  "registry.all": ["critical", "Registry üzerinde tam erişim kullanabilir", "Windows hesabınızın erişebildiği tüm Registry alanlarını okuyabilir ve değiştirebilir."],
+  "process.list": ["medium", "Çalışan uygulamaları görebilir", "Bilgisayarda çalışan process listesini ve temel bilgilerini okuyabilir."],
+  "process.start": ["high", "Program çalıştırabilir", "Bilgisayarınızda executable veya script başlatabilir."],
+  "process.stop": ["high", "Programları durdurabilir", "Çalışan process'leri sonlandırabilir."],
+  "process.control": ["critical", "Diğer programları kontrol edebilir", "Çalışan uygulamalara komut gönderebilir ve durumlarını değiştirebilir."],
+  "process.inject": ["critical", "Diğer process'lere kod yükleyebilir", "Çalışan uygulamaların belleğine kod yükleyebilir."],
+  "shell.execute": ["critical", "Komut çalıştırabilir", "PowerShell, Komut İstemi veya başka shell komutları yürütebilir."],
+  "shell.openExternal": ["medium", "Bağlantı ve dosya açabilir", "Varsayılan Windows uygulamalarıyla bağlantı veya dosya açabilir."],
+  "network.internet": ["medium", "İnternete bağlanabilir", "Belirtilen internet adresleriyle veri alışverişi yapabilir."],
+  "network.local": ["high", "Yerel ağa erişebilir", "Aynı ağdaki bilgisayar ve cihazlarla iletişim kurabilir."],
+  "network.listen": ["high", "Ağ bağlantısı kabul edebilir", "Bilgisayarınızda bir ağ portu açıp gelen bağlantıları kabul edebilir."],
+  "network.unrestricted": ["critical", "Sınırsız ağ erişimi kullanabilir", "İnternet ve yerel ağdaki tüm adreslerle sınırsız iletişim kurabilir."],
+  "windows.win32": ["high", "Win32 API kullanabilir", "Windows masaüstü ve sistem API'lerine erişebilir."],
+  "windows.winrt": ["high", "Windows Runtime API kullanabilir", "Windows Runtime özelliklerine erişebilir."],
+  "windows.com": ["high", "COM bileşenlerini kullanabilir", "Windows ve kurulu uygulamaların COM arayüzlerine erişebilir."],
+  "windows.wmi": ["high", "WMI sistem bilgilerine erişebilir", "WMI üzerinden sistem bilgisi okuyabilir veya işlem başlatabilir."],
+  "clipboard.read": ["high", "Panoyu okuyabilir", "Kopyaladığınız metin ve diğer pano verilerini okuyabilir."],
+  "clipboard.write": ["medium", "Panoyu değiştirebilir", "Windows panosunun içeriğini değiştirebilir."],
+  "notifications.show": ["low", "Bildirim gösterebilir", "Windows bildirim merkezinde bildirim oluşturabilir."],
+  camera: ["critical", "Kamerayı kullanabilir", "Bağlı kameradan görüntü alabilir."],
+  microphone: ["critical", "Mikrofonu kullanabilir", "Bağlı mikrofondan ses alabilir."],
+  location: ["high", "Konumunuzu okuyabilir", "Windows konum servisinden konum bilgisi alabilir."],
+  bluetooth: ["high", "Bluetooth cihazlarına erişebilir", "Yakındaki veya eşleştirilmiş Bluetooth cihazlarıyla iletişim kurabilir."],
+  usb: ["high", "USB cihazlarına erişebilir", "Bağlı USB cihazlarıyla iletişim kurabilir."],
+  "media.sessions.read": ["medium", "Çalan medyayı görebilir", "Windows medya oturumlarındaki parça, sanatçı ve oynatma durumunu okuyabilir."],
+  "media.playback.control": ["high", "Medya oynatmayı kontrol edebilir", "Oynat, duraklat, ileri ve geri komutları gönderebilir."],
+  "steam.downloads.read": ["high", "Steam indirmelerini okuyabilir", "Steam kütüphaneleri, manifestleri ve indirme durumunu okuyabilir."],
+  "steam.client.control": ["high", "Steam istemcisini kontrol edebilir", "Steam istemcisine komut gönderebilir veya Steam bağlantıları açabilir."],
+  "discord.state.read": ["high", "Discord durumunu okuyabilir", "Discord kullanıcı, kanal ve ses durumu bilgilerine erişebilir."],
+  "system.metrics.read": ["low", "Sistem performansını okuyabilir", "CPU, bellek, disk ve ağ kullanım metriklerini okuyabilir."],
+  "taskbar.control": ["high", "Görev çubuğunu kontrol edebilir", "Taskbar Widgets görev çubuğu yüzeyini ve yerleşimini değiştirebilir."],
+  "settings.read": ["medium", "Uygulama ayarlarını okuyabilir", "Taskbar Widgets ayarlarını okuyabilir."],
+  "settings.write": ["high", "Uygulama ayarlarını değiştirebilir", "Taskbar Widgets ayarlarını değiştirebilir."],
+  "system.fullAccess": ["critical", "Windows hesabınızda tam erişim kullanabilir", "Windows kullanıcı hesabınızın erişebildiği dosyalara, uygulamalara, hesaplara, Registry verilerine ve ağ kaynaklarına erişebilir."],
+  "system.administrator": ["critical", "Yönetici yetkisi isteyebilir", "Windows UAC onayıyla yönetici olarak çalışabilir ve sistem genelinde değişiklik yapabilir."],
+  "system.startup": ["high", "Windows başlangıcında çalışabilir", "Windows oturumu açıldığında otomatik olarak başlayabilir."],
+  "system.background": ["medium", "Arka planda çalışabilir", "Widget görünür değilken de arka planda çalışmaya devam edebilir."],
+  "legacy.network": ["medium", "İnternete bağlanabilir", "Listelenen HTTPS adreslerinden JSON verisi alabilir."],
+  "legacy.systemMetrics": ["low", "Sistem performansını okuyabilir", "İzin verilen CPU, bellek, disk veya ağ metriklerini okuyabilir."],
+  "legacy.openExternal": ["medium", "Bağlantı açabilir", "Listelenen internet adreslerini varsayılan tarayıcıda açabilir."],
+  "legacy.storage": ["low", "Özel widget depolaması kullanabilir", "Yalnızca kendi widget verilerini yerel olarak saklayabilir."],
+  "legacy.graphics": ["low", "Gelişmiş grafik kullanabilir", "WebGL veya sürekli animasyon çalıştırabilir."]
+};
+
 function permissionEntries(permissions) {
-  return Object.entries(permissions || {}).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value));
+  if (Array.isArray(permissions?.required)) {
+    return [
+      ...permissions.required.map((request) => ({ ...request, optional: false })),
+      ...(Array.isArray(permissions.optional) ? permissions.optional.map((request) => ({ ...request, optional: true })) : []),
+    ];
+  }
+  return Object.entries(permissions || {})
+    .filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value))
+    .map(([key, value]) => ({
+      id: `legacy.${key}`,
+      scope: Array.isArray(value) ? value : undefined,
+      reason: "",
+      optional: false,
+    }));
 }
 
-function permissionLabel(key, value) {
-  const names = { network: "Network", systemMetrics: "System metrics", openExternal: "Open links", storage: "Private storage" };
-  const suffix = Array.isArray(value) ? `: ${value.join(", ")}` : "";
-  return `${names[key] || key}${suffix}`;
+function permissionInfo(request) {
+  const [risk, title, description] = permissionCatalog[request.id] || ["high", request.id, "Bu widget bu sistem yetkisini kullanmak istiyor."];
+  const scope = Array.isArray(request.scope) ? request.scope.join(", ") : request.scope;
+  return { risk, title, description, scope: scope ? String(scope) : "" };
+}
+
+function permissionLabel(request) {
+  const info = permissionInfo(request);
+  return `${info.title}${info.scope ? `: ${info.scope}` : ""}${request.optional ? " (isteğe bağlı)" : ""}`;
 }
 
 function compareVersions(left, right) {
@@ -529,17 +631,24 @@ function remoteWidgetCard(widget) {
   const installed = Boolean(installedWidget);
   const updateAvailable = installedWidget?.local && compareVersions(widget.version, installedWidget.version) > 0;
   const permissions = permissionEntries(widget.permissions);
-  return `<article class="glass-panel remote-widget-card" style="--accent:#5fd4ff">
-    <div class="remote-widget-head"><span class="widget-icon"><span class="material-symbols-outlined">extension</span></span><span class="status-chip">${escapeHtml(widget.category || "Community")}</span></div>
-    <h3>${escapeHtml(widget.displayName)}</h3>
-    <p>${escapeHtml(widget.description)}</p>
-    <div class="remote-author">By <strong>${escapeHtml(widget.author?.name || "Unknown author")}</strong> · v${escapeHtml(widget.version)}</div>
-    <div class="permission-chips">${permissions.length ? permissions.map(([key, value]) => `<span>${escapeHtml(permissionLabel(key, value))}</span>`).join("") : "<span>No additional permissions</span>"}</div>
-    ${updateAvailable ? `<div class="update-version-line"><strong>Update available</strong><span>v${escapeHtml(installedWidget.version)} → v${escapeHtml(widget.version)}</span></div>` : ""}
-    <button class="${installed && !updateAvailable ? "secondary-action" : "gradient-action"}" data-download-remote="${escapeAttr(widget.id)}" type="button" ${installed && !updateAvailable ? "disabled" : ""}>
-      <span class="material-symbols-outlined">${updateAvailable ? "sync" : installed ? "check_circle" : "download"}</span><span>${updateAvailable ? "Review & Update" : installed ? "Installed" : "Review & Install"}</span>
-    </button>
+  return `<article class="fluent-card remote-widget-card" style="--accent:#5fd4ff">
+    ${widgetThumbnail("Explore widget artwork")}
+    <div class="remote-widget-body">
+      <div class="remote-widget-head"><span class="widget-icon"><span class="material-symbols-outlined">extension</span></span><span class="status-chip">${escapeHtml(widget.category || "Community")}</span><span class="status-chip">${widget.renderer === "web" ? "Legacy Web" : widget.renderer === "native" ? "Native XAML" : "Native DSL"}</span></div>
+      <h3>${escapeHtml(widget.displayName)}</h3>
+      <p>${escapeHtml(widget.description)}</p>
+      <div class="remote-author">By <strong>${escapeHtml(widget.author?.name || "Unknown author")}</strong> · v${escapeHtml(widget.version)}</div>
+      <div class="permission-chips">${permissions.length ? permissions.map((request) => `<span class="permission-chip-${escapeAttr(permissionInfo(request).risk)}">${escapeHtml(permissionLabel(request))}</span>`).join("") : "<span>No additional permissions</span>"}</div>
+      ${updateAvailable ? `<div class="update-version-line"><strong>Update available</strong><span>v${escapeHtml(installedWidget.version)} → v${escapeHtml(widget.version)}</span></div>` : ""}
+      <button class="${installed && !updateAvailable ? "secondary-action" : "accent-action"}" data-download-remote="${escapeAttr(widget.id)}" type="button" ${installed && !updateAvailable ? "disabled" : ""}>
+        <span class="material-symbols-outlined">${updateAvailable ? "sync" : installed ? "check_circle" : "download"}</span><span>${updateAvailable ? "Review & Update" : installed ? "Installed" : "Review & Install"}</span>
+      </button>
+    </div>
   </article>`;
+}
+
+function widgetThumbnail(label = "Widget artwork") {
+  return `<div class="widget-thumbnail"><img src="${widgetThumbnailTemplate}" alt="${escapeAttr(label)}" /><span>Template</span></div>`;
 }
 
 async function loadRemoteLibrary(force = false) {
@@ -581,9 +690,9 @@ async function downloadAndReviewWidget(widgetId, button = null) {
   if (button) button.disabled = true;
   setStatus("Downloading and verifying widget package…");
   try {
-    const source = await invoke("download_remote_widget", { widgetId });
+    const download = await invoke("download_remote_widget", { widgetId });
     setStatus("Package verified");
-    await openWidgetInstall(source);
+    await openWidgetInstall(download.source, download.advertisedPermissions);
   } catch (error) {
     setStatus(`Download failed: ${error}`);
     if (button) button.disabled = false;
@@ -593,7 +702,8 @@ async function downloadAndReviewWidget(widgetId, button = null) {
 async function removeCommunityWidget(widgetId, ask = true) {
   const manifest = widgetCatalog.find((item) => item.id === widgetId) ||
     (state.runtimeCatalog.widgets || []).find((item) => item.id === widgetId && !item.trusted);
-  if (!manifest || manifest.trusted || (!manifest.local && manifest.renderer !== "declarative")) return;
+  if (!manifest || manifest.trusted ||
+      (!manifest.local && manifest.renderer !== "declarative" && manifest.renderer !== "native" && manifest.renderer !== "web")) return;
   const title = manifest.title || manifest.displayName || widgetId;
   if (ask && !window.confirm(`Remove ${title}? All instances and saved settings for this widget will be removed.`)) return;
   try {
@@ -618,17 +728,30 @@ async function removeCommunityWidget(widgetId, ask = true) {
 function developerPage() {
   const entries = state.runtimeCatalog.widgets || [];
   const community = entries.filter((item) => !item.trusted);
+  const renderHealth = state.webRenderHealth || {};
   return `${pageHeader("developer")}
-    <section class="glass-panel channel-card">
-      <h3>Community widget folder</h3>
-      <p><code>${escapeHtml(state.communityWidgetsDir || "%LocalAppData%\\TaskbarWidgets\\CommunityWidgets")}</code></p>
-      <div class="update-actions">
-        <button class="gradient-action" id="open-community-folder" type="button"><span class="material-symbols-outlined">folder_open</span><span>Open Folder</span></button>
+    <div class="developer-grid">
+    <section class="fluent-card channel-card developer-card developer-folder-card">
+      <div class="developer-card-head"><span class="widget-icon"><span class="material-symbols-outlined">folder_open</span></span><div><h3>Community widget folder</h3><p>Install and manage local development packages.</p></div></div>
+      <code class="developer-path">${escapeHtml(state.communityWidgetsDir || "%LocalAppData%\\TaskbarWidgets\\CommunityWidgets")}</code>
+      <div class="developer-actions">
+        <button class="accent-action" id="open-community-folder" type="button"><span class="material-symbols-outlined">folder_open</span><span>Open Folder</span></button>
         <button class="secondary-action" id="install-community-folder" type="button"><span class="material-symbols-outlined">add</span><span>Install Folder</span></button>
         <button class="secondary-action" id="install-community-package" type="button"><span class="material-symbols-outlined">download</span><span>Install .twidget</span></button>
         <button class="secondary-action" id="reload-community-catalog" type="button"><span class="material-symbols-outlined">sync</span><span>Reload</span></button>
       </div>
     </section>
+    <section class="fluent-card channel-card developer-card">
+      <div class="developer-card-head"><span class="widget-icon"><span class="material-symbols-outlined">developer_board</span></span><div><h3>Web renderer diagnostics</h3><p>Runtime state for approved web widgets.</p></div></div>
+      <div class="diagnostics-card">
+        ${statusRow("Active installation", state.appDir || "Unavailable")}
+        ${statusRow("RenderHost", renderHealth.status || "stopped")}
+        ${statusRow("Isolation", "Separate process · WebView2 Composition")}
+        ${renderHealth.error ? statusRow("Last error", renderHealth.error) : ""}
+      </div>
+      <p class="developer-note">RenderHost and Edge processes stay stopped until an approved web widget is enabled.</p>
+    </section>
+    </div>
     <section class="widget-library-list" aria-label="Community validation results">
       ${community.length ? community.map((item) => `<article class="widget-library-row ${item.valid ? "enabled" : ""}">
         <div class="widget-icon"><span class="material-symbols-outlined">${item.valid ? "check_circle" : "warning"}</span></div>
@@ -637,7 +760,10 @@ function developerPage() {
         <button class="icon-button" data-remove-community="${escapeAttr(item.id)}" type="button" title="Remove local widget"><span class="material-symbols-outlined">close</span></button>
       </article>`).join("") : `<div class="library-empty"><strong>No local widgets</strong><span>Copy a widget folder here or run twdev dev.</span></div>`}
     </section>
-    <section class="glass-panel channel-card"><h3>Developer CLI</h3><p><code>twdev init com.example.clock</code><br/><code>twdev validate ./com.example.clock</code><br/><code>twdev dev ./com.example.clock</code><br/><code>twdev pack ./com.example.clock</code></p></section>
+    <section class="fluent-card channel-card developer-card developer-cli-card">
+      <div class="developer-card-head"><span class="widget-icon"><span class="material-symbols-outlined">terminal</span></span><div><h3>Developer CLI</h3><p>Common commands for creating and validating a widget.</p></div></div>
+      <div class="developer-command-list"><code>twdev init com.example.clock</code><code>twdev validate ./com.example.clock</code><code>twdev dev ./com.example.clock</code><code>twdev pack ./com.example.clock</code></div>
+    </section>
     ${inlineStatus()}`;
 }
 
@@ -668,9 +794,53 @@ function bindDeveloperPage() {
       const loaded = await invoke("load_state");
       applyRuntimeCatalog(loaded.widgetCatalog);
       state.runtimeCatalog = loaded.widgetCatalog || { widgets: [] };
+      state.webRenderHealth = loaded.webRenderHealth || {};
       setStatus("Catalog reloaded"); render();
     } catch (error) { setStatus(`Reload failed: ${error}`); }
   });
+}
+
+function helpPage() {
+  return `${pageHeader("help")}
+    <section class="fluent-card help-intro">
+      <span class="help-mark"><span class="material-symbols-outlined">help</span></span>
+      <div><h3>How can we help?</h3><p>Start with the project documentation, ask the community, or send feedback directly through GitHub Issues.</p></div>
+    </section>
+    <section class="help-link-grid" aria-label="Project links">
+      ${helpLinkCard("github", "terminal", "GitHub", "Source code, releases, documentation, and issue tracking.")}
+      ${helpLinkCard("reddit", "forum", "Reddit", "Join the Taskbar Widgets discussion and share widget ideas.")}
+      ${helpLinkCard("x", "chat_bubble", "X", "Follow project announcements and short development updates.")}
+    </section>
+    <section class="fluent-card help-steps">
+      <h3>Quick help</h3>
+      <div class="help-step"><span>1</span><div><strong>A widget is not visible</strong><p>Open Installed, turn the widget on, then check Explorer Integration under Settings.</p></div></div>
+      <div class="help-step"><span>2</span><div><strong>A community widget will not install</strong><p>Open Developer and review its validation result and requested permissions.</p></div></div>
+      <div class="help-step"><span>3</span><div><strong>Something is not working</strong><p>Use Feedback in the sidebar to open a pre-filled GitHub issue.</p></div></div>
+    </section>
+    ${inlineStatus()}`;
+}
+
+function helpLinkCard(key, icon, title, description) {
+  return `<button class="fluent-card help-link-card" data-external-url="${escapeAttr(supportLinks[key])}" type="button">
+    <span class="widget-icon"><span class="material-symbols-outlined">${icon}</span></span>
+    <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span>
+    <span class="material-symbols-outlined">open_in_new</span>
+  </button>`;
+}
+
+function bindExternalLinks() {
+  document.querySelectorAll("[data-external-url]").forEach((button) => {
+    button.addEventListener("click", () => openExternalUrl(button.dataset.externalUrl));
+  });
+}
+
+async function openExternalUrl(url) {
+  if (!url) return;
+  try {
+    await window.__TAURI__.shell.open(url);
+  } catch (error) {
+    setStatus(`Link could not be opened: ${error}`);
+  }
 }
 
 function pageHeader(pageId = state.page) {
@@ -717,14 +887,11 @@ function libraryPage() {
 }
 
 function widgetLibraryRow(widget) {
-  const runtime = widgetRuntime(widget.id);
   const enabled = isWidgetEnabled(widget.id);
   const update = remoteUpdateFor(widget.id);
   return `
     <article class="widget-library-row ${enabled ? "enabled" : ""}" style="--accent:${widget.accent}" data-open-widget="${widget.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(widget.title)} settings">
-      <button class="native-preview-button" type="button" aria-label="Open ${escapeAttr(widget.title)} settings">
-        ${runtime.preview}
-      </button>
+      ${widgetThumbnail(`${widget.title} artwork`)}
       <div class="widget-library-copy">
         <div class="widget-library-title">
           <span class="widget-accent-dot"></span>
@@ -737,21 +904,19 @@ function widgetLibraryRow(widget) {
       </div>
       <div class="installed-widget-actions">
         ${update ? `<button class="secondary-action compact-action" data-update-community="${escapeAttr(widget.id)}" type="button"><span class="material-symbols-outlined">sync</span><span>Update</span></button>` : ""}
-        ${widget.local ? `<button class="icon-button danger-action" data-remove-installed="${escapeAttr(widget.id)}" type="button" title="Remove widget"><span class="material-symbols-outlined">delete</span></button>` : ""}
-        ${toggleButton(widget.id, true)}
+        ${widget.local ? `<button class="native-icon-action danger-action" data-remove-installed="${escapeAttr(widget.id)}" type="button" title="Remove widget" aria-label="Remove ${escapeAttr(widget.title)}"><span class="material-symbols-outlined">delete</span></button>` : ""}
+        ${toggleButton(widget.id)}
       </div>
     </article>
   `;
 }
 
-function toggleButton(id, compact = false) {
+function toggleButton(id) {
   const enabled = isWidgetEnabled(id);
-  return `
-    <button class="${compact ? "round-action widget-check-action" : "gradient-action"} ${enabled ? "active" : ""}" data-toggle-widget="${id}" type="button" aria-label="${enabled ? "Disable" : "Enable"} ${escapeAttr(widgetById(id).title)}">
-      <span class="material-symbols-outlined">${enabled ? "check" : "add"}</span>
-      ${compact ? "" : `<span>${enabled ? "Added" : "Add"}</span>`}
-    </button>
-  `;
+  return `<label class="widget-toggle-control" title="${enabled ? "Disable" : "Enable"} ${escapeAttr(widgetById(id).title)}">
+    <span>${enabled ? "On" : "Off"}</span>
+    <span class="win-toggle"><input type="checkbox" data-toggle-widget="${escapeAttr(id)}" ${enabled ? "checked" : ""} aria-label="${enabled ? "Disable" : "Enable"} ${escapeAttr(widgetById(id).title)}" /><span><i></i></span></span>
+  </label>`;
 }
 
 function rotationPage() {
@@ -761,7 +926,7 @@ function rotationPage() {
     <section class="rotation-header">
       <div>
         <h3>Active Sequence</h3>
-        <p>Choose widgets and arrange the order shown on the taskbar preview.</p>
+        <p>Choose widgets and arrange the order used by Slider Rotation.</p>
       </div>
       ${settingToggle("rotationEnabled", "Enable Rotation", state.settings.rotationEnabled, "large")}
     </section>
@@ -780,27 +945,11 @@ function rotationPage() {
           <div class="drop-zone">Drop new widget here</div>
         </div>
       </section>
-
-      <section class="preview-column">
-        <div class="sequence-head">
-          <h3><span class="material-symbols-outlined">desktop_windows</span> Live Taskbar Preview</h3>
-          <div class="segmented">
-            <button class="${state.previewMode === "bottom" ? "active" : ""}" data-preview-mode="bottom" type="button">Bottom</button>
-            <button class="${state.previewMode === "rail" ? "active" : ""}" data-preview-mode="rail" type="button">Left Rail</button>
-          </div>
-        </div>
-        <div class="desktop-preview ${state.previewMode === "rail" ? "rail" : ""}">
-          <div class="desktop-glow"></div>
-          ${desktopTaskbarMarkup()}
-        </div>
-        <div class="interval-card glass-panel">
-          <label>Slide Interval</label>
-          <div>
-            <input type="number" min="5" max="3600" data-setting="rotationIntervalSecs" value="${escapeAttr(state.settings.rotationIntervalSecs)}" />
-            <span>sec</span>
-          </div>
-        </div>
-      </section>
+      <aside class="rotation-options fluent-card">
+        <div class="rotation-option-copy"><span class="material-symbols-outlined">history</span><div><strong>Slide Interval</strong><p>Time before moving to the next widget.</p></div></div>
+        <div class="rotation-interval-input"><input type="number" min="5" max="3600" data-setting="rotationIntervalSecs" value="${escapeAttr(state.settings.rotationIntervalSecs)}" /><span>sec</span></div>
+        <div class="rotation-summary"><span>${queue.length}</span><small>widgets in sequence</small></div>
+      </aside>
     </div>
     ${inlineStatus()}
   `;
@@ -808,18 +957,13 @@ function rotationPage() {
 
 function sequenceItem(id, index) {
   const widget = widgetById(id);
-  const active = index === state.previewIndex % Math.max(1, state.settings.rotationDesigns.length);
   return `
-    <article class="sequence-item ${active ? "current" : ""}" draggable="true" data-sequence-id="${widget.id}" style="--accent:${widget.accent}">
+    <article class="sequence-item" draggable="true" data-sequence-id="${widget.id}" style="--accent:${widget.accent}">
       <div class="drag-handle"><span class="material-symbols-outlined">drag_indicator</span></div>
       <div class="sequence-icon"><span class="material-symbols-outlined">${widget.icon}</span></div>
       <div class="sequence-copy">
         <strong>${escapeHtml(widget.title)}</strong>
-        <small>${active ? "Currently Active" : `Queue #${index + 1}`}</small>
-      </div>
-      <div class="sequence-controls">
-        <input type="number" min="5" max="3600" data-setting="rotationIntervalSecs" value="${escapeAttr(state.settings.rotationIntervalSecs)}" />
-        <span>sec</span>
+        <small>Queue #${index + 1}</small>
       </div>
       <select data-transition="${widget.id}">
         <option value="fade">Fade</option>
@@ -840,27 +984,34 @@ function sequenceItem(id, index) {
 }
 
 function settingsPage() {
+  const current = widgetById(state.settings.activeDesign);
   return `
     ${pageHeader("settings")}
     <div class="settings-stack">
-      <section class="glass-panel settings-section">
-        <div class="section-title"><span class="material-symbols-outlined">tune</span><h3>Current Widget Settings</h3></div>
-        <div class="segmented wide">
-          ${widgetCatalog.map((widget) => `
-            <button class="${state.settings.activeDesign === widget.id ? "active" : ""}" data-select-widget="${widget.id}" type="button">${escapeHtml(widget.title)}</button>
-          `).join("")}
+      <section class="fluent-card settings-section">
+        <div class="settings-section-head"><div class="section-title"><span class="material-symbols-outlined">tune</span><div><h3>Current Widget Settings</h3><p>Choose a widget, then adjust only its available options.</p></div></div></div>
+        <div class="current-widget-toolbar">
+          <div class="current-widget-identity" style="--accent:${current.accent}">
+            <span class="widget-icon"><span class="material-symbols-outlined">${current.icon}</span></span>
+            <div><strong>${escapeHtml(current.title)}</strong><small>${escapeHtml(current.category)} · ${isWidgetEnabled(current.id) ? "Enabled" : "Disabled"}</small></div>
+          </div>
+          <label class="widget-select-field"><span>Widget</span><select id="active-widget-select">
+            ${widgetCatalog.map((widget) => `<option value="${escapeAttr(widget.id)}" ${state.settings.activeDesign === widget.id ? "selected" : ""}>${escapeHtml(widget.title)}</option>`).join("")}
+          </select></label>
         </div>
-        ${systemMeterTabs()}
-        ${currentWidgetSettingsFields()}
+        <div class="current-widget-fields">
+          ${current.id.startsWith("system-") ? systemMeterTabs() : ""}
+          ${currentWidgetSettingsFields()}
+        </div>
       </section>
 
-      <section class="glass-panel settings-section">
-        <div class="section-title"><span class="material-symbols-outlined">extension</span><h3>Explorer Integration</h3></div>
+      <section class="fluent-card settings-section">
+        <div class="settings-section-head"><div class="section-title"><span class="material-symbols-outlined">extension</span><div><h3>Explorer Integration</h3><p>Control the taskbar runtime without restarting Windows.</p></div></div></div>
         ${runtimeControlPanel()}
       </section>
 
-      <section class="glass-panel settings-section danger-section">
-        <div class="section-title"><span class="material-symbols-outlined">warning</span><h3>Danger Zone</h3></div>
+      <section class="fluent-card settings-section danger-section">
+        <div class="settings-section-head"><div class="section-title"><span class="material-symbols-outlined">warning</span><div><h3>Danger Zone</h3><p>Restore the last settings saved on this computer.</p></div></div></div>
         <div class="setting-row">
           <div><strong>Reset to Saved Settings</strong><p>Discard unsaved local edits and reload the settings file.</p></div>
           <button class="outline-danger" id="reset-settings" type="button">Reset</button>
@@ -894,12 +1045,36 @@ function currentWidgetSettingsFields() {
     `;
   }
   if (id === "discord-voice") {
+    const discordWidget = activeWidget();
+    const discordDisplayMode = discordWidget.settings?.displayMode || "avatars";
+    const helperStatus = state.voiceHelperInstalled ? "Installed" : "Optional";
+    const helperAction = state.voiceHelperInstalled
+      ? `<button class="outline-danger" data-remove-voice-helper type="button" ${state.voiceHelperBusy ? "disabled" : ""}><span class="material-symbols-outlined">delete</span><span>Remove helper</span></button>`
+      : `<button class="accent-action" data-install-voice-helper type="button" ${state.voiceHelperBusy ? "disabled" : ""}><span class="material-symbols-outlined">bolt</span><span>Enable instant detection</span></button>`;
     return `
-      ${settingToggle("discordEnabled", "Discord Integration", state.settings.discordEnabled)}
+      ${settingToggle("discordEnabled", "Discord Detection", state.settings.discordEnabled)}
       ${settingToggle("discordBackgroundEnabled", "Widget Background", state.settings.discordBackgroundEnabled)}
-      ${textSetting("discordClientId", "Client ID", "Discord application client id.", state.settings.discordClientId, "1525972653641433288")}
-      ${textSetting("discordClientSecret", "Client Secret", "Stored in Data/config.json.", state.settings.discordClientSecret, "client secret", true)}
-      ${textSetting("discordRedirectUri", "Redirect URI", "Must match Discord Developer Portal.", state.settings.discordRedirectUri, "http://127.0.0.1/callback")}
+      ${instanceRadioSetting("displayMode", "Theme", discordDisplayMode, [["avatars", "Avatars"], ["channel", "Voice room"]])}
+      <div class="setting-row">
+        <div><strong>Local Discord Detection</strong><p>Reads the active voice channel and participant rows from the normal Discord window. No Discord application, OAuth login, or client secret is required.</p></div>
+        <span class="status-chip">Automatic</span>
+      </div>
+      <div class="voice-helper-card">
+        <div class="voice-helper-head">
+          <div><strong>Instant Speaking Detection</strong><p>Makes the green speaking ring react immediately instead of waiting for Discord's periodic status update.</p></div>
+          <span class="status-chip">${helperStatus}</span>
+        </div>
+        ${state.voiceHelperInstalled
+          ? settingToggle("discordRealTimeVoiceEnabled", "Use instant detection", state.settings.discordRealTimeVoiceEnabled)
+          : ""}
+        <div class="discord-trust-note">
+          <span class="material-symbols-outlined">verified_user</span>
+          <p><strong>Discord stays untouched.</strong> Taskbar Widgets never changes Discord, adds anything to it, or listens to or records your calls. The optional Windows helper only notices when someone starts or stops speaking so the green ring can react instantly.</p>
+        </div>
+        <p class="voice-helper-consent">Windows asks for permission once when this helper is installed or removed. It runs only when instant detection is enabled.</p>
+        ${state.voiceHelperBusy ? `<p class="voice-helper-feedback">Waiting for Windows approval…</p>` : ""}
+        <div class="voice-helper-actions">${helperAction}</div>
+      </div>
     `;
   }
   if (id === "media-player") {
@@ -926,7 +1101,7 @@ function currentWidgetSettingsFields() {
 function communityWidgetSettingsFields(manifest) {
   const widget = activeWidget();
   const values = widget.settings || (widget.settings = {});
-  const permissions = Object.entries(manifest.permissions || {}).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value));
+  const permissions = permissionEntries(manifest.permissions);
   const fields = (manifest.settings || []).map((setting) => {
     const value = values[setting.key] ?? setting.default;
     if (setting.type === "boolean") return instanceToggle(setting.key, setting.label || setting.key, setting.description || "Widget setting", Boolean(value));
@@ -935,7 +1110,7 @@ function communityWidgetSettingsFields(manifest) {
     return `<div class="setting-block"><div class="setting-head"><div><strong>${escapeHtml(setting.label || setting.key)}</strong><p>${escapeHtml(setting.description || "Widget setting")}</p></div></div><input class="text-input" type="${setting.type === "secret" ? "password" : "text"}" data-instance-setting="${escapeAttr(setting.key)}" value="${escapeAttr(value ?? "")}" /></div>`;
   });
   fields.unshift(`<div class="setting-row"><div><strong>Trust</strong><p>Local folders are not reviewed by the Taskbar Widgets registry.</p></div><span class="status-chip">Local / Unverified</span></div>`);
-  if (permissions.length) fields.unshift(`<div class="setting-block"><div class="setting-head"><div><strong>Requested permissions</strong><p>${escapeHtml(permissions.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`).join(" · "))}</p></div></div></div>`);
+  if (permissions.length) fields.unshift(`<div class="setting-block"><div class="setting-head"><div><strong>Requested permissions</strong><p>${escapeHtml(permissions.map(permissionLabel).join(" · "))}</p></div></div></div>`);
   return fields.join("");
 }
 
@@ -994,13 +1169,13 @@ function updatesPage() {
   const busy = isUpdateBusy(update);
   const downloading = update.state === "downloading";
   const installing = update.state === "installing" || updateInstallerLaunchInProgress;
-  const current = update.currentVersion || "0.4.2";
+  const current = update.currentVersion || "0.5.21";
   const latest = update.latestVersion || "Not checked";
   const checked = update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked";
   const isCurrent = update.state === "current" || (latest !== "Not checked" && latest.replace(/^v/i, "") === current.replace(/\.0$/, ""));
   return `
     ${pageHeader("updates")}
-    <div class="updates-status glass-panel">
+    <div class="updates-status fluent-card">
       <div class="status-orb ${isCurrent ? "ok" : "pending"}"><span class="material-symbols-outlined filled">${isCurrent ? "check_circle" : "new_releases"}</span></div>
       <div>
         <h3>${isCurrent ? "System is up to date" : update.updateAvailable ? "Update available" : "Release status"}</h3>
@@ -1009,24 +1184,23 @@ function updatesPage() {
     </div>
 
     <div class="updates-layout">
-      <section class="glass-panel channel-card">
+      <section class="fluent-card channel-card">
         <h3>Update Channel</h3>
         <div class="segmented">
           <button class="active" type="button">Stable</button>
-          <button disabled type="button">Preview</button>
           <button disabled type="button">Dev</button>
         </div>
-        <p>Currently on <strong>Stable</strong> channel. Preview and Dev channels are not available in this build.</p>
+        <p>Currently on <strong>Stable</strong> channel. The Dev channel is not available in this build.</p>
       </section>
 
-      <section class="glass-panel update-card inner-glow">
+      <section class="fluent-card update-card">
         <div>
           <span class="status-chip">${update.updateAvailable ? "Available" : "Stable"}</span>
           <h3>${escapeHtml(latest)}</h3>
           <p>Current: ${escapeHtml(current)}</p>
         </div>
         <div class="update-actions">
-          <button class="gradient-action" id="check-updates" ${busy ? "disabled" : ""} type="button">
+          <button class="accent-action" id="check-updates" ${busy ? "disabled" : ""} type="button">
             <span class="material-symbols-outlined">${busy ? "hourglass_top" : "sync"}</span>
             <span>${downloading ? "Downloading" : busy ? "Checking" : "Check Updates"}</span>
           </button>
@@ -1039,7 +1213,7 @@ function updatesPage() {
         ${updateProgressMarkup(update)}
       </section>
 
-      <section class="glass-panel release-timeline">
+      <section class="fluent-card release-timeline">
         <h3><span class="material-symbols-outlined">history</span> Release Timeline</h3>
         <div class="timeline-list">
           ${releaseTimelineMarkup()}
@@ -1202,6 +1376,7 @@ function toggleHint(key) {
     rotationEnabled: "Cycle through selected widgets in the configured order.",
     discordEnabled: "Read selected voice channel users from Discord.",
     discordBackgroundEnabled: "Show the black capsule behind Discord avatars.",
+    discordRealTimeVoiceEnabled: "Use the optional Windows helper for immediate speaking rings.",
     mediaDarkMode: "Use the modern dark media palette.",
   };
   return hints[key] || "";
@@ -1223,7 +1398,7 @@ function mediaDiagnostics() {
 function actionFooter() {
   return `
     <footer class="action-footer">
-      <button class="gradient-action" id="save-settings" type="button"><span class="material-symbols-outlined">save</span><span>Save Changes</span></button>
+      <button class="accent-action" id="save-settings" type="button"><span class="material-symbols-outlined">save</span><span>Save Changes</span></button>
       <button class="secondary-action" id="open-packs" type="button"><span class="material-symbols-outlined">folder_open</span><span>Design Packs</span></button>
       ${inlineStatus()}
     </footer>
@@ -1234,52 +1409,8 @@ function inlineStatus() {
   return `<p id="inline-status" class="inline-status">${escapeHtml(state.status)}</p>`;
 }
 
-function desktopTaskbarMarkup() {
-  const widget = widgetById(currentPreviewDesign());
-  return `
-    <div class="desktop-taskbar ${state.previewMode === "rail" ? "rail" : ""}">
-      <div class="taskbar-left">
-        <span class="material-symbols-outlined">grid_view</span>
-        <span class="material-symbols-outlined">folder</span>
-        <span class="material-symbols-outlined">language</span>
-      </div>
-      <div class="rotating-widget" style="--accent:${widget.accent}">
-        ${taskbarWidgetCapsule(widget.id)}
-      </div>
-      <div class="tray">
-        <span class="material-symbols-outlined">expand_less</span>
-        <span class="material-symbols-outlined">wifi</span>
-        <span class="material-symbols-outlined">volume_up</span>
-        <time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-      </div>
-    </div>
-  `;
-}
-
 function renderFloatingTaskbar() {
-  const preview = document.getElementById("taskbar-preview");
-  preview.innerHTML = `
-    <div class="floating-left"><span class="material-symbols-outlined">window</span></div>
-    <div class="floating-widgets">
-      ${enabledWidgets().slice(0, 3).map((id) => `
-        <div class="floating-slot" style="--accent:${widgetById(id).accent}">
-          ${taskbarWidgetCapsule(id)}
-        </div>
-      `).join("")}
-      <div class="empty-slot"><span class="material-symbols-outlined">add</span></div>
-    </div>
-    <div class="floating-tray">
-      <span class="material-symbols-outlined">wifi</span>
-      <span class="material-symbols-outlined">volume_up</span>
-      <time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-    </div>
-  `;
-  localizeIcons();
-}
-
-function taskbarWidgetCapsule(id) {
-  const widget = widgetRuntime(id);
-  return `<div class="taskbar-capsule ${id}">${widget.taskbar}</div>`;
+  // Kept as a compatibility hook for settings input handlers.
 }
 
 function renderWidgetModal() {
@@ -1298,14 +1429,21 @@ function renderWidgetModal() {
   localizeIcons();
 }
 
-async function openWidgetInstall(source) {
+async function openWidgetInstall(source, advertisedPermissions = null) {
   state.installSource = String(source || "");
+  state.installAdvertisedPermissions = advertisedPermissions;
   state.installPreview = { loading: true };
   state.installError = "";
   state.installEnable = true;
   renderInstallModal();
   try {
-    state.installPreview = await invoke("inspect_community_widget", { source: state.installSource });
+    state.installPreview = await invoke("inspect_community_widget", {
+      source: state.installSource,
+      advertisedPermissions: state.installAdvertisedPermissions,
+    });
+    state.installOptionalGrants = permissionEntries(state.installPreview.permissions)
+      .filter((request) => request.optional)
+      .map((request) => request.id);
     if (state.installPreview.alreadyInstalled) {
       state.installEnable = isWidgetEnabled(state.installPreview.id);
     }
@@ -1314,6 +1452,20 @@ async function openWidgetInstall(source) {
     state.installError = String(error);
   }
   renderInstallModal();
+}
+
+function installPermissionCard(request) {
+  const info = permissionInfo(request);
+  const optionalControl = request.optional
+    ? `<label class="permission-optional-toggle"><input type="checkbox" data-optional-permission="${escapeAttr(request.id)}" ${state.installOptionalGrants.includes(request.id) ? "checked" : ""}/><span>Bu isteğe bağlı izne izin ver</span></label>`
+    : `<span class="permission-required-badge">Gerekli</span>`;
+  return `<li class="permission-card permission-risk-${escapeAttr(info.risk)}">
+    <div class="permission-card-head"><strong>${escapeHtml(info.title)}</strong><span>${escapeHtml(info.risk === "critical" ? "Kritik" : info.risk === "high" ? "Yüksek risk" : info.risk === "medium" ? "Orta risk" : "Düşük risk")}</span></div>
+    <p>${escapeHtml(info.description)}</p>
+    ${info.scope ? `<div class="permission-scope"><span>Kapsam</span><code>${escapeHtml(info.scope)}</code></div>` : ""}
+    ${request.reason ? `<div class="permission-reason"><span>Geliştiricinin nedeni</span><p>${escapeHtml(request.reason)}</p></div>` : ""}
+    ${optionalControl}
+  </li>`;
 }
 
 function renderInstallModal() {
@@ -1328,12 +1480,12 @@ function renderInstallModal() {
     document.body.appendChild(root);
   }
   if (state.installPreview?.loading) {
-    root.innerHTML = `<div class="modal-backdrop"></div><section class="widget-modal install-modal glass-panel" role="dialog" aria-modal="true"><div class="install-loading"><span class="material-symbols-outlined">sync</span><strong>Inspecting widget package…</strong><p>Checking package paths, manifest, author and requested permissions.</p></div></section>`;
+    root.innerHTML = `<div class="modal-backdrop"></div><section class="widget-modal install-modal fluent-card" role="dialog" aria-modal="true"><div class="install-loading"><span class="material-symbols-outlined">sync</span><strong>Inspecting widget package…</strong><p>Checking package paths, manifest, author and requested permissions.</p></div></section>`;
     localizeIcons();
     return;
   }
   if (state.installError) {
-    root.innerHTML = `<div class="modal-backdrop" data-close-install></div><section class="widget-modal install-modal glass-panel" role="dialog" aria-modal="true"><header class="modal-head"><div><h3>Widget cannot be installed</h3><p>The package did not pass pre-install validation.</p></div><button class="icon-button" data-close-install type="button"><span class="material-symbols-outlined">close</span></button></header><div class="install-error"><span class="material-symbols-outlined">warning</span><p>${escapeHtml(state.installError)}</p></div><footer class="modal-actions"><button class="secondary-action" data-close-install type="button">Close</button></footer></section>`;
+    root.innerHTML = `<div class="modal-backdrop" data-close-install></div><section class="widget-modal install-modal fluent-card" role="dialog" aria-modal="true"><header class="modal-head"><div><h3>Widget cannot be installed</h3><p>The package did not pass pre-install validation.</p></div><button class="icon-button" data-close-install type="button"><span class="material-symbols-outlined">close</span></button></header><div class="install-error"><span class="material-symbols-outlined">warning</span><p>${escapeHtml(state.installError)}</p></div><footer class="modal-actions"><button class="secondary-action" data-close-install type="button">Close</button></footer></section>`;
     bindInstallModal();
     localizeIcons();
     return;
@@ -1344,24 +1496,32 @@ function renderInstallModal() {
   const blockedExisting = preview.alreadyInstalled && !preview.isUpdate;
   root.innerHTML = `
     <div class="modal-backdrop" data-close-install></div>
-    <section class="widget-modal install-modal glass-panel" role="dialog" aria-modal="true" aria-label="${operation} ${escapeAttr(preview.displayName)}">
+    <section class="widget-modal install-modal fluent-card" role="dialog" aria-modal="true" aria-label="${operation} ${escapeAttr(preview.displayName)}">
       <header class="modal-head">
         <div class="widget-title-block"><div class="widget-icon"><span class="material-symbols-outlined">extension</span></div><div><h3>${operation} ${escapeHtml(preview.displayName)}</h3><p>${escapeHtml(preview.id)} · ${preview.isUpdate ? `v${escapeHtml(preview.installedVersion)} → ` : ""}v${escapeHtml(preview.version)}</p></div></div>
         <button class="icon-button" data-close-install type="button"><span class="material-symbols-outlined">close</span></button>
       </header>
-      <div class="install-summary">
-        <p>${escapeHtml(preview.description)}</p>
-        <div class="install-meta"><span>Author</span><strong>${escapeHtml(preview.authorName)}</strong><span>Provider</span><strong>${escapeHtml(preview.providerType)}</strong></div>
+      <div class="install-scroll">
+        <div class="install-summary">
+          <p>${escapeHtml(preview.description)}</p>
+          <div class="install-meta"><span>Author</span><strong>${escapeHtml(preview.authorName)}</strong><span>Provider</span><strong>${escapeHtml(preview.providerType)}</strong><span>Renderer</span><strong>${preview.rendererType === "web" ? "Legacy WebView2 UI" : preview.rendererType === "native" ? "Native XAML UI" : "Native DSL"}</strong><span>Çalışma seviyesi</span><strong>${preview.runAs === "administrator" ? "Administrator (UAC)" : "Windows kullanıcısı"}</strong><span>SHA-256</span><code>${escapeHtml(preview.packageSha256)}</code></div>
+        </div>
+        <div class="install-warning-stack">
+          ${preview.rendererType === "web" ? `<div class="install-warning"><strong>Legacy web UI</strong><span>HTML, CSS ve JavaScript ayrı RenderHost içinde çalışır ve daha fazla kaynak kullanabilir.</span></div>` : ""}
+          ${preview.providerType === "process" ? `<div class="install-warning install-warning-critical"><strong>Full-access process</strong><span>Bu paket ayrı bir executable veya script çalıştırır. Tam erişim kapsamı aşağıdaki kritik izinlerde açıklanır.</span></div>` : ""}
+          ${preview.rendererChanged ? `<div class="install-warning"><strong>Renderer changed</strong><span>Bu güncelleme çalışma yüzeyini değiştiriyor ve yeniden onay gerektiriyor.</span></div>` : ""}
+        </div>
+        ${preview.executableFiles?.length ? `<div class="install-executables"><strong>Çalıştırılabilir içerik</strong><ul>${preview.executableFiles.map((file) => `<li><code>${escapeHtml(file)}</code></li>`).join("")}</ul></div>` : ""}
+        <div class="permission-review">
+          <div><span class="material-symbols-outlined">shield</span><div><h4>İstenen izinler</h4><p>Kurulumdan önce bu sürümün erişebileceği alanları inceleyin.</p></div></div>
+          ${permissions.length ? `<ul class="permission-card-list">${permissions.map(installPermissionCard).join("")}</ul>` : `<p class="permission-none">Bu widget ek izin istemiyor.</p>`}
+        </div>
+        <label class="install-enable"><input id="enable-installed-widget" type="checkbox" ${state.installEnable ? "checked" : ""}/><span>${preview.isUpdate ? "Güncellemeden sonra etkin tut" : "Kurulumdan sonra etkinleştir"}</span></label>
+        ${blockedExisting ? `<div class="install-warning">Version ${escapeHtml(preview.installedVersion || "unknown")} is already installed. Updates must have a higher version number.</div>` : ""}
       </div>
-      <div class="permission-review">
-        <div><span class="material-symbols-outlined">shield</span><div><h4>Requested permissions</h4><p>Review what this widget version can access before ${preview.isUpdate ? "updating" : "installing"}.</p></div></div>
-        ${permissions.length ? `<ul>${permissions.map(([key, value]) => `<li><strong>${escapeHtml(permissionLabel(key, value))}</strong></li>`).join("")}</ul>` : `<p class="permission-none">This widget requests no additional permissions.</p>`}
-      </div>
-      <label class="install-enable"><input id="enable-installed-widget" type="checkbox" ${state.installEnable ? "checked" : ""}/><span>${preview.isUpdate ? "Keep this widget enabled after updating" : "Enable this widget after installation"}</span></label>
-      ${blockedExisting ? `<div class="install-warning">Version ${escapeHtml(preview.installedVersion || "unknown")} is already installed. Updates must have a higher version number.</div>` : ""}
       <footer class="modal-actions">
-        <button class="secondary-action" data-close-install type="button">Cancel</button>
-        <button class="gradient-action" id="confirm-widget-install" type="button" ${blockedExisting ? "disabled" : ""}><span class="material-symbols-outlined">${preview.isUpdate ? "sync" : "download"}</span><span>Accept & ${operation}</span></button>
+        <button class="secondary-action" data-close-install type="button">Vazgeç</button>
+        <button class="accent-action" id="confirm-widget-install" type="button" ${blockedExisting ? "disabled" : ""}><span class="material-symbols-outlined">${preview.isUpdate ? "sync" : "download"}</span><span>Onayla ve ${preview.isUpdate ? "güncelle" : "kur"}</span></button>
       </footer>
     </section>`;
   bindInstallModal();
@@ -1372,6 +1532,8 @@ function closeInstallModal() {
   state.installPreview = null;
   state.installError = "";
   state.installSource = "";
+  state.installAdvertisedPermissions = null;
+  state.installOptionalGrants = [];
   renderInstallModal();
 }
 
@@ -1382,14 +1544,35 @@ function bindInstallModal() {
   document.getElementById("enable-installed-widget")?.addEventListener("change", (event) => {
     state.installEnable = event.target.checked;
   });
+  document.querySelectorAll("[data-optional-permission]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const permissionId = input.dataset.optionalPermission;
+      state.installOptionalGrants = input.checked
+        ? [...new Set([...state.installOptionalGrants, permissionId])]
+        : state.installOptionalGrants.filter((id) => id !== permissionId);
+    });
+  });
   document.getElementById("confirm-widget-install")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    const source = state.installSource;
     const preview = state.installPreview;
     const enableAfter = state.installEnable;
+    let runtimeUnloaded = false;
     try {
-      const id = await invoke("install_community_widget", { source, approvedPermissions: true, replaceExisting: Boolean(preview?.isUpdate) });
+      if (preview?.isUpdate) {
+        setStatus("Stopping the widget runtime for a safe update…");
+        await invoke("control_runtime", { action: "unload" });
+        runtimeUnloaded = true;
+      }
+      const id = await invoke("install_community_widget", {
+        reviewToken: preview.reviewToken,
+        grantedOptionalPermissions: state.installOptionalGrants,
+        replaceExisting: Boolean(preview?.isUpdate),
+      });
+      if (runtimeUnloaded) {
+        await invoke("control_runtime", { action: "load" });
+        runtimeUnloaded = false;
+      }
       closeInstallModal();
       setStatus(`${id} ${preview?.isUpdate ? "updated" : "installed"}; validating…`);
       setTimeout(async () => {
@@ -1409,6 +1592,9 @@ function bindInstallModal() {
         } catch (error) { setStatus(`Installed, but catalog refresh failed: ${error}`); }
       }, 1200);
     } catch (error) {
+      if (runtimeUnloaded) {
+        try { await invoke("control_runtime", { action: "load" }); } catch {}
+      }
       state.installError = String(error);
       state.installPreview = null;
       renderInstallModal();
@@ -1425,7 +1611,7 @@ function widgetSettingsModal(id) {
   state.settings.activeDesign = wasActive;
   return `
     <div class="modal-backdrop" data-close-modal></div>
-    <section class="widget-modal glass-panel" style="--accent:${catalog.accent}" role="dialog" aria-modal="true" aria-label="${escapeAttr(catalog.title)} settings">
+    <section class="widget-modal fluent-card" style="--accent:${catalog.accent}" role="dialog" aria-modal="true" aria-label="${escapeAttr(catalog.title)} settings">
       <header class="modal-head">
         <div class="widget-title-block">
           <div class="widget-icon"><span class="material-symbols-outlined filled">${catalog.icon}</span></div>
@@ -1438,10 +1624,6 @@ function widgetSettingsModal(id) {
           <span class="material-symbols-outlined">close</span>
         </button>
       </header>
-
-      <div class="modal-preview">
-        ${widgetRuntime(catalog.id).preview}
-      </div>
 
       <div class="modal-settings">
         ${settingToggle("enabled", "Enable Widget", widget.enabled, "widget")}
@@ -1456,7 +1638,7 @@ function widgetSettingsModal(id) {
           <span class="material-symbols-outlined">tune</span>
           <span>Full Settings</span>
         </button>
-        <button class="gradient-action" id="save-widget-modal" type="button">
+        <button class="accent-action" id="save-widget-modal" type="button">
           <span class="material-symbols-outlined">save</span>
           <span>Save</span>
         </button>
@@ -1477,7 +1659,7 @@ function runtimeControlPanel() {
           <span class="material-symbols-outlined">eject</span>
           <span>Unload</span>
         </button>
-        <button class="gradient-action" data-runtime-action="load" type="button">
+        <button class="accent-action" data-runtime-action="load" type="button">
           <span class="material-symbols-outlined">play_arrow</span>
           <span>Load</span>
         </button>
@@ -1485,105 +1667,6 @@ function runtimeControlPanel() {
       <p id="runtime-control-status"></p>
     </section>
   `;
-}
-
-function widgetRuntime(id) {
-  const dynamic = widgetById(id);
-  if (dynamic?.local) {
-    const markup = dynamicPreviewNode(dynamic.layout, widgetState(id).settings || {});
-    return {
-      preview: `<div class="native-preview-stage"><div class="native-widget dynamic-widget" style="width:${Number(dynamic.width || 96)}px;height:${Number(dynamic.height || 24)}px">${markup}</div></div>`,
-      taskbar: `<div class="dynamic-widget">${markup}</div>`,
-    };
-  }
-  if (id.startsWith("system-")) return systemWidgetRuntime(id);
-  if (id === "weather-static") {
-    return {
-      preview: `<div class="native-preview-stage"><div class="native-widget weather-static"><div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Izmir")}</strong><small>21:24 • 15/07</small></div><strong class="weather-temp">26°</strong><img src="./assets/weather/rain.png" alt="" /></div></div>`,
-      taskbar: `<div class="weather-text"><strong>${escapeHtml(state.settings.weatherCity || "Istanbul")}</strong><small>21:24 - Clear</small></div><strong class="weather-temp">26 deg</strong><span class="material-symbols-outlined filled">light_mode</span>`,
-    };
-  }
-  if (id === "discord-voice") {
-    return {
-      preview: `<div class="native-preview-stage"><div class="native-widget discord-voice"><span class="discord-avatar-frame"><i></i></span><span class="discord-avatar-frame speaking"><i></i></span><span class="discord-avatar-frame"><i></i></span></div></div>`,
-      taskbar: `<span class="avatar-mini active"></span><span class="avatar-mini speaking"></span><span class="avatar-mini active"></span>`,
-    };
-  }
-  if (id === "media-player") {
-    const media = state.mediaStatus || {};
-    const mediaTitle = media.title || "No media";
-    const mediaArtist = media.artist || "Open a player";
-    const darkMode = state.settings.mediaDarkMode !== false;
-    return {
-      preview: `<div class="native-preview-stage"><div class="native-widget media-player ${darkMode ? "dark" : "light"}"><img class="native-cover" src="./assets/widgets/media_cover.png" alt="" /><div class="media-copy"><strong>${escapeHtml(mediaTitle)}</strong><small>${escapeHtml(mediaArtist)}</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span></div></div>`,
-      taskbar: `<span class="album-dot"></span><div class="media-copy"><strong>Now Playing</strong><small>System media</small></div><span class="media-play"><span class="material-symbols-outlined filled">play_arrow</span></span>`,
-    };
-  }
-  if (id === "steam-download") {
-    return {
-      preview: `<div class="native-preview-stage"><div class="native-widget steam-download"><span class="native-cover steam-cover"></span><div class="steam-copy"><strong>Steam Downloads</strong><small>Indirme yok</small></div><div class="steam-metric"><b>--</b><i><em></em></i></div></div></div>`,
-      taskbar: `<span class="steam-art mini"></span><div class="steam-copy"><strong>Cyberpunk 2077</strong><small>8 min remaining</small></div><div class="steam-metric"><b>42%</b><i><em></em></i></div>`,
-    };
-  }
-  return {
-    preview: `<div class="native-preview-stage"><div class="native-widget codex-status"><div class="codex-line"><strong>Antigravity</strong><span class="native-state-icon">&#xE73E;</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div></div></div>`,
-    taskbar: `<div class="codex-line"><strong>Antigravity</strong><span class="material-symbols-outlined">terminal</span><small>READY</small></div><i class="quota-bar"><em></em></i><div class="codex-metrics"><span>Reset 2h</span><span>Week 61%</span></div>`,
-  };
-}
-
-function dynamicPreviewNode(node, settings) {
-  if (!node || typeof node !== "object") return "--";
-  const type = node.type;
-  if (type === "row" || type === "column") return `<span style="display:flex;flex-direction:${type === "row" ? "row" : "column"};gap:${clampNumber(node.gap, 0, 24, 0)}px;align-items:center">${(node.children || []).map((child) => dynamicPreviewNode(child, settings)).join("")}</span>`;
-  if (type === "text") {
-    const segments = Array.isArray(node.segments) ? node.segments : [node];
-    const text = segments.map((segment) => segment.text || (String(segment.bind || "").startsWith("settings.") ? settings[String(segment.bind).slice(9)] ?? "--" : String(segment.bind || "").endsWith("time") ? new Date().toLocaleTimeString() : "--")).join("");
-    return `<span style="font-size:${clampNumber(node.fontSize, 8, 18, 10)}px;color:${node.color === "systemAccent" ? "#2986cc" : escapeAttr(node.color || "#fff")}">${escapeHtml(text)}</span>`;
-  }
-  if (type === "icon") return `<span class="material-symbols-outlined" style="color:${node.color === "systemAccent" ? "#2986cc" : escapeAttr(node.color || "#fff")}">extension</span>`;
-  if (type === "spacer") return `<span style="display:block;width:${clampNumber(node.width, 0, 96, 3)}px;height:${clampNumber(node.height, 0, 48, 1)}px"></span>`;
-  if (type === "divider") return `<i style="display:block;width:1px;height:${clampNumber(node.height, 1, 48, 16)}px;background:#66fff"></i>`;
-  if (type === "bar" || type === "progress" || type === "sparkline") return `<i class="quota-bar" style="width:${clampNumber(node.width, 8, 240, 32)}px"><em style="width:55%"></em></i>`;
-  if (type === "pie") return `<i class="xmeter-pie" style="--a:55;--b:0"></i>`;
-  return `<span>◇</span>`;
-}
-
-function systemWidgetRuntime(id) {
-  const widget = widgetState(id);
-  const values = widget.settings || {};
-  const accent = "#2986cc";
-  const resolve = (value, fallback) => String(value || fallback).toLowerCase() === "systemaccent" ? accent : value || fallback;
-  const defaults = id === "system-cpu"
-    ? { mode: "bar", first: resolve(values.userColor, accent), second: resolve(values.systemColor, "#fff"), outline: resolve(values.outlineColor, "#fff") }
-    : id === "system-storage"
-      ? { mode: "text", first: resolve(values.readColor, "#fff"), second: resolve(values.writeColor, "#fff"), outline: resolve(values.outlineColor, "#fff") }
-      : id === "system-network"
-        ? { mode: "text", first: resolve(values.sendColor, accent), second: resolve(values.receiveColor, accent), outline: resolve(values.outlineColor, "#fff") }
-        : { mode: "pie", first: resolve(values.usedColor, accent), second: "transparent", outline: resolve(values.outlineColor, accent) };
-  const mode = values.displayMode || defaults.mode;
-  const coreValues = [[18, 4], [42, 7], [35, 6], [9, 3], [54, 8], [31, 5], [47, 7], [23, 4]];
-  const perCore = id === "system-cpu" && values.showIndividualCores !== false;
-  const cores = values.combineLogicalCores ? coreValues.reduce((rows, value, index) => {
-    if (index % 2 === 0) rows.push([value[0], value[1]]); else { rows.at(-1)[0] = Math.round((rows.at(-1)[0] + value[0]) / 2); rows.at(-1)[1] = Math.round((rows.at(-1)[1] + value[1]) / 2); } return rows;
-  }, []) : coreValues;
-  const split = values.separateUtilization !== false;
-  const cpuColor = resolve(values.cpuColor, accent);
-  const style = `--primary:${escapeAttr(split ? defaults.first : cpuColor)};--secondary:${escapeAttr(defaults.second)};--meter-outline:${escapeAttr(defaults.outline)}`;
-  let meter = "";
-  if (mode === "text") {
-    if (perCore) meter = `<span class="xmeter-core-text">${cores.map(([user, system]) => `<i><b>${split ? system : user + system}%</b><small>${split ? `${user}%` : ""}</small></i>`).join("")}</span>`;
-    else if (id === "system-storage") meter = `<span class="xmeter-rate-lines"><span><b>24 MB/s</b><i>▲</i></span><span><small>8 MB/s</small><i>▼</i></span></span>`;
-    else if (id === "system-network") meter = `<span class="xmeter-rate-lines"><span><b>2 MB/s</b><i>▲</i></span><span><small>12 MB/s</small><i>▼</i></span></span>`;
-    else meter = `<span class="xmeter-single-text">${id === "system-memory" ? "64%" : "45%"}</span>`;
-  } else if (mode === "bar") {
-    const metrics = perCore ? cores : id === "system-storage" ? [[57, 18]] : id === "system-network" ? [[16, 42]] : id === "system-memory" ? [[64, 0]] : [[37, 8]];
-    meter = `<span class="xmeter-bars">${metrics.map(([first, second]) => `<i class="xmeter-vbar" style="--a:${first};--b:${split || id !== "system-cpu" ? second : 0}"><em></em><b></b></i>`).join("")}</span>`;
-  } else {
-    const metrics = perCore ? cores : id === "system-storage" ? [[57, 18]] : id === "system-network" ? [[16, 42]] : id === "system-memory" ? [[64, 0]] : [[37, 8]];
-    meter = `<span class="xmeter-pies">${metrics.map(([first, second]) => `<i class="xmeter-pie" style="--a:${first};--b:${split || id !== "system-cpu" ? second : 0}"></i>`).join("")}</span>`;
-  }
-  const markup = `<div class="native-widget system-meter ${id} ${mode}" style="${style}">${meter}</div>`;
-  return { preview: `<div class="native-preview-stage">${markup}</div>`, taskbar: markup };
 }
 
 function statusRow(label, value) {
@@ -1623,19 +1706,29 @@ function bindLibraryPage() {
 }
 
 function bindWidgetButtons() {
-  document.querySelectorAll("[data-toggle-widget]").forEach((button) => {
-    button.onclick = (event) => {
+  document.querySelectorAll(".widget-toggle-control").forEach((label) => {
+    label.onclick = (event) => event.stopPropagation();
+  });
+  document.querySelectorAll("[data-toggle-widget]").forEach((control) => {
+    control.onclick = (event) => {
       event.stopPropagation();
-      const id = button.dataset.toggleWidget;
+      const id = control.dataset.toggleWidget;
       const widget = widgetState(id);
       const manifest = widgetById(id);
       if (!widget.enabled && manifest?.local) {
-        const requested = Object.entries(manifest.permissions || {})
-          .filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value));
+        const requested = permissionEntries(manifest.permissions);
         if (requested.length) {
-          const details = requested.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`).join("\n");
-          if (!window.confirm(`This local/unverified widget requests:\n\n${details}\n\nEnable and approve these permissions?`)) return;
+          const details = requested.map(permissionLabel).join("\n");
+          if (!window.confirm(`This local/unverified widget requests:\n\n${details}\n\nEnable and approve these permissions?`)) {
+            control.checked = false;
+            return;
+          }
           widget.settings._permissionsApproved = true;
+        }
+        if (!widget.settings._positionInitialized) {
+          widget.positionPct = availableCommunityPosition(widget);
+          widget.moveX = 0;
+          widget.settings._positionInitialized = true;
         }
       }
       widget.enabled = !widget.enabled;
@@ -1669,14 +1762,8 @@ function bindWidgetButtons() {
 }
 
 function bindRotationPage() {
-  bindInputs();
+  bindInputs(document.getElementById("page"));
   bindSequenceDragAndDrop();
-  document.querySelectorAll("[data-preview-mode]").forEach((button) => {
-    button.onclick = () => {
-      state.previewMode = button.dataset.previewMode;
-      render();
-    };
-  });
   document.querySelectorAll("[data-move]").forEach((button) => {
     button.onclick = () => {
       const id = button.dataset.move;
@@ -1779,12 +1866,13 @@ function bindWidgetModal() {
     });
     setDirty(true); scheduleAutosave(); setStatus(`Created ${instanceId}`); render();
   });
-  bindInputs();
+  bindInputs(document.getElementById("widget-modal-root"), state.modalWidgetId);
   bindSystemMeterTabs();
   document.querySelectorAll("[data-close-modal]").forEach((button) => {
     button.onclick = () => closeWidgetModal();
   });
   bindRuntimeControls();
+  bindDiscordVoiceHelper(document.getElementById("widget-modal-root"));
   document.querySelector("[data-open-full-settings]")?.addEventListener("click", (event) => {
     state.settings.activeDesign = event.currentTarget.dataset.openFullSettings;
     state.modalWidgetId = "";
@@ -1825,10 +1913,15 @@ async function runRuntimeAction(action) {
 }
 
 function bindSettingsPage() {
-  bindInputs();
+  bindInputs(document.getElementById("page"));
   bindWidgetButtons();
   bindSystemMeterTabs();
   bindRuntimeControls();
+  bindDiscordVoiceHelper(document.getElementById("page"));
+  document.getElementById("active-widget-select")?.addEventListener("change", (event) => {
+    state.settings.activeDesign = event.target.value;
+    render();
+  });
   document.getElementById("save-settings")?.addEventListener("click", () => saveSettings());
   document.getElementById("open-packs")?.addEventListener("click", async () => {
     try {
@@ -1844,6 +1937,7 @@ function bindSettingsPage() {
       state.settings = mergeSettings(loaded.settings || {});
       state.updateStatus = loaded.updateStatus || {};
       state.mediaStatus = loaded.mediaStatus || {};
+      state.voiceHelperInstalled = Boolean(loaded.voiceHelperInstalled);
       setDirty(false);
       setStatus("Settings reloaded");
       render();
@@ -1851,6 +1945,58 @@ function bindSettingsPage() {
       setStatus(`Reset failed: ${error}`);
     }
   });
+}
+
+function bindDiscordVoiceHelper(root = document) {
+  root?.querySelectorAll("[data-install-voice-helper]").forEach((button) => button.addEventListener("click", async () => {
+    state.voiceHelperBusy = true;
+    setStatus("Waiting for Windows approval...");
+    render();
+    try {
+      await invoke("install_voice_helper");
+      if (!await waitForVoiceHelper(true)) {
+        throw new Error("The helper was not installed. The Windows approval may have been cancelled.");
+      }
+      state.settings.discordRealTimeVoiceEnabled = true;
+      setDirty(true);
+      await saveSettings("Instant speaking detection enabled");
+    } catch (error) {
+      setStatus(`Voice helper setup failed: ${error}`);
+    } finally {
+      state.voiceHelperBusy = false;
+      render();
+    }
+  }));
+
+  root?.querySelectorAll("[data-remove-voice-helper]").forEach((button) => button.addEventListener("click", async () => {
+    state.voiceHelperBusy = true;
+    state.settings.discordRealTimeVoiceEnabled = false;
+    await saveSettings("Instant speaking detection disabled");
+    setStatus("Waiting for Windows approval...");
+    render();
+    try {
+      await invoke("uninstall_voice_helper");
+      if (!await waitForVoiceHelper(false)) {
+        throw new Error("The helper is still installed. The Windows approval may have been cancelled.");
+      }
+      setStatus("Instant speaking helper removed");
+    } catch (error) {
+      setStatus(`Voice helper removal failed: ${error}`);
+    } finally {
+      state.voiceHelperBusy = false;
+      render();
+    }
+  }));
+}
+
+async function waitForVoiceHelper(expected) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const loaded = await invoke("load_state");
+    state.voiceHelperInstalled = Boolean(loaded.voiceHelperInstalled);
+    if (state.voiceHelperInstalled === expected) return true;
+  }
+  return false;
 }
 
 function bindRuntimeControls() {
@@ -1904,8 +2050,8 @@ function bindUpdatesPage() {
   });
 }
 
-function bindInputs() {
-  document.querySelectorAll("[data-color-target]").forEach((input) => {
+function bindInputs(root = document, instanceDesign = "") {
+  root?.querySelectorAll("[data-color-target]").forEach((input) => {
     input.addEventListener("input", () => {
       const textInput = document.querySelector(`[data-instance-setting="${input.dataset.colorTarget}"]`);
       if (!textInput) return;
@@ -1913,7 +2059,7 @@ function bindInputs() {
       textInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
   });
-  document.querySelectorAll("[data-setting]").forEach((input) => {
+  root?.querySelectorAll("[data-setting]").forEach((input) => {
     input.addEventListener("input", () => {
       const key = input.dataset.setting;
       if (input.type === "checkbox") {
@@ -1929,9 +2075,9 @@ function bindInputs() {
       renderFloatingTaskbar();
     });
   });
-  document.querySelectorAll("[data-widget-setting]").forEach((input) => {
+  root?.querySelectorAll("[data-widget-setting]").forEach((input) => {
     input.addEventListener("input", () => {
-      const widget = activeWidget();
+      const widget = instanceDesign ? widgetState(instanceDesign) : activeWidget();
       const key = input.dataset.widgetSetting;
       if (input.type === "checkbox") {
         widget[key] = input.checked;
@@ -1952,9 +2098,9 @@ function bindInputs() {
       renderFloatingTaskbar();
     });
   });
-  document.querySelectorAll("[data-instance-setting]").forEach((input) => {
+  root?.querySelectorAll("[data-instance-setting]").forEach((input) => {
     input.addEventListener("input", () => {
-      const widget = activeWidget();
+      const widget = instanceDesign ? widgetState(instanceDesign) : activeWidget();
       widget.settings ||= {};
       const key = input.dataset.instanceSetting;
       widget.settings[key] = input.type === "checkbox"
@@ -2048,6 +2194,7 @@ async function refreshState() {
     const loaded = await invoke("load_state");
     state.updateStatus = loaded.updateStatus || {};
     state.mediaStatus = loaded.mediaStatus || {};
+    state.voiceHelperInstalled = Boolean(loaded.voiceHelperInstalled);
     state.systemSources = loaded.systemSources || state.systemSources;
     if (updateInstallRequested && (state.updateStatus?.state === "ready" || state.updateStatus?.installerPath)) {
       autoLaunchDownloadedInstaller();
@@ -2108,17 +2255,6 @@ async function loadReleaseTimeline(force = false) {
   state.releaseTimelineState = "ready";
   state.releaseTimeline = [];
   if (state.page === "updates") render();
-}
-
-function startPreviewLoop() {
-  clearInterval(previewTimer);
-  previewTimer = setInterval(() => {
-    const queue = state.settings.rotationEnabled ? state.settings.rotationDesigns : enabledWidgets();
-    if (!queue.length) return;
-    state.previewIndex = (state.previewIndex + 1) % queue.length;
-    if (state.page === "rotation") renderPage();
-    renderFloatingTaskbar();
-  }, Math.max(5, state.settings.rotationIntervalSecs || 30) * 1000);
 }
 
 function setDirty(value) {

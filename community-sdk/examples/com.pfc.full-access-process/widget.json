@@ -1,0 +1,57 @@
+{
+  "$schema": "../../schemas/widget-v4.schema.json",
+  "schemaVersion": 4,
+  "id": "com.pfc.full-access-process",
+  "version": "1.0.0",
+  "minHostVersion": "0.5.4",
+  "displayName": "Full Access Process",
+  "description": "Reference widget for an unrestricted Windows process provider and web actions.",
+  "author": {
+    "name": "PFC",
+    "website": "https://pfcsoft.com"
+  },
+  "category": "Developer",
+  "size": {
+    "width": 210,
+    "height": 32
+  },
+  "renderer": {
+    "type": "web",
+    "entry": "ui/index.html",
+    "expandedSize": {
+      "width": 420,
+      "height": 220
+    },
+    "activation": "hover"
+  },
+  "runtime": {
+    "type": "process",
+    "entry": "provider.ps1",
+    "protocol": "json-lines-v1",
+    "lifetime": "persistent",
+    "runAs": "user",
+    "workingDirectory": "package"
+  },
+  "permissions": {
+    "required": [
+      {
+        "id": "system.fullAccess",
+        "reason": "Runs the packaged PowerShell provider with unrestricted access under the installing Windows user."
+      },
+      {
+        "id": "process.list",
+        "reason": "Counts running processes for the widget display."
+      },
+      {
+        "id": "process.start",
+        "scope": [
+          "taskmgr.exe"
+        ],
+        "reason": "Opens Task Manager when the user presses the widget button."
+      }
+    ],
+    "optional": []
+  },
+  "supportsMultipleInstances": true,
+  "settings": []
+}

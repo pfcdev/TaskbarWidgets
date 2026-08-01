@@ -1,4 +1,9 @@
+global using System.IO;
+global using System.Net.Http;
+
 using System.Text.Json;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using TaskbarWidgets.Loader;
 using TaskbarWidgets.Loader.Core;
 
@@ -13,8 +18,18 @@ Run("system metric math", TestSystemMetricMath);
 Run("system meter settings reset", TestSystemMeterSettingsReset);
 Run("system PDH sampler", TestSystemPdhSampler);
 Run("community widget validation", TestCommunityWidgetValidation);
+Run("web widget validation", TestWebWidgetValidation);
+Run("native expanded widget validation", TestNativeWidgetValidation);
+Run("schema v4 permission and process validation", TestSchemaV4Validation);
+Run("cross-runtime content hash contract", TestContentHashContract);
+Run("full-access json-lines protocol", TestFullAccessProtocolSerialization);
 Run("community widget update version", TestCommunityWidgetUpdateVersion);
 Run("unsafe instance id normalization", TestUnsafeInstanceIdNormalization);
+Run("notification icon native entry point", TestNotificationIconEntryPoint);
+Run("notification icon Explorer recovery", TestNotificationIconExplorerRecovery);
+Run("taskbar UI Automation button scan", TestTaskbarUiaButtonScanContract);
+Run("local Discord voice detection", TestLocalDiscordVoiceDetectionContract);
+Run("Parking Lot native drag and drop contract", TestParkingLotContract);
 
 if (failures.Count > 0)
 {
@@ -36,6 +51,148 @@ void Run(string name, Action test)
     {
         failures.Add($"FAIL {name}: {ex.Message}");
     }
+}
+
+void TestNotificationIconEntryPoint()
+{
+    var method = typeof(NotificationAreaIcon).GetMethod(
+        "ShellNotifyIcon",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    var import = method?.GetCustomAttribute<DllImportAttribute>();
+    Assert(import is not null, "ShellNotifyIcon import missing");
+    Assert(import!.EntryPoint == "Shell_NotifyIconW", "wrong Shell_NotifyIcon entry point");
+    Assert(import.ExactSpelling, "Shell_NotifyIcon import must use exact spelling");
+}
+
+void TestParkingLotContract()
+{
+    var manifestPath = Path.Combine(
+        Directory.GetCurrentDirectory(), "widgets", "parking-lot", "widget.json");
+    Assert(File.Exists(manifestPath), "Parking Lot manifest missing");
+    using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+    Assert(manifest.RootElement.GetProperty("id").GetString() == "parking-lot",
+        "Parking Lot manifest id mismatch");
+    Assert(manifest.RootElement.GetProperty("defaultSize").GetProperty("width").GetInt32() == 64,
+        "Parking Lot compact width changed");
+    Assert(manifest.RootElement.GetProperty("defaultSize").GetProperty("height").GetInt32() == 32,
+        "Parking Lot compact height changed");
+
+    var sourcePath = Path.Combine(
+        Directory.GetCurrentDirectory(), "src", "native", "taskbar-hook",
+        "taskbar_widgets_hook.cpp");
+    var source = File.ReadAllText(sourcePath);
+    Assert(source.Contains("DRAG\\nHERE", StringComparison.Ordinal),
+        "Parking Lot empty prompt missing");
+    Assert(source.Contains("ReArmParkingLotDropTarget(root)", StringComparison.Ordinal),
+        "Parking Lot clear transition does not re-arm its drop target");
+    Assert(source.Contains("StandardDataFormats::StorageItems", StringComparison.Ordinal),
+        "Parking Lot does not accept files and folders");
+    Assert(source.Contains("StandardDataFormats::Text", StringComparison.Ordinal) &&
+           source.Contains("StandardDataFormats::WebLink", StringComparison.Ordinal),
+        "Parking Lot text/link formats missing");
+    Assert(source.Contains("SetStorageItems", StringComparison.Ordinal),
+        "Parking Lot cannot export parked files");
+}
+
+void TestNotificationIconExplorerRecovery()
+{
+    var sourcePath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "src", "loader", "NotificationAreaIcon.cs");
+    Assert(File.Exists(sourcePath), "notification icon source missing");
+    var source = File.ReadAllText(sourcePath);
+    Assert(source.Contains("RegisterWindowMessage(\"TaskbarCreated\")", StringComparison.Ordinal),
+        "Explorer taskbar recreation message is not registered");
+    Assert(source.Contains("message == _taskbarCreatedMessage", StringComparison.Ordinal),
+        "Explorer taskbar recreation message is not handled");
+    Assert(source.Contains("ShellNotifyIcon(NimModify", StringComparison.Ordinal),
+        "notification icon registration health is not checked");
+    Assert(source.Contains("RegistrationHealthTimerId", StringComparison.Ordinal),
+        "notification icon registration retry timer is missing");
+}
+
+void TestTaskbarUiaButtonScanContract()
+{
+    var sourcePath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "src", "native", "taskbar-hook", "taskbar_widgets_hook.cpp");
+    Assert(File.Exists(sourcePath), "native hook source missing");
+    var source = File.ReadAllText(sourcePath);
+    Assert(source.Contains("ElementFromHandle(taskbar", StringComparison.Ordinal),
+        "Shell_TrayWnd is not used as the UIA root");
+    Assert(source.Contains("UIA_ButtonControlTypeId", StringComparison.Ordinal),
+        "UIA scan is not filtering Button controls");
+    Assert(source.Contains("TreeScope_Descendants", StringComparison.Ordinal),
+        "UIA scan does not include descendant app buttons");
+    Assert(source.Contains("get_CurrentBoundingRectangle", StringComparison.Ordinal),
+        "UIA button geometry is not read");
+}
+
+void TestLocalDiscordVoiceDetectionContract()
+{
+    Assert(
+        DiscordLocalVoiceProbe.ParseActiveChannelName("Voice Room | Example Server - Discord") ==
+        "Voice Room",
+        "Discord channel title parsing failed");
+    Assert(
+        DiscordLocalVoiceProbe.ParseActiveChannelName("Discord") == "Discord",
+        "plain Discord title parsing failed");
+    Assert(
+        DiscordLocalVoiceProbe.StableUserId("Example User") ==
+        DiscordLocalVoiceProbe.StableUserId("example user"),
+        "local Discord user id is not case stable");
+    Assert(
+        DiscordLocalVoiceProbe.StableUserId("Example User") !=
+        DiscordLocalVoiceProbe.StableUserId("Example User", 1),
+        "duplicate local Discord users collide");
+    var webRtc = DiscordWebRtcLogProbe.Parse("""
+        [2026-08-01 16:54:39.294] [1] (connection.cpp:1325): [default] Inbound stats for user: 123, audio ssrc: 10, packets received: 44, lost: 0, audio frames normal: 22, silent: 100, expand: 0,
+        [2026-08-01 16:54:39.294] [1] (connection.cpp:1363): [default] Outbound audio stats for user: 456, audio ssrc: 11, packets sent: 55, packets skipped: 2,
+        """);
+    Assert(webRtc.Users.Select(user => user.Id).SequenceEqual(["123", "456"]),
+        "Discord WebRTC user order is not parsed");
+    Assert(webRtc.Users[1].Local, "local Discord WebRTC user is not identified");
+    Assert(webRtc.Users.Select(user => user.Ssrc).SequenceEqual([10u, 11u]),
+        "Discord WebRTC SSRC mapping is not parsed");
+
+    var workerPath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "widgets", "discord-voice", "provider", "DiscordVoiceWorker.cs");
+    var manifestPath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "widgets", "discord-voice", "widget.json");
+    var worker = File.ReadAllText(workerPath);
+    var manifest = File.ReadAllText(manifestPath);
+    Assert(!worker.Contains("discord-ipc", StringComparison.OrdinalIgnoreCase),
+        "official Discord RPC pipe remains in the worker");
+    Assert(!worker.Contains("AUTHORIZE", StringComparison.Ordinal),
+        "official Discord OAuth flow remains in the worker");
+    Assert(!manifest.Contains("clientSecret", StringComparison.Ordinal),
+        "Discord client secret remains in widget settings");
+
+    var nativePath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "src", "native", "taskbar-hook", "taskbar_widgets_hook.cpp");
+    var native = File.ReadAllText(nativePath);
+    Assert(!native.Contains("user.speaking ? 1.0 : 0.38", StringComparison.Ordinal),
+        "inactive Discord avatars are still dimmed");
+    var localProbePath = Path.Combine(
+        Directory.GetCurrentDirectory(),
+        "widgets", "discord-voice", "provider", "DiscordLocalVoiceProbe.cs");
+    var localProbe = File.ReadAllText(localProbePath);
+    Assert(!localProbe.Contains("GetPixel", StringComparison.Ordinal) &&
+           !localProbe.Contains("BitBlt", StringComparison.Ordinal) &&
+           !localProbe.Contains("CaptureAvatar", StringComparison.Ordinal),
+        "Discord monitor-pixel capture remains in the provider");
+    Assert(worker.Contains("Muted = user.Muted", StringComparison.Ordinal),
+        "Discord mute state is not exported");
+    Assert(worker.Contains("Streaming = user.Streaming", StringComparison.Ordinal),
+        "Discord stream state is not exported");
+    Assert(native.Contains("user.muted || user.deafened", StringComparison.Ordinal),
+        "Discord mute/deafen state is not rendered");
+    Assert(native.Contains("TaskbarWidgetsDiscordChannelName", StringComparison.Ordinal) &&
+           native.Contains("discordDisplayMode", StringComparison.Ordinal),
+        "Discord voice-room theme is missing");
 }
 
 void TestLegacyMigration()
@@ -283,6 +440,256 @@ void TestCommunityWidgetUpdateVersion()
     Assert(CommunityWidgetUpdateChecker.IsNewerVersion("1.10.0", "1.9.9"), "numeric minor update not detected");
     Assert(!CommunityWidgetUpdateChecker.IsNewerVersion("1.0.0", "1.0.0"), "same version accepted as update");
     Assert(!CommunityWidgetUpdateChecker.IsNewerVersion("invalid", "1.0.0"), "invalid version accepted");
+}
+
+void TestWebWidgetValidation()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"com.example.web-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(Path.Combine(directory, "ui"));
+    try
+    {
+        var id = Path.GetFileName(directory).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "ui", "index.html"), "<!doctype html><title>Safe</title>");
+        File.WriteAllText(Path.Combine(directory, "widget.json"), $$"""
+        {
+          "schemaVersion": 3,
+          "id": "{{id}}",
+          "version": "1.0.0",
+          "minHostVersion": "0.5.0",
+          "displayName": "Web Test",
+          "description": "Sandbox test widget",
+          "author": { "name": "Test Author", "website": "https://example.com" },
+          "size": { "width": 170, "height": 32 },
+          "renderer": {
+            "type": "web",
+            "entry": "ui/index.html",
+            "expandedSize": { "width": 360, "height": 180 },
+            "activation": "hover"
+          },
+          "entry": { "provider": { "type": "clock", "refreshSeconds": 1 } },
+          "permissions": { "storage": true },
+          "settings": []
+        }
+        """);
+        var valid = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(valid.Valid && valid.Renderer == "web", valid.Error ?? "valid web package rejected");
+        Assert(valid.WebRenderer?.ExpandedWidth == 360, "expanded web size lost");
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"),
+            File.ReadAllText(Path.Combine(directory, "widget.json"))
+                .Replace("ui/index.html", "../outside.html"));
+        var traversal = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!traversal.Valid && traversal.Error?.Contains("relative", StringComparison.OrdinalIgnoreCase) == true,
+            "web entry path traversal accepted");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+void TestNativeWidgetValidation()
+{
+    var directory = Path.Combine(
+        Path.GetTempPath(), $"com.example.native-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var id = Path.GetFileName(directory).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "compact.json"), """
+        { "type": "row", "children": [{ "type": "text", "text": "Native" }] }
+        """);
+        File.WriteAllText(Path.Combine(directory, "expanded.json"), """
+        {
+          "type": "card",
+          "children": [
+            { "type": "text", "bind": "data.value" },
+            { "type": "button", "label": "Close", "action": "$close" }
+          ]
+        }
+        """);
+        File.WriteAllText(Path.Combine(directory, "widget.json"), $$"""
+        {
+          "schemaVersion": 4,
+          "id": "{{id}}",
+          "version": "1.0.0",
+          "minHostVersion": "0.5.4",
+          "displayName": "Native Test",
+          "description": "Validates native compact and expanded layouts.",
+          "author": { "name": "Test" },
+          "size": { "width": 180, "height": 32 },
+          "renderer": {
+            "type": "native",
+            "entry": "compact.json",
+            "expandedEntry": "expanded.json",
+            "expandedSize": { "width": 420, "height": 220 }
+          },
+          "permissions": { "required": [], "optional": [] }
+        }
+        """);
+        var valid = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(valid.Valid && valid.Renderer == "native",
+            valid.Error ?? "native widget rejected");
+        Assert(valid.NativeRenderer?.ExpandedWidth == 420,
+            "native expanded size lost");
+        Assert(valid.ExpandedLayout?["type"]?.GetValue<string>() == "card",
+            "native expanded layout lost");
+
+        File.WriteAllText(Path.Combine(directory, "expanded.json"), """
+        { "type": "button", "label": "Unsafe", "action": "../../run" }
+        """);
+        var unsafeAction = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!unsafeAction.Valid &&
+               unsafeAction.Error?.Contains("safe action", StringComparison.OrdinalIgnoreCase) == true,
+            "unsafe native button action accepted");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+void TestSchemaV4Validation()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"com.example.fullaccess-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(Path.Combine(directory, "ui"));
+    try
+    {
+        var id = Path.GetFileName(directory).ToLowerInvariant();
+        File.WriteAllText(Path.Combine(directory, "ui", "index.html"), "<!doctype html><title>V4</title>");
+        File.WriteAllText(Path.Combine(directory, "provider.ps1"), "Write-Output '{}'");
+        string Manifest(string required, string runAs = "user", string optional = "") => $$"""
+        {
+          "schemaVersion": 4,
+          "id": "{{id}}",
+          "version": "1.0.0",
+          "minHostVersion": "0.5.0",
+          "displayName": "Full Access Test",
+          "description": "Validates schema v4 permissions.",
+          "author": { "name": "Test Author", "website": "https://example.com" },
+          "size": { "width": 170, "height": 32 },
+          "renderer": { "type": "web", "entry": "ui/index.html" },
+          "runtime": {
+            "type": "process",
+            "entry": "provider.ps1",
+            "protocol": "{{(runAs == "administrator" ? "none" : "json-lines-v1")}}",
+            "runAs": "{{runAs}}"
+          },
+          "permissions": {
+            "required": [{{required}}],
+            "optional": [{{optional}}]
+          },
+          "settings": []
+        }
+        """;
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"), Manifest("""
+        {
+          "id": "system.fullAccess",
+          "reason": "Runs the provider selected by the package author."
+        }
+        """));
+        var valid = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(valid.Valid && valid.ManifestSchemaVersion == 4, valid.Error ?? "valid v4 package rejected");
+        Assert(valid.ProcessRuntime?.Protocol == "json-lines-v1", "v4 process runtime lost");
+        Assert(valid.ContentSha256?.Length == 64, "review content hash missing");
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"), Manifest("""
+        {
+          "id": "system.fullAccess",
+          "reason": "Runs the provider selected by the package author."
+        }
+        """, optional: """
+        {
+          "id": "network.internet",
+          "scope": ["api.example.com"],
+          "reason": "Fetches the user's selected public feed."
+        }
+        """));
+        var optionalFullAccess = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!optionalFullAccess.Valid &&
+               optionalFullAccess.Error?.Contains("optional permissions", StringComparison.Ordinal) == true,
+            "full-access process accepted an unenforceable optional permission");
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"), Manifest("""
+        {
+          "id": "system.metrics.read",
+          "scope": ["cpu"],
+          "reason": "Shows CPU usage."
+        }
+        """));
+        var missingFullAccess = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!missingFullAccess.Valid &&
+               missingFullAccess.Error?.Contains("system.fullAccess", StringComparison.Ordinal) == true,
+            "process runtime accepted without full access permission");
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"), Manifest("""
+        {
+          "id": "system.fullAccess",
+          "reason": "Runs the provider selected by the package author."
+        },
+        {
+          "id": "system.fullAccess",
+          "reason": "Duplicate permission must be rejected."
+        }
+        """));
+        var duplicate = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!duplicate.Valid && duplicate.Error?.Contains("more than once", StringComparison.Ordinal) == true,
+            "duplicate v4 permission accepted");
+
+        File.WriteAllText(Path.Combine(directory, "widget.json"), Manifest("""
+        {
+          "id": "system.fullAccess",
+          "reason": "Runs the provider selected by the package author."
+        }
+        """, "administrator"));
+        var missingAdministrator = CommunityWidgetRegistry.ValidateForTool(directory);
+        Assert(!missingAdministrator.Valid &&
+               missingAdministrator.Error?.Contains("system.administrator", StringComparison.Ordinal) == true,
+            "administrator runtime accepted without administrator permission");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+void TestContentHashContract()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"taskbar-widgets-hash-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(Path.Combine(directory, "sub"));
+    try
+    {
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "alpha");
+        File.WriteAllBytes(Path.Combine(directory, "sub", "b.bin"), [0, 1, 255]);
+        Assert(
+            CommunityWidgetRegistry.ComputeContentHashForTool(directory) ==
+            "8a29aa8ea3b60d2ae5f62ea72e7b6cbedcaa1aee31956113610db88072c2caae",
+            "C# installed-content hash contract changed");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+void TestFullAccessProtocolSerialization()
+{
+    var message = new System.Text.Json.Nodes.JsonObject
+    {
+        ["type"] = "initialize",
+        ["instances"] = new System.Text.Json.Nodes.JsonArray(
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["instanceId"] = "com.example.demo",
+                ["settings"] = new System.Text.Json.Nodes.JsonObject()
+            })
+    };
+    var line = CommunityFullTrustSupervisor.SerializeProtocolMessageForTool(message);
+    Assert(!line.Contains('\r') && !line.Contains('\n'), "json-lines message contains a line break");
+    using var document = JsonDocument.Parse(line);
+    Assert(document.RootElement.GetProperty("type").GetString() == "initialize",
+        "json-lines message is not valid JSON");
 }
 
 void TestUnsafeInstanceIdNormalization()

@@ -1,0 +1,80 @@
+{
+  "$schema": "../../schemas/widget-v4.schema.json",
+  "schemaVersion": 4,
+  "id": "com.pfc.neon-sentinel",
+  "version": "1.1.0",
+  "minHostVersion": "0.5.4",
+  "displayName": "Neon Sentinel",
+  "description": "A schema v4 technology demo with live Windows telemetry, an Explorer-native XAML dashboard and full-trust actions.",
+  "author": {
+    "name": "PFC Technology Demo",
+    "website": "https://pfcsoft.com"
+  },
+  "category": "Technology Demo",
+  "size": {
+    "width": 246,
+    "height": 36
+  },
+  "renderer": {
+    "type": "native",
+    "entry": "compact.json",
+    "expandedEntry": "expanded.json",
+    "expandedSize": {
+      "width": 478,
+      "height": 316
+    },
+    "expandDirection": "auto",
+    "activation": "click"
+  },
+  "runtime": {
+    "type": "process",
+    "entry": "provider.ps1",
+    "arguments": [],
+    "protocol": "json-lines-v1",
+    "lifetime": "persistent",
+    "runAs": "user",
+    "workingDirectory": "package"
+  },
+  "permissions": {
+    "required": [
+      {
+        "id": "system.fullAccess",
+        "reason": "Paket içindeki PowerShell telemetry provider'ını Windows kullanıcınızın tam yetkileriyle çalıştırır."
+      },
+      {
+        "id": "system.metrics.read",
+        "scope": [
+          "cpu",
+          "memory",
+          "storage",
+          "network",
+          "uptime"
+        ],
+        "reason": "Görev çubuğunda canlı CPU, bellek, disk, ağ ve çalışma süresi değerlerini gösterir."
+      },
+      {
+        "id": "process.list",
+        "reason": "Beş saniyede bir yalnızca çalışan process sayısını gösterir; process CPU ayrıntılarını taramaz."
+      },
+      {
+        "id": "process.start",
+        "scope": [
+          "taskmgr.exe",
+          "resmon.exe"
+        ],
+        "reason": "Kullanıcı paneldeki düğmelere bastığında Task Manager veya Resource Monitor'ü açar."
+      },
+      {
+        "id": "clipboard.write",
+        "reason": "Yalnızca Copy report düğmesine basıldığında görünen telemetry özetini panoya kopyalar."
+      },
+      {
+        "id": "system.background",
+        "reason": "Widget etkinken düşük öncelikli telemetry provider'ın arka planda çalışarak beş saniyede bir veri üretmesini sağlar."
+      }
+    ],
+    "optional": []
+  },
+  "supportsMultipleInstances": true,
+  "settings": []
+}

@@ -1,0 +1,146 @@
+{
+  "$schema": "../../schemas/layout-v1.schema.json",
+  "type": "card",
+  "width": 454,
+  "height": 292,
+  "padding": 8,
+  "radius": 12,
+  "backgroundColor": "#F0081220",
+  "children": [
+    {
+      "type": "column",
+      "gap": 8,
+      "children": [
+        {
+          "type": "row",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "text": "NEON SENTINEL",
+              "fontSize": 20,
+              "color": "#FFF8FAFC"
+            },
+            {
+              "type": "text",
+              "text": "● LIVE",
+              "fontSize": 10,
+              "color": "#FF4ADE80"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "fontSize": 9,
+          "color": "#FF94A3B8",
+          "segments": [
+            { "bind": "data.machineName" },
+            { "text": " · " },
+            { "bind": "data.userName" },
+            { "text": " · native XAML · 5s" }
+          ]
+        },
+        {
+          "type": "row",
+          "gap": 7,
+          "children": [
+            {
+              "type": "card",
+              "width": 140,
+              "height": 66,
+              "padding": 8,
+              "backgroundColor": "#CC111827",
+              "children": [
+                { "type": "text", "text": "CPU LOAD", "fontSize": 9, "color": "#FF93C5FD" },
+                { "type": "text", "bind": "data.cpuPercent", "format": "percent", "fontSize": 17, "color": "#FF67E8F9" },
+                { "type": "progress", "value": { "bind": "data.cpuPercent" }, "width": 118, "height": 4, "color": "#FF22D3EE" }
+              ]
+            },
+            {
+              "type": "card",
+              "width": 140,
+              "height": 66,
+              "padding": 8,
+              "backgroundColor": "#CC111827",
+              "children": [
+                { "type": "text", "text": "MEMORY", "fontSize": 9, "color": "#FFC4B5FD" },
+                { "type": "text", "bind": "data.memoryPercent", "format": "percent", "fontSize": 17, "color": "#FFA78BFA" },
+                { "type": "progress", "value": { "bind": "data.memoryPercent" }, "width": 118, "height": 4, "color": "#FF8B5CF6" }
+              ]
+            },
+            {
+              "type": "card",
+              "width": 140,
+              "height": 66,
+              "padding": 8,
+              "backgroundColor": "#CC111827",
+              "children": [
+                { "type": "text", "text": "DISK C:", "fontSize": 9, "color": "#FFFDE68A" },
+                { "type": "text", "bind": "data.diskUsedPercent", "format": "percent", "fontSize": 17, "color": "#FFFACC15" },
+                { "type": "progress", "value": { "bind": "data.diskUsedPercent" }, "width": 118, "height": 4, "color": "#FFEAB308" }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "gap": 7,
+          "children": [
+            {
+              "type": "card",
+              "width": 140,
+              "height": 58,
+              "padding": 8,
+              "backgroundColor": "#CC111827",
+              "children": [
+                { "type": "text", "text": "PROVIDER", "fontSize": 9, "color": "#FF93C5FD" },
+                { "type": "text", "bind": "data.providerProcessName", "fontSize": 13, "color": "#FFF8FAFC" }
+              ]
+            },
+            {
+              "type": "card",
+              "width": 140,
+              "height": 58,
+              "padding": 8,
+              "backgroundColor": "#CC111827",
+              "children": [
+                { "type": "text", "text": "NETWORK", "fontSize": 9, "color": "#FF93C5FD" },
+                {
+                  "type": "text",
+                  "fontSize": 13,
+                  "color": "#FFF8FAFC",
+                  "segments": [
+                    { "bind": "data.activeAdapters", "format": "number" },
+                    { "text": " adapters" }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "card",
+              "width": 140,
+              "height": 58,
+              "padding": 8,
+              "backgroundColor": "#CC18152D",
+              "children": [
+                { "type": "text", "text": "UPTIME", "fontSize": 9, "color": "#FFC4B5FD" },
+                { "type": "text", "bind": "data.uptimeText", "fontSize": 13, "color": "#FFF8FAFC" }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "gap": 7,
+          "children": [
+            { "type": "button", "label": "Task Manager", "action": "openTaskManager", "width": 102 },
+            { "type": "button", "label": "Resource Monitor", "action": "openResourceMonitor", "width": 116 },
+            { "type": "button", "label": "Copy report", "action": "copyReport", "width": 96 },
+            { "type": "button", "label": "×", "action": "$close", "width": 36 },
+            { "type": "button", "label": "•••", "action": "$settings", "width": 42 }
+          ]
+        }
+      ]
+    }
+  ]
+}

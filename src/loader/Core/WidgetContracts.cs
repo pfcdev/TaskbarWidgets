@@ -34,7 +34,7 @@ public static class WidgetCommandValidator
     {
         "addAccount", "loginActiveAccount", "deleteActiveAccount", "deleteAccount",
         "switchAccount", "restartIde", "openSettings", "openTaskManager", "mediaToggle",
-        "moveWidget", "quit"
+        "moveWidget", "disableWidget", "communityInvoke", "quit"
     };
 
     public static bool IsValid(WidgetCommand command, long nowUnix)

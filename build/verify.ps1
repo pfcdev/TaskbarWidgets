@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$WebView2SdkRoot = (& (Join-Path $PSScriptRoot "restore-webview2.ps1") -PrintPath | Select-Object -Last 1).Trim()
 
 function Find-CMake {
     $command = Get-Command cmake -ErrorAction SilentlyContinue
@@ -28,6 +29,8 @@ function Find-CMake {
 
 dotnet build (Join-Path $RepoRoot "src\loader\TaskbarWidgets.csproj") -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "Loader build failed." }
+dotnet build (Join-Path $RepoRoot "src\voice-capture\TaskbarWidgets.VoiceCapture.csproj") -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Voice capture helper build failed." }
 dotnet build (Join-Path $RepoRoot "src\widget-host\TaskbarWidgets.WidgetHost.csproj") -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "WidgetHost build failed." }
 dotnet build (Join-Path $RepoRoot "src\twdev\twdev.csproj") -c $Configuration
@@ -37,7 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw "Contract tests failed." }
 
 $cmake = Find-CMake
 $nativeBuild = Join-Path $RepoRoot "artifacts\native-verify"
-& $cmake -S (Join-Path $RepoRoot "src\native") -B $nativeBuild -A x64 -DBUILD_TESTING=ON
+& $cmake -S (Join-Path $RepoRoot "src\native") -B $nativeBuild -A x64 -DBUILD_TESTING=ON "-DWEBVIEW2_SDK_ROOT=$WebView2SdkRoot"
 if ($LASTEXITCODE -ne 0) { throw "Native configure failed." }
 & $cmake --build $nativeBuild --config $Configuration --parallel
 if ($LASTEXITCODE -ne 0) { throw "Native build failed." }

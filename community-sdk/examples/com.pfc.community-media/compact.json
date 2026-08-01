@@ -1,0 +1,108 @@
+{
+  "$schema": "../../schemas/layout-v1.schema.json",
+  "type": "card",
+  "width": 220,
+  "height": 44,
+  "padding": {
+    "left": 12,
+    "top": 7,
+    "right": 11,
+    "bottom": 7
+  },
+  "radius": 9,
+  "backgroundGradient": {
+    "startColor": {
+      "bind": "data.backgroundLeftColor",
+      "fallback": "#FF0F172A"
+    },
+    "endColor": {
+      "bind": "data.backgroundRightColor",
+      "fallback": "#FF111827"
+    }
+  },
+  "children": [
+    {
+      "type": "row",
+      "width": 197,
+      "height": 30,
+      "gap": 0,
+      "children": [
+        {
+          "type": "image",
+          "source": {
+            "bind": "data.coverPath"
+          },
+          "width": 49,
+          "height": 30,
+          "radius": 4,
+          "stretch": "uniformToFill",
+          "backgroundColor": "#FF171B24"
+        },
+        {
+          "type": "spacer",
+          "width": 12,
+          "height": 1
+        },
+        {
+          "type": "column",
+          "width": 112,
+          "height": 30,
+          "gap": 0,
+          "children": [
+            {
+              "type": "text",
+              "bind": "data.title",
+              "width": 112,
+              "height": 16,
+              "fontSize": 11,
+              "fontWeight": "semibold",
+              "marquee": true,
+              "color": {
+                "bind": "data.titleColor",
+                "fallback": "#FFF8FAFC"
+              }
+            },
+            {
+              "type": "text",
+              "bind": "data.artist",
+              "width": 112,
+              "height": 14,
+              "fontSize": 9,
+              "trimming": "characterEllipsis",
+              "color": {
+                "bind": "data.artistColor",
+                "fallback": "#FF94A3B8"
+              }
+            }
+          ]
+        },
+        {
+          "type": "spacer",
+          "width": 5,
+          "height": 1
+        },
+        {
+          "type": "button",
+          "glyph": {
+            "bind": "data.playGlyph",
+            "fallback": ""
+          },
+          "action": "togglePlayback",
+          "width": 18,
+          "height": 18,
+          "padding": 0,
+          "radius": 9,
+          "fontSize": 9,
+          "backgroundColor": {
+            "bind": "data.playButtonColor",
+            "fallback": "#FF334155"
+          },
+          "color": {
+            "bind": "data.playIconColor",
+            "fallback": "#FFCBD5E1"
+          }
+        }
+      ]
+    }
+  ]
+}

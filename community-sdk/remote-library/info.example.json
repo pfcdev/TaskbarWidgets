@@ -9,8 +9,17 @@
     "website": "https://example.com"
   },
   "category": "Time",
+  "renderer": "web",
   "package": "com.example.clock.twidget",
   "sha256": "REPLACE_WITH_THE_64_CHARACTER_PACKAGE_SHA256",
-  "permissions": {},
+  "permissions": {
+    "required": [
+      {
+        "id": "system.fullAccess",
+        "reason": "Runs the packaged provider with the installing user's Windows rights."
+      }
+    ],
+    "optional": []
+  },
   "preview": "preview.png"
 }

@@ -21,6 +21,11 @@ internal static class CodexStatusWorker
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!ProviderActivation.IsEnabled("codex-status"))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                continue;
+            }
             var accountChangeVersion = AccountManager.GetChangeVersion();
             var status = await CollectStatusAsync(AccountManager.GetActiveAccount());
             WriteStatus(status);
@@ -326,7 +331,7 @@ static async Task<AppServerStatus> ReadRateLimitsFromAppServerAsync(string codex
             {
                 name = "taskbar-widgets",
                 title = "TaskbarWidgets",
-                version = "0.4.2"
+                version = "0.5.21"
             },
             capabilities = new
             {

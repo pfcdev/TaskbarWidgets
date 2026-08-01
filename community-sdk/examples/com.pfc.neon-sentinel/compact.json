@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/layout-v1.schema.json",
+  "type": "card",
+  "width": 246,
+  "height": 36,
+  "padding": 6,
+  "radius": 12,
+  "backgroundColor": "#E6081220",
+  "children": [
+    {
+      "type": "row",
+      "gap": 9,
+      "children": [
+        {
+          "type": "text",
+          "text": "◆ NEON",
+          "fontSize": 10,
+          "color": "#FF67E8F9"
+        },
+        {
+          "type": "divider",
+          "height": 18,
+          "color": "#555EE7F2"
+        },
+        {
+          "type": "text",
+          "fontSize": 10,
+          "color": "#FFF8FAFC",
+          "segments": [
+            { "text": "CPU " },
+            { "bind": "data.cpuPercent", "format": "percent" },
+            { "text": "  MEM " },
+            { "bind": "data.memoryPercent", "format": "percent" },
+            { "text": "  P " },
+            { "bind": "data.processCount", "format": "number" }
+          ]
+        }
+      ]
+    }
+  ]
+}

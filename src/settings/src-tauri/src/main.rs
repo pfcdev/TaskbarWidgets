@@ -3,11 +3,14 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::Read,
+    os::windows::ffi::OsStrExt,
+    os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
@@ -15,6 +18,7 @@ use windows_sys::Win32::{
     Security::Cryptography::{
         CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     },
+    Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
 };
 
 const CODEX_DESIGN: &str = "codex-status";
@@ -27,8 +31,37 @@ const SYSTEM_STORAGE_DESIGN: &str = "system-storage";
 const SYSTEM_NETWORK_DESIGN: &str = "system-network";
 const SYSTEM_MEMORY_DESIGN: &str = "system-memory";
 const REMOTE_LIBRARY_BASE_URL: &str = "https://pfcsoft.com/twidget_library";
-const MAX_WIDGET_PACKAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_WIDGET_PACKAGE_BYTES: usize = 250 * 1024 * 1024;
+const MAX_WIDGET_PACKAGE_FILES: usize = 5000;
 const MAX_LIBRARY_RESPONSE_BYTES: usize = 256 * 1024;
+const REVIEW_LIFETIME_SECONDS: i64 = 30 * 60;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+const VOICE_HELPER_SERVICE: &str = "TaskbarWidgetsVoiceCapture";
+
+fn replace_file_atomic(source: &Path, target: &Path) -> Result<(), String> {
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let target_wide = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,13 +113,9 @@ struct WidgetSettings {
     #[serde(default)]
     discord_background_enabled: Option<bool>,
     #[serde(default)]
+    discord_real_time_voice_enabled: Option<bool>,
+    #[serde(default)]
     media_dark_mode: Option<bool>,
-    #[serde(default)]
-    discord_client_id: Option<String>,
-    #[serde(default)]
-    discord_client_secret: Option<String>,
-    #[serde(default)]
-    discord_redirect_uri: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -188,6 +217,8 @@ struct AppState {
     widget_catalog: serde_json::Value,
     community_widgets_dir: String,
     community_update_state: serde_json::Value,
+    web_render_health: serde_json::Value,
+    voice_helper_installed: bool,
 }
 
 #[derive(Default, Serialize)]
@@ -222,10 +253,11 @@ struct WidgetInstallRequest {
     created_at_unix: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WidgetInstallPreview {
     source: String,
+    schema_version: u64,
     id: String,
     version: String,
     display_name: String,
@@ -234,10 +266,35 @@ struct WidgetInstallPreview {
     author_website: Option<String>,
     permissions: serde_json::Value,
     provider_type: String,
+    renderer_type: String,
+    renderer_changed: bool,
     already_installed: bool,
     installed_version: Option<String>,
     is_update: bool,
+    review_token: String,
+    package_sha256: String,
+    content_sha256: String,
+    executable_files: Vec<String>,
+    run_as: String,
 }
+
+#[derive(Clone)]
+struct PendingWidgetReview {
+    directory: PathBuf,
+    content_sha256: String,
+    created_at_unix: i64,
+    preview: WidgetInstallPreview,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteWidgetDownload {
+    source: String,
+    advertised_permissions: serde_json::Value,
+}
+
+static PENDING_WIDGET_REVIEWS: OnceLock<Mutex<HashMap<String, PendingWidgetReview>>> =
+    OnceLock::new();
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -269,10 +326,16 @@ struct RemoteWidgetInfo {
     sha256: String,
     #[serde(default)]
     permissions: serde_json::Value,
+    #[serde(default = "default_remote_renderer")]
+    renderer: String,
     #[serde(default)]
     preview: Option<String>,
     #[serde(skip_deserializing, default)]
     preview_url: Option<String>,
+}
+
+fn default_remote_renderer() -> String {
+    "declarative".to_owned()
 }
 
 #[derive(Default, Deserialize)]
@@ -316,10 +379,8 @@ fn default_settings() -> WidgetSettings {
         weather_temp_unit: Some("C".to_owned()),
         discord_enabled: Some(false),
         discord_background_enabled: Some(true),
+        discord_real_time_voice_enabled: Some(false),
         media_dark_mode: Some(true),
-        discord_client_id: None,
-        discord_client_secret: None,
-        discord_redirect_uri: Some("http://127.0.0.1/callback".to_owned()),
     }
 }
 
@@ -396,8 +457,28 @@ fn install_dir() -> Result<PathBuf, String> {
         .map(Path::to_path_buf)
         .ok_or_else(|| "Application directory could not be resolved.".to_owned())?;
 
+    if let Some(override_dir) = std::env::var_os("TASKBARWIDGETS_INSTALL_DIR") {
+        let override_dir = PathBuf::from(override_dir);
+        if override_dir.join("TaskbarWidgets.exe").is_file() {
+            return Ok(override_dir);
+        }
+        return Err("TASKBARWIDGETS_INSTALL_DIR does not contain TaskbarWidgets.exe.".to_owned());
+    }
+
     if exe_dir.join("TaskbarWidgets.exe").exists() {
         return Ok(exe_dir);
+    }
+
+    // A source-built Settings executable lives below the repository and has no
+    // sibling loader. Prefer the real per-user installation so its controls
+    // update the same Data/config.json consumed by the running Explorer loader.
+    if cfg!(debug_assertions) {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let installed = PathBuf::from(local).join("Programs").join("TaskbarWidgets");
+            if installed.join("TaskbarWidgets.exe").is_file() {
+                return Ok(installed);
+            }
+        }
     }
 
     for ancestor in exe_dir.ancestors() {
@@ -475,10 +556,15 @@ fn read_settings_from(data_dir: &Path) -> WidgetSettings {
 }
 
 fn read_update_status_from(app_dir: &Path) -> UpdateStatus {
-    fs::read_to_string(app_dir.join("update-status.json"))
+    let mut status: UpdateStatus = fs::read_to_string(app_dir.join("update-status.json"))
         .ok()
         .and_then(|data| serde_json::from_str(&data).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // update-status.json is intentionally preserved across upgrades and can
+    // therefore describe the previous loader. The Settings binary version is
+    // the authoritative installed version shown in the UI.
+    status.current_version = Some(env!("CARGO_PKG_VERSION").to_owned());
+    status
 }
 
 fn read_media_status_from(app_dir: &Path) -> MediaStatus {
@@ -888,14 +974,12 @@ fn config_to_transport(mut config: ConfigV2) -> WidgetSettings {
         weather_temp_unit: Some(setting_string(weather, "temperatureUnit", "C")),
         discord_enabled: Some(discord.map(|widget| widget.enabled).unwrap_or(false)),
         discord_background_enabled: Some(setting_bool(discord, "backgroundEnabled", true)),
-        media_dark_mode: Some(setting_bool(media, "darkMode", true)),
-        discord_client_id: Some(setting_string(discord, "clientId", "")),
-        discord_client_secret: Some(setting_string(discord, "clientSecret", "")),
-        discord_redirect_uri: Some(setting_string(
+        discord_real_time_voice_enabled: Some(setting_bool(
             discord,
-            "redirectUri",
-            "http://127.0.0.1/callback",
+            "realTimeVoiceEnabled",
+            false,
         )),
+        media_dark_mode: Some(setting_bool(media, "darkMode", true)),
     }
 }
 
@@ -941,22 +1025,20 @@ fn transport_to_config(settings: &WidgetSettings) -> ConfigV2 {
                     );
                 }
                 DISCORD_DESIGN => {
+                    values.remove("clientId");
+                    values.remove("clientSecret");
+                    values.remove("redirectUri");
                     values.insert(
                         "backgroundEnabled".to_owned(),
                         serde_json::Value::Bool(
                             settings.discord_background_enabled.unwrap_or(true),
                         ),
                     );
-                    string_setting(&mut values, "clientId", settings.discord_client_id.as_ref());
-                    string_setting(
-                        &mut values,
-                        "clientSecret",
-                        settings.discord_client_secret.as_ref(),
-                    );
-                    string_setting(
-                        &mut values,
-                        "redirectUri",
-                        settings.discord_redirect_uri.as_ref(),
+                    values.insert(
+                        "realTimeVoiceEnabled".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.discord_real_time_voice_enabled.unwrap_or(false),
+                        ),
                     );
                 }
                 MEDIA_DESIGN => {
@@ -1035,7 +1117,85 @@ fn load_state() -> Result<AppState, String> {
         .unwrap_or_else(
             || serde_json::json!({ "schemaVersion": 1, "status": "idle", "updates": [] }),
         ),
+        web_render_health: fs::read_to_string(dir.join("Runtime").join("web-render-host.json"))
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "schemaVersion": 1,
+                    "status": "stopped",
+                    "error": null
+                })
+            }),
+        voice_helper_installed: voice_helper_installed(),
     })
+}
+
+fn voice_helper_installed() -> bool {
+    Command::new("sc.exe")
+        .args(["query", VOICE_HELPER_SERVICE])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn run_elevated(file: &Path, argument: &str) -> Result<(), String> {
+    if !file.is_file() {
+        return Err(format!("Voice helper was not found: {}", file.display()));
+    }
+    let verb = std::ffi::OsStr::new("runas")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let file = file
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let arguments = std::ffi::OsStr::new(argument)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            arguments.as_ptr(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    if result <= 32 {
+        Err(format!("Windows could not launch the helper (code {result})."))
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn install_voice_helper() -> Result<(), String> {
+    let helper = install_dir()?.join("TaskbarWidgets.VoiceCapture.exe");
+    run_elevated(&helper, "--install")
+}
+
+#[tauri::command]
+fn uninstall_voice_helper() -> Result<(), String> {
+    let helper = install_dir()?.join("TaskbarWidgets.VoiceCapture.exe");
+    run_elevated(&helper, "--uninstall")
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: *mut std::ffi::c_void,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show_command: i32,
+    ) -> isize;
 }
 
 #[tauri::command]
@@ -1067,7 +1227,7 @@ fn save_settings(settings: WidgetSettings) -> Result<(), String> {
     let path = dir.join("config.json");
     let temp = dir.join("config.json.tmp");
     fs::write(&temp, format!("{json}\n")).map_err(|e| e.to_string())?;
-    fs::rename(temp, path).map_err(|e| e.to_string())
+    replace_file_atomic(&temp, &path)
 }
 
 #[tauri::command]
@@ -1189,6 +1349,232 @@ fn safe_widget_id_from_manifest(directory: &Path) -> Result<String, String> {
     Ok(id.to_owned())
 }
 
+fn known_v4_permission(id: &str) -> bool {
+    matches!(
+        id,
+        "accounts.list.read"
+            | "accounts.profile.read"
+            | "accounts.history.read"
+            | "accounts.tokens.read"
+            | "accounts.active.write"
+            | "accounts.delete"
+            | "filesystem.read"
+            | "filesystem.write"
+            | "filesystem.delete"
+            | "filesystem.watch"
+            | "filesystem.all"
+            | "registry.read"
+            | "registry.write"
+            | "registry.delete"
+            | "registry.all"
+            | "process.list"
+            | "process.start"
+            | "process.stop"
+            | "process.control"
+            | "process.inject"
+            | "shell.execute"
+            | "shell.openExternal"
+            | "network.internet"
+            | "network.local"
+            | "network.listen"
+            | "network.unrestricted"
+            | "windows.win32"
+            | "windows.winrt"
+            | "windows.com"
+            | "windows.wmi"
+            | "clipboard.read"
+            | "clipboard.write"
+            | "notifications.show"
+            | "camera"
+            | "microphone"
+            | "location"
+            | "bluetooth"
+            | "usb"
+            | "media.sessions.read"
+            | "media.playback.control"
+            | "steam.downloads.read"
+            | "steam.client.control"
+            | "discord.state.read"
+            | "system.metrics.read"
+            | "taskbar.control"
+            | "settings.read"
+            | "settings.write"
+            | "system.fullAccess"
+            | "system.administrator"
+            | "system.startup"
+            | "system.background"
+    )
+}
+
+fn validate_v4_permissions(permissions: &serde_json::Value) -> Result<(), String> {
+    let object = permissions
+        .as_object()
+        .ok_or_else(|| "schema v4 permissions must be an object.".to_owned())?;
+    if object
+        .keys()
+        .any(|key| key != "required" && key != "optional")
+    {
+        return Err("schema v4 permissions supports only required and optional.".to_owned());
+    }
+    let required = object
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "schema v4 permissions.required must be an array.".to_owned())?;
+    let optional = object
+        .get("optional")
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| "schema v4 permissions.optional must be an array.".to_owned())
+        })
+        .transpose()?
+        .cloned()
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    for (is_optional, values) in [(false, required.as_slice()), (true, optional.as_slice())] {
+        if values.len() > 64 {
+            return Err("A widget may request at most 64 permissions per list.".to_owned());
+        }
+        for value in values {
+            let request = value
+                .as_object()
+                .ok_or_else(|| "Every permission request must be an object.".to_owned())?;
+            if request
+                .keys()
+                .any(|key| key != "id" && key != "scope" && key != "reason")
+            {
+                return Err("A permission request contains an unsupported property.".to_owned());
+            }
+            let id = request
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "Permission id is required.".to_owned())?;
+            if !known_v4_permission(id) {
+                return Err(format!("Unknown permission id '{id}'."));
+            }
+            if !seen.insert(id.to_owned()) {
+                return Err(format!("Permission '{id}' is requested more than once."));
+            }
+            let reason = request
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default();
+            if !(3..=300).contains(&reason.len()) {
+                return Err(format!(
+                    "Permission '{id}' reason must be between 3 and 300 characters."
+                ));
+            }
+            if let Some(scope) = request.get("scope") {
+                let valid = scope
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty() && text.len() <= 1024)
+                    || scope.as_array().is_some_and(|items| {
+                        items.len() <= 64
+                            && items.iter().all(|item| {
+                                item.as_str()
+                                    .is_some_and(|text| !text.is_empty() && text.len() <= 1024)
+                            })
+                    });
+                if !valid {
+                    return Err(format!("Permission '{id}' has an invalid scope."));
+                }
+            }
+            let _ = is_optional;
+        }
+    }
+    Ok(())
+}
+
+fn v4_has_required_permission(permissions: &serde_json::Value, id: &str) -> bool {
+    permissions
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|values| {
+            values
+                .iter()
+                .any(|value| value.get("id").and_then(serde_json::Value::as_str) == Some(id))
+        })
+}
+
+fn hash_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn hash_widget_tree(directory: &Path) -> Result<String, String> {
+    fn collect(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+        for entry in fs::read_dir(current).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let file_type = entry.file_type().map_err(|e| e.to_string())?;
+            if file_type.is_symlink() {
+                return Err("Symbolic links are not allowed.".to_owned());
+            }
+            if file_type.is_dir() {
+                collect(root, &entry.path(), files)?;
+            } else if file_type.is_file() {
+                files.push(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .map_err(|e| e.to_string())?
+                        .to_path_buf(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    collect(directory, directory, &mut files)?;
+    files.sort();
+    let mut digest = Sha256::new();
+    for relative in files {
+        digest.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
+        digest.update([0]);
+        digest.update(fs::read(directory.join(&relative)).map_err(|e| e.to_string())?);
+        digest.update([0xff]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn executable_inventory(directory: &Path) -> Result<Vec<String>, String> {
+    fn visit(root: &Path, current: &Path, values: &mut Vec<String>) -> Result<(), String> {
+        for entry in fs::read_dir(current).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let file_type = entry.file_type().map_err(|e| e.to_string())?;
+            if file_type.is_dir() {
+                visit(root, &entry.path(), values)?;
+            } else if file_type.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|extension| {
+                        matches!(
+                            extension.to_ascii_lowercase().as_str(),
+                            "exe" | "dll" | "ps1" | "cmd" | "bat" | "py" | "js"
+                        )
+                    })
+            {
+                values.push(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .map_err(|e| e.to_string())?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+        Ok(())
+    }
+    let mut values = Vec::new();
+    visit(directory, directory, &mut values)?;
+    values.sort();
+    Ok(values)
+}
+
 fn install_preview_from_directory(
     directory: &Path,
     source: &Path,
@@ -1197,12 +1583,12 @@ fn install_preview_from_directory(
         &fs::read_to_string(directory.join("widget.json")).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("widget.json: {e}"))?;
-    if manifest
+    let schema_version = manifest
         .get("schemaVersion")
         .and_then(|value| value.as_u64())
-        != Some(2)
-    {
-        return Err("Only widget schemaVersion 2 packages are supported.".to_owned());
+        .unwrap_or_default();
+    if !matches!(schema_version, 2 | 3 | 4) {
+        return Err("Only widget schemaVersion 2, 3 or 4 packages are supported.".to_owned());
     }
     let id = safe_widget_id_from_manifest(directory)?;
     let required = |key: &str| {
@@ -1240,27 +1626,209 @@ fn install_preview_from_directory(
     if !permissions.is_object() {
         return Err("widget.json permissions must be an object.".to_owned());
     }
-    let provider_type = manifest
-        .pointer("/entry/provider/type")
+    if schema_version == 4 {
+        validate_v4_permissions(&permissions)?;
+    }
+    let renderer_type = if matches!(schema_version, 3 | 4) {
+        let renderer = manifest
+            .get("renderer")
+            .and_then(|value| value.as_object())
+            .ok_or_else(|| {
+                format!("schemaVersion {schema_version} requires widget.json renderer.")
+            })?;
+        let renderer_type = renderer
+            .get("type")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "renderer.type is required.".to_owned())?;
+        if schema_version == 3 && renderer_type != "web" {
+            return Err("schemaVersion 3 currently supports only renderer.type web.".to_owned());
+        }
+        if schema_version == 4 && !matches!(renderer_type, "web" | "declarative" | "native") {
+            return Err(
+                "schemaVersion 4 renderer.type must be web, declarative, or native."
+                    .to_owned(),
+            );
+        }
+        let renderer_entry = renderer
+            .get("entry")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "renderer.entry is required.".to_owned())?;
+        let entry_path = Path::new(renderer_entry);
+        let expected_extension = if renderer_type == "web" {
+            ".html"
+        } else {
+            ".json"
+        };
+        if entry_path.is_absolute()
+            || renderer_entry.contains("..")
+            || !renderer_entry
+                .to_ascii_lowercase()
+                .ends_with(expected_extension)
+            || !directory.join(entry_path).is_file()
+        {
+            return Err(format!(
+                "renderer.entry must be a contained {expected_extension} file."
+            ));
+        }
+        if matches!(renderer_type, "web" | "native") {
+            if let Some(expanded) = renderer
+                .get("expandedSize")
+                .and_then(|value| value.as_object())
+            {
+                let width = expanded
+                    .get("width")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default();
+                let height = expanded
+                    .get("height")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default();
+                if !(32..=640).contains(&width) || !(24..=480).contains(&height) {
+                    return Err("renderer.expandedSize is outside the supported range.".to_owned());
+                }
+            }
+        }
+        if renderer_type == "native" {
+            if let Some(expanded_entry) =
+                renderer.get("expandedEntry").and_then(|value| value.as_str())
+            {
+                let expanded_path = Path::new(expanded_entry);
+                if expanded_path.is_absolute()
+                    || expanded_entry.contains("..")
+                    || !expanded_entry.to_ascii_lowercase().ends_with(".json")
+                    || !directory.join(expanded_path).is_file()
+                {
+                    return Err(
+                        "renderer.expandedEntry must be a contained .json file.".to_owned(),
+                    );
+                }
+            }
+        }
+        renderer_type.to_owned()
+    } else {
+        "declarative".to_owned()
+    };
+    let runtime = manifest.get("runtime").and_then(|value| value.as_object());
+    let run_as = runtime
+        .and_then(|value| value.get("runAs"))
         .and_then(|value| value.as_str())
+        .unwrap_or("user")
+        .to_owned();
+    if let Some(runtime) = runtime {
+        if schema_version != 4 {
+            return Err("A process runtime requires schemaVersion 4.".to_owned());
+        }
+        if runtime.get("type").and_then(|value| value.as_str()) != Some("process") {
+            return Err("runtime.type must be process.".to_owned());
+        }
+        let runtime_entry = runtime
+            .get("entry")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "runtime.entry is required.".to_owned())?;
+        if Path::new(runtime_entry).is_absolute()
+            || runtime_entry.contains("..")
+            || !directory.join(runtime_entry).is_file()
+        {
+            return Err("runtime.entry must be a contained package file.".to_owned());
+        }
+        if !v4_has_required_permission(&permissions, "system.fullAccess") {
+            return Err(
+                "A process runtime must request required permission system.fullAccess.".to_owned(),
+            );
+        }
+        if permissions
+            .get("optional")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|values| !values.is_empty())
+        {
+            return Err(
+                "A full-access process cannot use optional permissions because they cannot be technically restricted."
+                    .to_owned(),
+            );
+        }
+        if run_as == "administrator"
+            && !v4_has_required_permission(&permissions, "system.administrator")
+        {
+            return Err(
+                "An administrator runtime must request required permission system.administrator."
+                    .to_owned(),
+            );
+        }
+        if !matches!(run_as.as_str(), "user" | "administrator") {
+            return Err("runtime.runAs must be user or administrator.".to_owned());
+        }
+        let protocol = runtime
+            .get("protocol")
+            .and_then(|value| value.as_str())
+            .unwrap_or("json-lines-v1");
+        let lifetime = runtime
+            .get("lifetime")
+            .and_then(|value| value.as_str())
+            .unwrap_or("persistent");
+        let working_directory = runtime
+            .get("workingDirectory")
+            .and_then(|value| value.as_str())
+            .unwrap_or("package");
+        if !matches!(protocol, "none" | "json-lines-v1")
+            || lifetime != "persistent"
+            || !matches!(working_directory, "package" | "data")
+        {
+            return Err("runtime contains an unsupported option.".to_owned());
+        }
+        if run_as == "administrator" && protocol != "none" {
+            return Err("Administrator runtimes currently require protocol none.".to_owned());
+        }
+        if let Some(arguments) = runtime.get("arguments") {
+            let arguments = arguments
+                .as_array()
+                .ok_or_else(|| "runtime.arguments must be an array.".to_owned())?;
+            if arguments.len() > 64
+                || arguments
+                    .iter()
+                    .any(|value| value.as_str().is_none_or(|argument| argument.len() > 1024))
+            {
+                return Err("runtime.arguments exceeds the supported limits.".to_owned());
+            }
+        }
+    }
+    let provider_type = runtime
+        .map(|_| "process")
+        .or_else(|| {
+            manifest
+                .pointer("/entry/provider/type")
+                .and_then(|value| value.as_str())
+        })
         .unwrap_or("none")
         .to_owned();
     let version = required("version")?;
     let installed_manifest = community_widgets_dir()?.join(&id).join("widget.json");
-    let installed_version = fs::read_to_string(installed_manifest)
+    let installed_json = fs::read_to_string(installed_manifest)
         .ok()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-        .and_then(|manifest| {
-            manifest
-                .get("version")
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
+    let installed_version = installed_json.as_ref().and_then(|manifest| {
+        manifest
+            .get("version")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+    });
+    let installed_renderer = installed_json.as_ref().map(|manifest| {
+        match manifest
+            .get("schemaVersion")
+            .and_then(|value| value.as_u64())
+        {
+            Some(3 | 4) => manifest
+                .pointer("/renderer/type")
                 .and_then(|value| value.as_str())
-                .map(str::to_owned)
-        });
+                .unwrap_or("declarative"),
+            _ => "declarative",
+        }
+    });
     let is_update = installed_version.as_deref().is_some_and(|installed| {
         compare_widget_versions(&version, installed).is_some_and(|ordering| ordering.is_gt())
     });
     Ok(WidgetInstallPreview {
         source: source.display().to_string(),
+        schema_version,
         id: id.clone(),
         version,
         display_name: required("displayName")?,
@@ -1269,9 +1837,16 @@ fn install_preview_from_directory(
         author_website,
         permissions,
         provider_type,
+        renderer_changed: installed_renderer.is_some_and(|value| value != renderer_type.as_str()),
+        renderer_type,
         already_installed: community_widgets_dir()?.join(id).exists(),
         installed_version,
         is_update,
+        review_token: String::new(),
+        package_sha256: String::new(),
+        content_sha256: String::new(),
+        executable_files: executable_inventory(directory)?,
+        run_as,
     })
 }
 
@@ -1326,8 +1901,10 @@ fn extract_widget_source(source: &Path, staging: &Path) -> Result<(), String> {
     }
     let file = fs::File::open(source).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    if archive.len() > 100 {
-        return Err("Package contains more than 100 files.".to_owned());
+    if archive.len() > MAX_WIDGET_PACKAGE_FILES {
+        return Err(format!(
+            "Package contains more than {MAX_WIDGET_PACKAGE_FILES} files."
+        ));
     }
     let mut total = 0u64;
     for index in 0..archive.len() {
@@ -1344,7 +1921,7 @@ fn extract_widget_source(source: &Path, staging: &Path) -> Result<(), String> {
             .ok_or_else(|| "Package contains an unsafe path.".to_owned())?;
         total = total.saturating_add(entry.size());
         if total > MAX_WIDGET_PACKAGE_BYTES as u64 {
-            return Err("Package exceeds 10 MB.".to_owned());
+            return Err("Package exceeds 250 MB.".to_owned());
         }
         let destination = staging.join(relative);
         if entry.is_dir() {
@@ -1360,18 +1937,89 @@ fn extract_widget_source(source: &Path, staging: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn pending_widget_reviews() -> &'static Mutex<HashMap<String, PendingWidgetReview>> {
+    PENDING_WIDGET_REVIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn current_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+fn cleanup_expired_reviews(reviews: &mut HashMap<String, PendingWidgetReview>) {
+    let now = current_unix();
+    let expired = reviews
+        .iter()
+        .filter(|(_, review)| now - review.created_at_unix > REVIEW_LIFETIME_SECONDS)
+        .map(|(token, review)| (token.clone(), review.directory.clone()))
+        .collect::<Vec<_>>();
+    for (token, directory) in expired {
+        reviews.remove(&token);
+        if directory.exists() {
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
+}
+
 #[tauri::command]
-fn inspect_community_widget(source: String) -> Result<WidgetInstallPreview, String> {
+fn inspect_community_widget(
+    source: String,
+    advertised_permissions: Option<serde_json::Value>,
+) -> Result<WidgetInstallPreview, String> {
     let source = PathBuf::from(source);
     if !source.exists() {
         return Err("The selected widget package no longer exists.".to_owned());
     }
-    let staging = unique_staging_directory("inspect");
+    let staging = unique_staging_directory("review");
     let result = (|| {
         extract_widget_source(&source, &staging)?;
-        install_preview_from_directory(&staging, &source)
+        let mut preview = install_preview_from_directory(&staging, &source)?;
+        if let Some(advertised) = advertised_permissions {
+            if advertised != preview.permissions {
+                return Err(
+                    "The package permissions do not match the permissions advertised by the remote library."
+                        .to_owned(),
+                );
+            }
+        }
+        let content_sha256 = hash_widget_tree(&staging)?;
+        let package_sha256 = if source.is_file() {
+            hash_file(&source)?
+        } else {
+            content_sha256.clone()
+        };
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or_default();
+        let review_token = format!(
+            "{:x}",
+            Sha256::digest(format!(
+                "{}:{}:{}:{nonce}",
+                content_sha256,
+                source.display(),
+                std::process::id()
+            ))
+        );
+        preview.review_token = review_token.clone();
+        preview.package_sha256 = package_sha256;
+        preview.content_sha256 = content_sha256.clone();
+        let pending = PendingWidgetReview {
+            directory: staging.clone(),
+            content_sha256,
+            created_at_unix: current_unix(),
+            preview: preview.clone(),
+        };
+        let mut reviews = pending_widget_reviews()
+            .lock()
+            .map_err(|_| "Widget review store is unavailable.".to_owned())?;
+        cleanup_expired_reviews(&mut reviews);
+        reviews.insert(review_token, pending);
+        Ok(preview)
     })();
-    if staging.exists() {
+    if result.is_err() && staging.exists() {
         let _ = fs::remove_dir_all(staging);
     }
     result
@@ -1396,8 +2044,8 @@ fn copy_widget_directory(
         } else if file_type.is_file() {
             *files += 1;
             *bytes += entry.metadata().map_err(|e| e.to_string())?.len();
-            if *files > 100 || *bytes > 10 * 1024 * 1024 {
-                return Err("Package exceeds 100 files or 10 MB.".to_owned());
+            if *files > MAX_WIDGET_PACKAGE_FILES || *bytes > MAX_WIDGET_PACKAGE_BYTES as u64 {
+                return Err("Package exceeds 5000 files or 250 MB.".to_owned());
             }
             fs::copy(entry.path(), destination).map_err(|e| e.to_string())?;
         }
@@ -1405,32 +2053,105 @@ fn copy_widget_directory(
     Ok(())
 }
 
+fn widget_approvals_dir() -> Result<PathBuf, String> {
+    community_widgets_dir()?
+        .parent()
+        .map(|path| path.join("WidgetApprovals"))
+        .ok_or_else(|| "Community data directory is unavailable.".to_owned())
+}
+
+fn write_widget_approval(
+    preview: &WidgetInstallPreview,
+    granted_optional_permissions: &[String],
+) -> Result<(), String> {
+    let optional_ids = preview
+        .permissions
+        .get("optional")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.get("id").and_then(serde_json::Value::as_str))
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    if granted_optional_permissions
+        .iter()
+        .any(|id| !optional_ids.contains(id.as_str()))
+    {
+        return Err(
+            "The optional permission grant does not match the reviewed manifest.".to_owned(),
+        );
+    }
+    let directory = widget_approvals_dir()?;
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let path = directory.join(format!("{}.json", preview.id));
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schemaVersion": 1,
+            "widgetId": preview.id,
+            "version": preview.version,
+            "packageSha256": preview.package_sha256,
+            "contentSha256": preview.content_sha256,
+            "permissions": preview.permissions,
+            "grantedOptional": granted_optional_permissions,
+            "approvedAtUnix": current_unix()
+        }))
+        .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    replace_file_atomic(&temporary, &path)
+}
+
 #[tauri::command]
 fn install_community_widget(
-    source: String,
-    approved_permissions: bool,
+    review_token: String,
+    granted_optional_permissions: Vec<String>,
     replace_existing: bool,
 ) -> Result<String, String> {
-    if !approved_permissions {
-        return Err("Permission review must be accepted before installation.".to_owned());
-    }
-    let source = PathBuf::from(source);
-    let staging = unique_staging_directory("install");
+    let pending = {
+        let mut reviews = pending_widget_reviews()
+            .lock()
+            .map_err(|_| "Widget review store is unavailable.".to_owned())?;
+        cleanup_expired_reviews(&mut reviews);
+        reviews
+            .remove(&review_token)
+            .ok_or_else(|| "The permission review expired. Inspect the package again.".to_owned())?
+    };
+    let staging = pending.directory.clone();
     let result = (|| {
-        extract_widget_source(&source, &staging)?;
-        let preview = install_preview_from_directory(&staging, &source)?;
-        let id = preview.id;
+        if current_unix() - pending.created_at_unix > REVIEW_LIFETIME_SECONDS {
+            return Err("The permission review expired. Inspect the package again.".to_owned());
+        }
+        if hash_widget_tree(&staging)? != pending.content_sha256 {
+            return Err("The reviewed package changed before installation.".to_owned());
+        }
+        let preview = install_preview_from_directory(&staging, Path::new(&pending.preview.source))?;
+        if preview.id != pending.preview.id
+            || preview.version != pending.preview.version
+            || preview.permissions != pending.preview.permissions
+        {
+            return Err("The reviewed manifest changed before installation.".to_owned());
+        }
+        let mut approved_preview = pending.preview.clone();
+        approved_preview.executable_files = preview.executable_files;
+        let id = approved_preview.id.clone();
         let root = community_widgets_dir()?;
         let target = root.join(&id);
         if target.exists() {
             if !replace_existing {
                 return Err(format!("{id} is already installed."));
             }
-            if !preview.is_update {
+            if !approved_preview.is_update {
                 return Err(format!(
                     "The package version {} is not newer than the installed version {}.",
-                    preview.version,
-                    preview.installed_version.as_deref().unwrap_or("unknown")
+                    approved_preview.version,
+                    approved_preview
+                        .installed_version
+                        .as_deref()
+                        .unwrap_or("unknown")
                 ));
             }
             let backups = root
@@ -1454,6 +2175,15 @@ fn install_community_widget(
                     "Widget update failed and the previous version was restored: {error}"
                 ));
             }
+            if let Err(error) =
+                write_widget_approval(&approved_preview, &granted_optional_permissions)
+            {
+                let _ = fs::remove_dir_all(&target);
+                let _ = fs::rename(&backup, &target);
+                return Err(format!(
+                    "Widget approval could not be saved and the previous version was restored: {error}"
+                ));
+            }
             let _ = fs::remove_dir_all(backup);
             return Ok(id);
         }
@@ -1461,6 +2191,13 @@ fn install_community_widget(
             return Err(format!("{id} is not installed and cannot be updated."));
         }
         fs::rename(&staging, &target).map_err(|e| e.to_string())?;
+        if let Err(error) = write_widget_approval(&approved_preview, &granted_optional_permissions)
+        {
+            let _ = fs::remove_dir_all(&target);
+            return Err(format!(
+                "Widget approval could not be saved and installation was rolled back: {error}"
+            ));
+        }
         Ok(id)
     })();
     if staging.exists() {
@@ -1547,6 +2284,11 @@ fn validate_remote_widget_info(
             "{expected_id}/info.json has an invalid package or SHA-256."
         ));
     }
+    if info.renderer != "declarative" && info.renderer != "native" && info.renderer != "web" {
+        return Err(format!(
+            "{expected_id}/info.json renderer must be declarative, native, or web."
+        ));
+    }
     if !info.permissions.is_object() {
         info.permissions = serde_json::json!({});
     }
@@ -1612,7 +2354,7 @@ fn fetch_remote_library() -> Result<Vec<RemoteWidgetInfo>, String> {
 }
 
 #[tauri::command]
-fn download_remote_widget(widget_id: String) -> Result<String, String> {
+fn download_remote_widget(widget_id: String) -> Result<RemoteWidgetDownload, String> {
     let client = remote_http_client()?;
     let info = fetch_remote_widget_info_with(&client, &widget_id)?;
     let package_url = format!(
@@ -1638,8 +2380,11 @@ fn download_remote_widget(widget_id: String) -> Result<String, String> {
     let target = downloads.join(format!("{}-{}.twidget", info.id, info.version));
     let temporary = target.with_extension("twidget.tmp");
     fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
-    fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
-    Ok(target.display().to_string())
+    replace_file_atomic(&temporary, &target)?;
+    Ok(RemoteWidgetDownload {
+        source: target.display().to_string(),
+        advertised_permissions: info.permissions,
+    })
 }
 
 #[tauri::command]
@@ -1654,6 +2399,10 @@ fn remove_community_widget(widget_id: String) -> Result<(), String> {
     }
     if target.exists() {
         fs::remove_dir_all(target).map_err(|e| e.to_string())?;
+    }
+    let approval = widget_approvals_dir()?.join(format!("{widget_id}.json"));
+    if approval.exists() {
+        fs::remove_file(approval).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -1827,6 +2576,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_version_ignores_stale_update_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "taskbar-widgets-version-cache-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("update-status.json"),
+            r#"{"state":"current","currentVersion":"0.0.1"}"#,
+        )
+        .unwrap();
+
+        let status = read_update_status_from(&root);
+        assert_eq!(
+            status.current_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn system_widget_settings_round_trip() {
         let mut settings = default_settings();
         let widgets = settings.widgets.as_mut().expect("default widgets");
@@ -1890,6 +2661,7 @@ mod tests {
             package_file: package_file.to_owned(),
             sha256: "a".repeat(64),
             permissions: serde_json::json!({}),
+            renderer: "declarative".to_owned(),
             preview: Some("preview.png".to_owned()),
             preview_url: None,
         }
@@ -1922,6 +2694,133 @@ mod tests {
         assert!(compare_widget_versions("1.0.0", "1.0.0.0").is_some_and(|value| value.is_eq()));
         assert!(compare_widget_versions("1.0", "1.0.0").is_none());
     }
+
+    #[test]
+    fn web_widget_install_preview_is_sandbox_labeled() {
+        let id = format!("com.example.webtest{}", std::process::id());
+        let root = std::env::temp_dir().join(&id);
+        let ui = root.join("ui");
+        fs::create_dir_all(&ui).unwrap();
+        fs::write(
+            ui.join("index.html"),
+            "<!doctype html><title>Web test</title>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("widget.json"),
+            serde_json::json!({
+                "schemaVersion": 3,
+                "id": id,
+                "version": "1.0.0",
+                "displayName": "Web test",
+                "description": "Web install preview test",
+                "author": { "name": "pfc", "website": "https://pfcsoft.com" },
+                "size": { "width": 170, "height": 32 },
+                "renderer": {
+                    "type": "web",
+                    "entry": "ui/index.html",
+                    "expandedSize": { "width": 360, "height": 180 }
+                },
+                "permissions": { "storage": true }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let preview =
+            install_preview_from_directory(&root, &root).expect("schema v3 install preview");
+        assert_eq!(preview.renderer_type, "web");
+        assert_eq!(preview.author_name, "pfc");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn schema_v4_process_preview_requires_declared_full_access() {
+        let id = format!("com.example.v4test{}", std::process::id());
+        let root = std::env::temp_dir().join(&id);
+        let ui = root.join("ui");
+        fs::create_dir_all(&ui).unwrap();
+        fs::write(ui.join("index.html"), "<!doctype html><title>V4</title>").unwrap();
+        fs::write(root.join("provider.ps1"), "Write-Output '{}'").unwrap();
+        let manifest = |permissions: serde_json::Value| {
+            serde_json::json!({
+                "schemaVersion": 4,
+                "id": id,
+                "version": "1.0.0",
+                "displayName": "V4 process",
+                "description": "V4 process preview test",
+                "author": { "name": "pfc", "website": "https://pfcsoft.com" },
+                "size": { "width": 170, "height": 32 },
+                "renderer": { "type": "web", "entry": "ui/index.html" },
+                "runtime": {
+                    "type": "process",
+                    "entry": "provider.ps1",
+                    "protocol": "json-lines-v1"
+                },
+                "permissions": permissions
+            })
+        };
+        fs::write(
+            root.join("widget.json"),
+            manifest(serde_json::json!({ "required": [], "optional": [] })).to_string(),
+        )
+        .unwrap();
+        assert!(install_preview_from_directory(&root, &root)
+            .unwrap_err()
+            .contains("system.fullAccess"));
+
+        fs::write(
+            root.join("widget.json"),
+            manifest(serde_json::json!({
+                "required": [{
+                    "id": "system.fullAccess",
+                    "reason": "Runs the package provider with the user's rights."
+                }],
+                "optional": []
+            }))
+            .to_string(),
+        )
+        .unwrap();
+        let preview = install_preview_from_directory(&root, &root).expect("valid v4 preview");
+        assert_eq!(preview.schema_version, 4);
+        assert_eq!(preview.provider_type, "process");
+        assert_eq!(preview.executable_files, vec!["provider.ps1"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installed_content_hash_matches_loader_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "taskbar-widgets-hash-contract-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("a.txt"), b"alpha").unwrap();
+        fs::write(root.join("sub").join("b.bin"), [0_u8, 1, 255]).unwrap();
+        assert_eq!(
+            hash_widget_tree(&root).unwrap(),
+            "8a29aa8ea3b60d2ae5f62ea72e7b6cbedcaa1aee31956113610db88072c2caae"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_replace_overwrites_existing_approval_file() {
+        let root = std::env::temp_dir().join(format!(
+            "taskbar-widgets-atomic-replace-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("approval.json");
+        let temporary = root.join("approval.json.tmp");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&temporary, b"new").unwrap();
+        replace_file_atomic(&temporary, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!temporary.exists());
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 fn main() {
@@ -1943,6 +2842,8 @@ fn main() {
             run_loader_command,
             start_loader_command,
             control_runtime,
+            install_voice_helper,
+            uninstall_voice_helper,
             launch_downloaded_installer
         ])
         .run(tauri::generate_context!())

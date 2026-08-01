@@ -1,0 +1,71 @@
+{
+  "$schema": "../../schemas/widget-v3.schema.json",
+  "schemaVersion": 3,
+  "id": "com.pfc.focus-island",
+  "version": "1.0.1",
+  "minHostVersion": "0.5.0",
+  "displayName": "Focus Island",
+  "description": "A low-power clock and focus timer that expands above the taskbar.",
+  "category": "Productivity",
+  "author": {
+    "name": "pfc",
+    "website": "https://pfcsoft.com"
+  },
+  "size": {
+    "width": 170,
+    "height": 32
+  },
+  "renderer": {
+    "type": "web",
+    "entry": "ui/index.html",
+    "expandedSize": {
+      "width": 360,
+      "height": 180
+    },
+    "expandDirection": "auto",
+    "activation": "hover",
+    "hoverDelayMs": 100,
+    "collapseDelayMs": 180,
+    "transitionMs": 280
+  },
+  "entry": {
+    "provider": {
+      "type": "clock",
+      "refreshSeconds": 1
+    }
+  },
+  "permissions": {
+    "storage": true
+  },
+  "supportsMultipleInstances": true,
+  "settings": [
+    {
+      "key": "focusMinutes",
+      "type": "number",
+      "label": "Focus duration",
+      "default": 25,
+      "minimum": 1,
+      "maximum": 180
+    },
+    {
+      "key": "breakMinutes",
+      "type": "number",
+      "label": "Break duration",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 60
+    },
+    {
+      "key": "use24Hour",
+      "type": "boolean",
+      "label": "Use 24-hour clock",
+      "default": true
+    },
+    {
+      "key": "accentColor",
+      "type": "color",
+      "label": "Accent color",
+      "default": "#8B5CF6"
+    }
+  ]
+}

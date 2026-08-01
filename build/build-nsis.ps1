@@ -93,7 +93,7 @@ if (-not $Makensis) {
     throw "makensis.exe was not found. Install NSIS or run this script with -InstallNsisIfMissing."
 }
 
-foreach ($ProcessName in @("TaskbarWidgets", "TaskbarWidgets.MediaHelper", "TaskbarWidgets.Settings")) {
+foreach ($ProcessName in @("TaskbarWidgets", "TaskbarWidgets.MediaHelper", "TaskbarWidgets.RenderHost", "TaskbarWidgets.Settings")) {
     Get-Process $ProcessName -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -105,7 +105,9 @@ if (-not (Test-Path (Join-Path $ProductDir "TaskbarWidgets.exe"))) {
 & (Join-Path $PSScriptRoot "sign-artifacts.ps1") -Paths @(
     (Join-Path $ProductDir "TaskbarWidgets.exe"),
     (Join-Path $ProductDir "TaskbarWidgets.Settings.exe"),
+    (Join-Path $ProductDir "TaskbarWidgets.VoiceCapture.exe"),
     (Join-Path $ProductDir "TaskbarWidgets.MediaHelper.exe"),
+    (Join-Path $ProductDir "TaskbarWidgets.RenderHost.exe"),
     (Join-Path $ProductDir "TaskbarWidgets.WidgetHost.exe"),
     (Join-Path $ProductDir "twdev.exe")
 )
@@ -120,8 +122,11 @@ New-Item -ItemType Directory -Force $PackageRoot | Out-Null
 $RequiredFiles = @(
     "TaskbarWidgets.exe",
     "TaskbarWidgets.Settings.exe",
+    "TaskbarWidgets.VoiceCapture.exe",
     "TaskbarWidgets.MediaHelper.exe",
+    "TaskbarWidgets.RenderHost.exe",
     "TaskbarWidgets.WidgetHost.exe",
+    "MicrosoftEdgeWebview2Setup.exe",
     "twdev.exe",
     "README-PORTABLE.txt"
 )
@@ -157,6 +162,9 @@ $NsisArgs = @(
 if (Test-Path $IconFile) {
     $NsisArgs += "/DICON_FILE=$IconFile"
 }
+if ($env:BUILDAGENT_FAST_PACKAGING -eq "1") {
+    $NsisArgs += "/DFAST_BUILD=1"
+}
 $NsisArgs += $NsisScript
 
 & $Makensis @NsisArgs
@@ -173,21 +181,26 @@ if (-not (Test-Path $InstallerOutput)) {
 $Hash = (Get-FileHash $InstallerOutput -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -Path $InstallerSha -Value "$Hash  TaskbarWidgetsSetup-x64.exe" -Encoding ASCII
 
-Compress-Archive -Path (Join-Path $ProductDir "*") -DestinationPath $PortableOutput -CompressionLevel Optimal
-$PortableHash = (Get-FileHash $PortableOutput -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -Path $PortableSha -Value "$PortableHash  TaskbarWidgets-portable-x64.zip" -Encoding ASCII
+$PortableHash = $null
+if ($env:BUILDAGENT_SKIP_PORTABLE -ne "1") {
+    Compress-Archive -Path (Join-Path $ProductDir "*") -DestinationPath $PortableOutput -CompressionLevel Optimal
+    $PortableHash = (Get-FileHash $PortableOutput -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path $PortableSha -Value "$PortableHash  TaskbarWidgets-portable-x64.zip" -Encoding ASCII
+}
 
 $Manifest = [ordered]@{
     schemaVersion = 1
     version = $Version
     architecture = "x64"
     unsigned = -not [bool]$env:WINDOWS_SIGNING_CERT_BASE64
-    artifacts = @(
-        [ordered]@{ name = "TaskbarWidgetsSetup-x64.exe"; sha256 = $Hash },
-        [ordered]@{ name = "TaskbarWidgets-portable-x64.zip"; sha256 = $PortableHash }
-    )
+    artifacts = @([ordered]@{ name = "TaskbarWidgetsSetup-x64.exe"; sha256 = $Hash })
+}
+if ($PortableHash) {
+    $Manifest.artifacts += [ordered]@{ name = "TaskbarWidgets-portable-x64.zip"; sha256 = $PortableHash }
 }
 $Manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $ArtifactDir "release-manifest.json") -Encoding UTF8
 
 Write-Host "NSIS installer output:"
-Get-Item $InstallerOutput, $InstallerSha, $PortableOutput, $PortableSha | Select-Object FullName, Length, LastWriteTime
+$outputs = @($InstallerOutput, $InstallerSha)
+if ($PortableHash) { $outputs += @($PortableOutput, $PortableSha) }
+Get-Item $outputs | Select-Object FullName, Length, LastWriteTime

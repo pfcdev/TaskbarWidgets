@@ -17,12 +17,18 @@ internal static class AppPaths
         UserDataDirectory, "WidgetCache");
     public static string CommunityWidgetLogsDirectory { get; } = Path.Combine(
         UserDataDirectory, "WidgetLogs");
+    public static string CommunityWidgetApprovalsDirectory { get; } = Path.Combine(
+        UserDataDirectory, "WidgetApprovals");
     public static string RuntimeWidgetCatalogPath { get; } = Path.Combine(
         RuntimeDirectory, "WidgetCatalog.json");
     public static string CommunityWidgetUpdateStatePath { get; } = Path.Combine(
         RuntimeDirectory, "community-widget-updates.json");
     public static string WidgetInstallRequestPath { get; } = Path.Combine(
         RuntimeDirectory, "widget-install-request.json");
+    public static string WebWidgetStorageDirectory { get; } = Path.Combine(
+        UserDataDirectory, "WebStorage");
+    public static string WebRenderHostHealthPath { get; } = Path.Combine(
+        RuntimeDirectory, "web-render-host.json");
 
     // Kept as a source-compatibility alias while the loader is split into services.
     public static string AppDirectory => DataDirectory;

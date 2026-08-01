@@ -5,16 +5,25 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>TaskbarWidgets.Tests</AssemblyName>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\loader\AppPaths.cs" Link="AppPaths.cs" />
+    <Compile Include="..\..\src\loader\NotificationAreaIcon.cs" Link="NotificationAreaIcon.cs" />
     <Compile Include="..\..\src\loader\Core\WidgetContracts.cs" Link="Core\WidgetContracts.cs" />
     <Compile Include="..\..\src\loader\Core\WidgetConfiguration.cs" Link="Core\WidgetConfiguration.cs" />
     <Compile Include="..\..\src\loader\Core\CommunityWidgetRegistry.cs" Link="Core\CommunityWidgetRegistry.cs" />
+    <Compile Include="..\..\src\loader\Core\CommunityPermissions.cs" Link="Core\CommunityPermissions.cs" />
+    <Compile Include="..\..\src\loader\Core\CommunityFullTrustSupervisor.cs" Link="Core\CommunityFullTrustSupervisor.cs" />
     <Compile Include="..\..\src\loader\Core\CommunityWidgetUpdateChecker.cs" Link="Core\CommunityWidgetUpdateChecker.cs" />
+    <Compile Include="..\..\src\loader\Core\ProviderActivation.cs" Link="Core\ProviderActivation.cs" />
     <Compile Include="..\..\src\loader\Core\ReleaseAssetPolicy.cs" Link="Core\ReleaseAssetPolicy.cs" />
     <Compile Include="..\..\src\loader\Core\SystemMetricMath.cs" Link="Core\SystemMetricMath.cs" />
     <Compile Include="..\..\src\loader\Generated\WidgetCatalog.g.cs" Link="Generated\WidgetCatalog.g.cs" />
     <Compile Include="..\..\widgets\system-cpu\provider\SystemMetricsWorker.cs" Link="Widgets\SystemMetricsWorker.cs" />
+    <Compile Include="..\..\widgets\discord-voice\provider\DiscordLocalVoiceProbe.cs" Link="Widgets\DiscordLocalVoiceProbe.cs" />
+    <Compile Include="..\..\widgets\discord-voice\provider\DiscordAvatarCacheResolver.cs" Link="Widgets\DiscordAvatarCacheResolver.cs" />
+    <Compile Include="..\..\widgets\discord-voice\provider\DiscordWebRtcLogProbe.cs" Link="Widgets\DiscordWebRtcLogProbe.cs" />
+    <Compile Include="..\..\src\loader\DiscordRealtimeVoiceClient.cs" Link="Loader\DiscordRealtimeVoiceClient.cs" />
   </ItemGroup>
 </Project>

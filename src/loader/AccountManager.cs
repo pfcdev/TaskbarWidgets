@@ -145,12 +145,38 @@ internal static class AccountManager
     public static async Task RunCommandWatcherAsync(CancellationToken cancellationToken)
     {
         Initialize();
+        var nextEmailRefresh = DateTimeOffset.MinValue;
+        using var commandSignal = new SemaphoreSlim(0, 1);
+        void SignalCommand(object? _, FileSystemEventArgs __)
+        {
+            try
+            {
+                commandSignal.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+            }
+        }
+        using var watcher = new FileSystemWatcher(CommandsDirectory, "*.json")
+        {
+            NotifyFilter = NotifyFilters.FileName |
+                           NotifyFilters.LastWrite |
+                           NotifyFilters.Size
+        };
+        watcher.Changed += SignalCommand;
+        watcher.Created += SignalCommand;
+        watcher.Renamed += (sender, args) => SignalCommand(sender, args);
+        watcher.EnableRaisingEvents = true;
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                RefreshAccountEmails();
+                if (DateTimeOffset.UtcNow >= nextEmailRefresh)
+                {
+                    RefreshAccountEmails();
+                    nextEmailRefresh = DateTimeOffset.UtcNow.AddSeconds(30);
+                }
                 foreach (var commandPath in Directory.EnumerateFiles(CommandsDirectory, "*.json")
                              .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
@@ -163,7 +189,12 @@ internal static class AccountManager
                 Log($"Account command watcher error: {ex.Message}");
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+            var wait = nextEmailRefresh - DateTimeOffset.UtcNow;
+            if (wait <= TimeSpan.Zero || wait > TimeSpan.FromSeconds(30))
+            {
+                wait = TimeSpan.FromSeconds(30);
+            }
+            await commandSignal.WaitAsync(wait, cancellationToken);
         }
     }
 
@@ -230,6 +261,21 @@ internal static class AccountManager
             {
                 MediaWorker.RequestToggle();
             }
+            else if (string.Equals(command, "communityInvoke", StringComparison.OrdinalIgnoreCase))
+            {
+                var arguments = node?["arguments"] as JsonObject;
+                var instanceId = arguments?["instanceId"]?.GetValue<string>();
+                var action = arguments?["action"]?.GetValue<string>() ?? "";
+                var value = arguments?["value"]?.DeepClone();
+                if (!CommunityFullTrustSupervisor.TryDispatch(
+                        envelope.WidgetId,
+                        instanceId,
+                        action,
+                        value))
+                {
+                    Log($"Rejected community action '{action}' for {envelope.WidgetId}.");
+                }
+            }
             else if (string.Equals(command, "moveWidget", StringComparison.OrdinalIgnoreCase))
             {
                 var anchorPercent = node?["positionPct"]?.GetValue<int?>();
@@ -239,6 +285,18 @@ internal static class AccountManager
                         configPath, envelope.WidgetId, anchorPercent, offsetPx))
                 {
                     Log($"Invalid widget move command ignored: {Path.GetFileName(path)}");
+                }
+            }
+            else if (string.Equals(command, "disableWidget", StringComparison.OrdinalIgnoreCase))
+            {
+                var configPath = Path.Combine(AppPaths.DataDirectory, "config.json");
+                var configuration = WidgetConfiguration.LoadOrCreate(configPath);
+                var instance = configuration.Widgets.FirstOrDefault(widget =>
+                    string.Equals(widget.InstanceId, envelope.WidgetId, StringComparison.OrdinalIgnoreCase));
+                if (instance is not null)
+                {
+                    instance.Enabled = false;
+                    configuration.Save(configPath);
                 }
             }
             else if (string.Equals(command, "quit", StringComparison.OrdinalIgnoreCase))

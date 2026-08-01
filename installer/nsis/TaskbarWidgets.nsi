@@ -22,7 +22,11 @@ Name "Taskbar Widgets"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\TaskbarWidgets"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets" "InstallLocation"
-SetCompressor /SOLID lzma
+!ifdef FAST_BUILD
+  SetCompressor zlib
+!else
+  SetCompressor /SOLID lzma
+!endif
 BrandingText "Taskbar Widgets ${VERSION}"
 
 !if "${ICON_FILE}" != ""
@@ -118,6 +122,7 @@ Function StopTaskbarWidgets
     ExecWait '"$INSTDIR\TaskbarWidgets.exe" --detach'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.MediaHelper.exe /F /T'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.RenderHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.WidgetHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.Settings.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarStats.exe /F /T'
@@ -145,6 +150,12 @@ Section "Taskbar Widgets" SecMain
   Call StopTaskbarWidgets
   SetOutPath "$INSTDIR"
   File /r "${PACKAGE_ROOT}\*.*"
+  ; Settings and schema v3 web widgets use the Evergreen WebView2 Runtime.
+  ; The bootstrapper is Microsoft-signed and exits quickly when Runtime exists.
+  IfFileExists "$PROGRAMFILES32\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe" webview_ready
+    DetailPrint "Installing Microsoft Edge WebView2 Runtime..."
+    ExecWait '"$INSTDIR\MicrosoftEdgeWebview2Setup.exe" /silent /install' $0
+webview_ready:
   Call DisableLegacyLoader
   WriteUninstaller "$INSTDIR\Uninstall Taskbar Widgets.exe"
 
@@ -212,8 +223,17 @@ FunctionEnd
 Section "Uninstall"
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.MediaHelper.exe /F /T'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.RenderHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.WidgetHost.exe /F /T'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM TaskbarWidgets.Settings.exe /F /T'
+  ; The main app is per-user and never requires elevation. Only remove the
+  ; optional system helper with UAC when the user previously enabled it.
+  nsExec::ExecToStack '"$SYSDIR\sc.exe" query TaskbarWidgetsVoiceCapture'
+  Pop $0
+  Pop $1
+  ${If} $0 == 0
+    ExecShellWait "runas" "$INSTDIR\TaskbarWidgets.VoiceCapture.exe" "--uninstall" SW_HIDE $0
+  ${EndIf}
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "TaskbarWidgets"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\TaskbarWidgets"
   DeleteRegKey HKCU "Software\Classes\TaskbarWidgets.WidgetPackage"
@@ -226,8 +246,11 @@ Section "Uninstall"
 
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.exe"
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.Settings.exe"
+  Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.VoiceCapture.exe"
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.MediaHelper.exe"
+  Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.RenderHost.exe"
   Delete /REBOOTOK "$INSTDIR\TaskbarWidgets.WidgetHost.exe"
+  Delete /REBOOTOK "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete /REBOOTOK "$INSTDIR\twdev.exe"
   Delete /REBOOTOK "$INSTDIR\README-PORTABLE.txt"
   Delete /REBOOTOK "$INSTDIR\Uninstall Taskbar Widgets.exe"

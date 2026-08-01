@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Win32;
 using TaskbarWidgets.Loader.Core;
 using TaskbarWidgets.Loader.Migration;
@@ -23,6 +24,11 @@ internal static class Program
     private static readonly string LoaderLogPath = Path.Combine(LogsDirectory, "loader.log");
     private const string MutexName = @"Local\TaskbarWidgetsProductLoader";
     private const string LoaderShutdownEventName = @"Local\TaskbarWidgetsLoaderShutdown";
+    private static readonly string RuntimeControlStatePath = Path.Combine(
+        AppPaths.StateDirectory,
+        "runtime-control.json");
+    private static readonly SemaphoreSlim WidgetToggleGate = new(1, 1);
+    private static int s_widgetsEnabled = 1;
     private static bool s_consoleEnabled;
 
     private static async Task<int> Main(string[] args)
@@ -80,6 +86,7 @@ internal static class Program
             DetachFromAllExplorers();
             WaitForProcessesToExit("TaskbarWidgets", TimeSpan.FromSeconds(6));
             WaitForProcessesToExit("TaskbarWidgets.MediaHelper", TimeSpan.FromSeconds(4));
+            WaitForProcessesToExit("TaskbarWidgets.RenderHost", TimeSpan.FromSeconds(4));
             return 0;
         }
 
@@ -132,12 +139,35 @@ internal static class Program
             e.Cancel = true;
             cancellation.Cancel();
         };
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => cancellation.Cancel();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Main has already completed its orderly shutdown.
+            }
+        };
 
         var hookPath = ExtractHookDll();
         Log($"Runtime hook path: {hookPath}");
         ExtractSettingsApp();
+        ExtractVoiceCaptureHelper();
         AccountManager.Initialize();
+        Interlocked.Exchange(ref s_widgetsEnabled, ReadWidgetsEnabled() ? 1 : 0);
+        using var notificationIcon = new NotificationAreaIcon(
+            OpenSettingsFromNotificationArea,
+            () => ToggleWidgetsFromNotificationArea(hookPath),
+            WidgetsAreEnabled,
+            Log);
+        notificationIcon.Start();
+        if (!WidgetsAreEnabled())
+        {
+            DetachFromAllExplorers();
+            RefreshExplorerShell();
+        }
 
         var agentTask = RunProviderIsolatedAsync(
             "codex-status", () => CodexStatusWorker.RunAsync(args, cancellation.Token), cancellation.Token);
@@ -169,8 +199,14 @@ internal static class Program
         var communityProvidersTask = Task.Run(
             () => CommunityProviderSupervisor.RunAsync(cancellation.Token),
             cancellation.Token);
+        var communityFullTrustTask = Task.Run(
+            () => CommunityFullTrustSupervisor.RunAsync(cancellation.Token),
+            cancellation.Token);
         var communityUpdateTask = Task.Run(
             () => CommunityWidgetUpdateChecker.RunAsync(cancellation.Token),
+            cancellation.Token);
+        var webRenderHostTask = Task.Run(
+            () => WebRenderHostSupervisor.RunAsync(cancellation.Token),
             cancellation.Token);
         if (!args.Any(arg => string.Equals(arg, "--no-update-check", StringComparison.OrdinalIgnoreCase)))
         {
@@ -197,7 +233,9 @@ internal static class Program
                 systemMemoryTask,
                 communityRegistryTask,
                 communityProvidersTask,
+                communityFullTrustTask,
                 communityUpdateTask,
+                webRenderHostTask,
                 watchdogTask,
                 accountCommandsTask);
         }
@@ -251,6 +289,12 @@ internal static class Program
     {
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!WidgetsAreEnabled())
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                continue;
+            }
+
             foreach (var process in GetCurrentSessionExplorers())
             {
                 using (process)
@@ -274,6 +318,126 @@ internal static class Program
             }
 
             await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+        }
+    }
+
+    private static bool WidgetsAreEnabled() => Volatile.Read(ref s_widgetsEnabled) != 0;
+
+    private static bool ReadWidgetsEnabled()
+    {
+        try
+        {
+            if (!File.Exists(RuntimeControlStatePath))
+            {
+                return true;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(RuntimeControlStatePath));
+            return !document.RootElement.TryGetProperty("widgetsEnabled", out var enabled) ||
+                   enabled.ValueKind != JsonValueKind.False;
+        }
+        catch (Exception ex)
+        {
+            Log($"Runtime control state could not be read: {ex.Message}");
+            return true;
+        }
+    }
+
+    private static void SaveWidgetsEnabled(bool enabled)
+    {
+        AtomicJson.Write(
+            RuntimeControlStatePath,
+            new { WidgetsEnabled = enabled },
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+    }
+
+    private static void OpenSettingsFromNotificationArea()
+    {
+        try
+        {
+            LaunchSettings();
+        }
+        catch (Exception ex)
+        {
+            Log($"Settings could not be opened from the notification area: {ex.Message}");
+        }
+    }
+
+    private static void ToggleWidgetsFromNotificationArea(string hookPath)
+    {
+        _ = Task.Run(async () =>
+        {
+            if (!await WidgetToggleGate.WaitAsync(0))
+            {
+                return;
+            }
+
+            try
+            {
+                var enable = !WidgetsAreEnabled();
+                SaveWidgetsEnabled(enable);
+                Interlocked.Exchange(ref s_widgetsEnabled, enable ? 1 : 0);
+
+                if (enable)
+                {
+                    InjectIntoAllExplorers(hookPath);
+                    Log("Widgets enabled from the notification area");
+                }
+                else
+                {
+                    DetachFromAllExplorers();
+                    await Task.Delay(TimeSpan.FromMilliseconds(350));
+                    DetachFromAllExplorers();
+                    Log("Widgets disabled from the notification area");
+                }
+
+                RefreshExplorerShell();
+            }
+            catch (Exception ex)
+            {
+                Log($"Notification area widget toggle failed: {ex}");
+            }
+            finally
+            {
+                WidgetToggleGate.Release();
+            }
+        });
+    }
+
+    private static void InjectIntoAllExplorers(string hookPath)
+    {
+        foreach (var process in GetCurrentSessionExplorers())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (!IsHookLoaded(process, hookPath))
+                    {
+                        InjectHook(process, hookPath);
+                    }
+                    else
+                    {
+                        SignalHookLoad(process.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"Enable skipped explorer {process.Id}: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private static void RefreshExplorerShell()
+    {
+        try
+        {
+            ShellChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            Log($"Explorer refresh skipped: {ex.Message}");
         }
     }
 
@@ -385,6 +549,46 @@ internal static class Program
         catch (Exception ex)
         {
             Log($"Settings app extraction skipped: {ex.Message}");
+        }
+    }
+
+    private static void ExtractVoiceCaptureHelper()
+    {
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = assembly.GetManifestResourceNames()
+                .FirstOrDefault(name => name.EndsWith(
+                    "TaskbarWidgets.VoiceCapture.exe",
+                    StringComparison.OrdinalIgnoreCase));
+            if (resourceName is null)
+            {
+                Log("Embedded TaskbarWidgets.VoiceCapture.exe resource was not found");
+                return;
+            }
+
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+            {
+                Log("Embedded TaskbarWidgets.VoiceCapture.exe resource could not be opened");
+                return;
+            }
+
+            var path = Path.Combine(AppPaths.InstallDirectory, "TaskbarWidgets.VoiceCapture.exe");
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            var bytes = memory.ToArray();
+            if (File.Exists(path) && new FileInfo(path).Length == bytes.Length)
+            {
+                return;
+            }
+
+            File.WriteAllBytes(path, bytes);
+            Log($"Voice capture helper extracted: {path}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Voice capture helper extraction skipped: {ex.Message}");
         }
     }
 
@@ -832,4 +1036,11 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(uint processId);
+
+    [DllImport("shell32.dll", EntryPoint = "SHChangeNotify")]
+    private static extern void ShellChangeNotify(
+        uint eventId,
+        uint flags,
+        IntPtr item1,
+        IntPtr item2);
 }

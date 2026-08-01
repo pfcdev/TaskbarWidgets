@@ -5,111 +5,209 @@
 <h1 align="center">Taskbar Widgets</h1>
 
 <p align="center">
-  Live, native-looking widgets for the Windows 11 taskbar.
+  Useful, live widgets that feel at home on the Windows 11 taskbar.
 </p>
 
 <p align="center">
   <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/pfcdev/TaskbarWidgets?sort=semver&display_name=tag&style=flat-square" /></a>
+  <a href="https://github.com/pfcdev/TaskbarWidgets/releases"><img alt="Total release downloads" src="https://img.shields.io/github/downloads/pfcdev/TaskbarWidgets/total?style=flat-square&label=downloads&color=8B5CF6" /></a>
   <img alt="Windows 11 x64" src="https://img.shields.io/badge/Windows%2011-x64-0078D4?style=flat-square&logo=windows11&logoColor=white" />
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe"><strong>Download the latest installer</strong></a>
+  <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe"><img alt="Download the latest installer" src="https://img.shields.io/badge/DOWNLOAD-LATEST%20INSTALLER-2563EB?style=for-the-badge&logo=windows11&logoColor=white" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest">Release notes</a>
   ·
   <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgets-portable-x64.zip">Portable ZIP</a>
   ·
-  <a href="README.tr.md">Türkçe hızlı başlangıç</a>
+  <a href="README.tr.md">Türkçe</a>
 </p>
 
 <p align="center">
-  <img src="sf.gif" alt="Taskbar Widgets showcase" />
+  <img src="sf.gif" alt="Taskbar Widgets running on the Windows 11 taskbar" />
 </p>
 
-Taskbar Widgets is an open-source Windows 11 x64 application that places useful,
-live information directly on the taskbar. Enable several widgets side by side,
-position them independently, or cycle through them with the optional rotation
-layout. The installer includes the loader, Settings application, native hook,
-media helper, and every built-in widget as one product.
+Taskbar Widgets is a free, open-source app for **Windows 11 x64**. It puts useful
+information and controls directly on your taskbar without replacing the Windows
+shell. Choose only the widgets you want, arrange them by dragging, and manage
+everything from one Settings app.
 
-> [!WARNING]
-> Taskbar Widgets integrates with private Windows 11 XAML surfaces and is still
-> beta software. An incompatible taskbar layout disables the integration instead
-> of forcing it. Unsigned builds may also trigger a Windows SmartScreen warning.
-> Read the [private API risk notes](docs/windows-private-api-risks.md) before use.
+> [!IMPORTANT]
+> Taskbar Widgets is beta software and integrates with private Windows 11 XAML
+> surfaces. A Windows update may temporarily affect compatibility. If the
+> current taskbar layout is unsupported, the integration disables itself instead
+> of forcing a potentially unstable layout.
 
-## One app for every widget
+## See it in action
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/readme/widget-gallery/collage-productivity.png" alt="Codex Status, Discord Voice and Parking Lot widgets" /><br />
+      <strong>Work and communication</strong>
+    </td>
+    <td align="center">
+      <img src="assets/readme/widget-gallery/collage-media-weather.png" alt="Weather and Media Player widgets" /><br />
+      <strong>Weather and media</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/readme/widget-gallery/collage-system-monitoring.png" alt="CPU, memory, storage and network widgets" /><br />
+      <strong>Live system monitoring</strong>
+    </td>
+    <td align="center">
+      <img src="assets/readme/widget-gallery/collage-utilities.png" alt="Steam Downloads and Parking Lot widgets" /><br />
+      <strong>Downloads and quick file parking</strong>
+    </td>
+  </tr>
+</table>
+
+## Get started
+
+1. [Download the latest installer](https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe).
+2. Run the installer and leave **Start Taskbar Widgets** selected on the final page.
+3. Open the notification-area icon and choose **Open Settings**.
+4. Enable the widgets you want, then drag them directly along the taskbar.
+
+The app starts with Windows when that option is selected during installation.
+You can later enable or disable all widgets from the notification-area menu
+without uninstalling anything.
+
+> [!NOTE]
+> Unsigned beta releases may show a Windows SmartScreen warning. The release page
+> includes a SHA-256 checksum so you can verify the installer before running it.
+
+## One Settings app, every widget
 
 <p align="center">
-  <img src="docs/images/settings-library.png" alt="Taskbar Widgets Settings application showing the complete Widget Library" />
+  <img src="docs/images/settings-library.png" alt="Taskbar Widgets Settings showing the Widget Library" />
 </p>
 
-The built-in Widget Library shows the real taskbar design before a widget is
-enabled. Click anywhere on a widget card to configure it, then add it to the
-taskbar from the same screen. Slider Rotation, updates, runtime controls and
-global settings are available from the shared Settings application.
+The Widget Library is the central place to:
 
-## Included widgets
+- enable, disable and configure widgets;
+- choose a taskbar position for each widget;
+- switch between side-by-side and rotation layouts;
+- install Community widgets and review their permissions;
+- check for updates and control the taskbar runtime.
+
+Widgets can also be moved directly on the taskbar. Collision-aware placement
+keeps them away from one another and from taskbar app buttons while dragging.
+
+## Built-in widgets
 
 <table>
   <tr>
     <td align="center" width="50%">
       <img src="assets/readme/widget-weather.png" alt="Weather widget" /><br />
       <strong>Weather</strong><br />
-      Current temperature, city and local forecast with configurable units.
+      Current temperature, location and weather conditions with Celsius or Fahrenheit units.
     </td>
     <td align="center" width="50%">
       <img src="assets/readme/widget-steam-downloads.png" alt="Steam Downloads widget" /><br />
       <strong>Steam Downloads</strong><br />
-      Active game, download progress, speed and estimated remaining time.
+      Active game, progress, transfer speed and download size.
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
       <img src="assets/readme/widget-codex-status.png" alt="Codex Status widget" /><br />
       <strong>Codex Status</strong><br />
-      Active task state, account information, quota usage and reset windows.
+      Active Antigravity/Codex work, quota information and local account controls.
     </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-discord-voice.png" alt="Discord Voice widget" /><br />
+      <strong>Discord Voice</strong><br />
+      Voice-room participants, mute state and a green ring around the current speaker.
+    </td>
+  </tr>
+  <tr>
     <td align="center" width="50%">
       <img src="assets/readme/widget-media-player.png" alt="Media Player widget" /><br />
       <strong>Media Player</strong><br />
-      Current Windows media session, cover art and playback controls.
+      The current Windows media session, cover art and play/pause control.
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-parking-lot.png" alt="Parking Lot widget" /><br />
+      <strong>Parking Lot</strong><br />
+      Temporarily hold files, folders, links or text and drag them out again when needed.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-system-cpu.png" alt="CPU widget" /><br />
+      <strong>CPU</strong><br />
+      Total or per-core activity using compact text, bars or pie meters.
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-system-memory.png" alt="Memory widget" /><br />
+      <strong>Memory</strong><br />
+      Live physical-memory usage in a minimal taskbar meter.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-system-storage.png" alt="Storage widget" /><br />
+      <strong>Storage</strong><br />
+      Read and write throughput for all disks or a selected drive.
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/widget-gallery/widget-system-network.png" alt="Network widget" /><br />
+      <strong>Network</strong><br />
+      Live upload and download throughput for all or selected network adapters.
     </td>
   </tr>
 </table>
 
-**Discord Voice** is also included. It shows voice participants and highlights
-the current speaker after Discord RPC authorization is configured in Settings.
+System meters support configurable colors and refresh intervals from 0.1 to 10
+seconds. Each one is independent, so you can use a single tiny meter or combine
+several into a compact monitoring strip.
 
-### System meters
+## Discord Voice, without modifying Discord
 
-Four lightweight system widgets provide an XMeters-compatible meter layout
-using Taskbar Widgets branding and independently implemented native rendering:
+Discord Voice reads the selected voice room and participant information from the
+normally running Discord desktop window. It does **not** patch Discord, inject
+code into it, require a bot, or ask for an OAuth login.
 
-- **CPU** shows total, user/privileged, or per-core utilization.
-- **Storage** shows read/write throughput for all disks or a selected physical disk.
-- **Network** shows receive/send throughput for all adapters or a selected interface.
-- **Memory** shows used physical-memory percentage.
+For faster speaking-ring updates, Settings can install the optional **Instant
+Speaking Detection** Windows helper. Windows asks for administrator permission
+only when this helper is installed or removed. The helper detects speaking
+start/stop timing; it does not listen to, record or store call audio.
 
-Each meter supports text, bar, and pie views, configurable colors, and refresh
-intervals from 0.1 to 10 seconds. System meters are disabled by default on
-upgrade and can be enabled and positioned independently from the Widget Library.
+Two layouts are available:
 
-### Dynamic Media Player themes
+- **Avatars:** a minimal row of participant avatars.
+- **Voice room:** room title and compact participant avatars below it.
 
-The Media Player derives its background, accent and control colors from the
-current cover art. These clips are cropped directly from a live taskbar session:
+## Parking Lot
+
+Parking Lot is a small drag-and-drop shelf on the taskbar. Drop a file, folder,
+web link or text onto it, switch between parked items with a click, and drag the
+selected item into another folder or application later. Right-click it to remove
+the current item or clear the shelf.
+
+The widget stores references locally. It does not upload parked content.
+
+## Dynamic Media Player themes
+
+The Media Player adapts its background, accent and controls to the current cover
+art. These examples were captured from live Windows media sessions:
 
 <p align="center">
-  <img src="assets/readme/media-dynamic/media-palette-01.gif" alt="Media Player dynamic color palette variation 1" width="280" />
-  <img src="assets/readme/media-dynamic/media-palette-02.gif" alt="Media Player dynamic color palette variation 2" width="280" />
-  <img src="assets/readme/media-dynamic/media-palette-03.gif" alt="Media Player dynamic color palette variation 3" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-01.gif" alt="Media Player dynamic palette 1" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-02.gif" alt="Media Player dynamic palette 2" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-03.gif" alt="Media Player dynamic palette 3" width="280" />
   <br />
-  <img src="assets/readme/media-dynamic/media-palette-04.gif" alt="Media Player dynamic color palette variation 4" width="280" />
-  <img src="assets/readme/media-dynamic/media-palette-05.gif" alt="Media Player dynamic color palette variation 5" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-04.gif" alt="Media Player dynamic palette 4" width="280" />
+  <img src="assets/readme/media-dynamic/media-palette-05.gif" alt="Media Player dynamic palette 5" width="280" />
 </p>
 
-### Codex accounts and IDE controls
+## Codex accounts and IDE controls
 
 <table>
   <tr>
@@ -117,61 +215,61 @@ current cover art. These clips are cropped directly from a live taskbar session:
       <img src="assets/readme/codex-accounts-redacted.png" alt="Codex account switcher with email addresses redacted" />
     </td>
     <td>
-      <p>The Codex widget can manage multiple local Codex accounts without leaving the taskbar:</p>
+      <p>The Codex widget can manage multiple local Codex accounts from the taskbar:</p>
       <ul>
-        <li>switch the active account and inspect its current quota;</li>
-        <li>start the Codex login flow for a new or existing account;</li>
+        <li>switch the active account and inspect its quota;</li>
+        <li>start the Codex login flow;</li>
         <li>remove an account from Taskbar Widgets;</li>
-        <li>restart the configured IDE with the active account profile.</li>
+        <li>restart the configured IDE with the active profile.</li>
       </ul>
       <p><em>Email addresses are intentionally redacted in this screenshot.</em></p>
     </td>
   </tr>
 </table>
 
-## Highlights
+## Layout and everyday controls
 
-- Multiple widgets can run together in a configurable row.
-- Rotation mode can cycle through a selected widget queue.
-- Each widget has independent enable, order, anchor and pixel-offset settings.
-- Providers are isolated: one failed integration does not stop the other widgets.
-- Settings runs completely from local assets without a CDN or Google Fonts.
-- Snapshot writes are atomic and malformed state fails closed at the Explorer boundary.
-- The loader automatically recovers after Explorer restarts and supports safe unload/load.
-- Legacy TaskbarStats settings, accounts and profiles are migrated without deleting the source.
-- The built-in updater downloads only the complete installer and verifies its SHA-256 file.
+<p align="center">
+  <img src="assets/readme/widget-settings-dialog.png" alt="Taskbar Widgets per-widget settings" />
+</p>
 
-## Download and install
+- **Side by side:** show multiple enabled widgets at once.
+- **Rotation:** cycle through a chosen list at a configurable interval.
+- **Direct positioning:** drag a widget along the taskbar and its position is saved automatically.
+- **Notification-area menu:** open Settings or enable/disable widgets quickly.
+- **Explorer recovery:** the app restores its taskbar and notification-area integration after Explorer restarts.
 
-Taskbar Widgets currently supports **Windows 11 x64**.
+## Community widgets
 
-| Package | Use case | Download |
+Taskbar Widgets can install `.twidget` packages made with the Community SDK.
+Before installation, Settings shows the widget's author, requested permissions
+and security level. Community web widgets run outside Explorer in a separate,
+restricted renderer, and optional full-access widgets must clearly explain why
+they need additional permissions.
+
+Only install Community widgets from authors you trust. Removing one does not
+affect built-in widgets or the rest of the app.
+
+## Download options
+
+| Package | Best for | Download |
 | --- | --- | --- |
-| Installer | Recommended installation and automatic updates | [TaskbarWidgetsSetup-x64.exe](https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe) |
-| Portable | Manual or self-contained use | [TaskbarWidgets-portable-x64.zip](https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgets-portable-x64.zip) |
-| Release page | Notes, checksums and release manifest | [Latest GitHub release](https://github.com/pfcdev/TaskbarWidgets/releases/latest) |
+| Installer | Recommended setup, startup integration and updates | [TaskbarWidgetsSetup-x64.exe](https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe) |
+| Portable ZIP | Manual or self-contained use | [TaskbarWidgets-portable-x64.zip](https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgets-portable-x64.zip) |
+| Release page | Release notes, checksums and all assets | [Latest GitHub release](https://github.com/pfcdev/TaskbarWidgets/releases/latest) |
 
-1. Download and run `TaskbarWidgetsSetup-x64.exe`.
-2. Choose the install directory, Windows startup behavior and shortcut options.
-3. Start Taskbar Widgets on the final installer page.
-4. Open Settings from the taskbar widget action or run:
-
-```powershell
-TaskbarWidgets.exe --settings
-```
-
-The default location is:
+The default installer location is:
 
 ```text
 %LOCALAPPDATA%\Programs\TaskbarWidgets
 ```
 
-The uninstaller preserves user data unless **Also remove settings and data** is
-selected explicitly.
+The uninstaller keeps your settings and widget data unless **Also remove settings
+and data** is selected.
 
-### Verify a download
+### Verify the installer
 
-The installer checksum is always available beside the latest release:
+Download the `.sha256` file from the same release, or verify it with PowerShell:
 
 ```powershell
 $expected = (Invoke-WebRequest "https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe.sha256").Content.Split()[0]
@@ -179,69 +277,42 @@ $actual = (Get-FileHash ".\TaskbarWidgetsSetup-x64.exe" -Algorithm SHA256).Hash.
 $actual -eq $expected
 ```
 
-## Layout and Settings
-
-The Settings application provides a widget library, per-widget configuration,
-taskbar positioning, rotation sequencing, update controls and runtime load/unload.
-
-<p align="center">
-  <img src="assets/readme/widget-settings-dialog.png" alt="Media Player widget settings with enable, taskbar position, horizontal offset and dark mode controls" />
-</p>
-
-- **Row mode:** shows every enabled widget side by side in the configured order.
-- **Rotation mode:** shows widgets from a selected queue at a configurable interval.
-- **Positioning:** every widget can be dragged directly along the taskbar; the saved anchor percentage and fine pixel offset remain editable and stay synchronized in Settings.
-- **Unknown widgets:** remain in configuration but stay disabled until supported.
-
-Settings is an internal component. Users launch `TaskbarWidgets.exe`; they do not
-need to install or manage a separate Settings product.
-
 ## Data and privacy
 
-Mutable application data is kept under the installed product's `Data` directory:
+Settings, widget configuration, cached images and runtime state stay on your PC.
+The default data directory is:
 
 ```text
-%LOCALAPPDATA%\Programs\TaskbarWidgets\
-  TaskbarWidgets.exe
-  TaskbarWidgets.Settings.exe
-  TaskbarWidgets.MediaHelper.exe
-  Data\
-    config.json
-    State\
-    Commands\
-    Accounts\
-    Logs\
+%LOCALAPPDATA%\Programs\TaskbarWidgets\Data
 ```
 
-Settings assets are local. Individual integrations may still use the network for
-their own data, such as weather requests, Discord authorization, Steam cover art
-and update checks. Secrets and account data are not stored in the repository.
+Some widgets contact their own data sources—for example weather services,
+release checks or cover-art endpoints. Provider work runs outside Explorer, and
+one failed integration does not stop the other widgets. Secrets and account data
+are never stored in this repository.
 
-## How it works
+## Troubleshooting
 
-Taskbar Widgets separates network and account work from Explorer:
+- **No widgets appear after installation:** start Taskbar Widgets from the Start menu, then check the notification-area icon. If needed, restart Explorer once.
+- **A widget is missing:** open Settings and confirm that the widget is enabled.
+- **Settings does not open:** run `TaskbarWidgets.exe --settings` from the installation folder.
+- **Discord speaking rings update slowly:** enable **Instant Speaking Detection** in Discord Voice settings.
+- **SmartScreen appears:** verify the installer against the published SHA-256 file before continuing.
 
-```text
-Settings UI ──> Data/config.json ──> Loader and providers
-     ^                                      │
-     │                                      v
-Data/Commands/*.json <── actions ── Data/State/*.json
-     │                                      │
-     └──────────────── Explorer hook <──────┘
-```
+More solutions are available in the [troubleshooting guide](docs/troubleshooting.md).
 
-- The **.NET loader** supervises providers, accounts, commands, migration and updates.
-- The **Tauri Settings app** edits configuration through an offline web interface.
-- The **native hook** hosts and renders validated snapshots on the Windows taskbar.
-- The **media helper** talks to Windows media sessions outside Explorer.
+<details>
+<summary><strong>Developer documentation and building from source</strong></summary>
 
-Provider code never executes inside Explorer. Read the full
-[architecture](docs/architecture.md) and [widget protocol](docs/protocol.md) for
-the runtime boundaries and versioned data contracts.
+### Architecture and widget development
 
-## Build from source
+- [Architecture](docs/architecture.md)
+- [Widget protocol](docs/protocol.md)
+- [Adding a built-in widget](docs/adding-a-widget.md)
+- [Community SDK](community-sdk/README.md)
+- [Private Windows API risk notes](docs/windows-private-api-risks.md)
 
-Requirements:
+### Build requirements
 
 - Windows 11 x64
 - PowerShell 5.1 or newer
@@ -259,48 +330,15 @@ cd TaskbarWidgets
 .\build.ps1 -Target Package -InstallDependencies
 ```
 
-`VERSION` is the single version source. Build outputs are written under
-`artifacts/`. Contributors do **not** need Windhawk. See the detailed
-[build guide](docs/building.md) for toolchain and signing information.
+See the [build guide](docs/building.md) for toolchain and signing details.
 
-## Repository layout
-
-```text
-src/loader/       .NET runtime, providers, accounts, commands and updater
-src/settings/     Tauri Settings application and offline web UI
-src/native/       Explorer hook, taskbar renderer and media helper
-widgets/<id>/     widget manifest, provider source and assets
-installer/        NSIS installer
-build/            validation, build, package, signing and release scripts
-docs/             architecture and contributor documentation
-tests/            Explorer-independent contract and native tests
-```
-
-## Create a widget
-
-Built-in widgets use a source contribution model. Each widget owns a
-`widgets/<widget-id>/widget.json` manifest and can provide data through the C#
-`IWidgetProvider` contract and render native taskbar UI through the C++ renderer
-boundary. Arbitrary external DLLs or executable widget packages are not loaded
-in v1.
-
-Start with [Adding a widget](docs/adding-a-widget.md), then review the
-[protocol](docs/protocol.md) and [architecture](docs/architecture.md).
-
-## Troubleshooting
-
-- **Widgets are missing:** confirm Windows 11 x64, restart Explorer once and inspect `Data\Logs\loader.log` and `Data\Logs\hook.log`.
-- **One integration fails:** inspect `Data\State\<widget-id>.json`; other providers should continue running.
-- **Settings does not open:** run `TaskbarWidgets.exe --settings` and verify `TaskbarWidgets.Settings.exe` exists beside it.
-- **SmartScreen appears:** compare the installer with the published SHA-256 file before continuing.
-
-More solutions are available in the [troubleshooting guide](docs/troubleshooting.md).
+</details>
 
 ## Contributing and security
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening
-a pull request. Report security issues through the process in
-[SECURITY.md](SECURITY.md), not in a public issue.
+a pull request. Report security issues through [SECURITY.md](SECURITY.md), not in
+a public issue.
 
 Taskbar Widgets is released under the [MIT License](LICENSE).
 
@@ -309,7 +347,7 @@ Taskbar Widgets is released under the [MIT License](LICENSE).
 <p align="center">
   <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest/download/TaskbarWidgetsSetup-x64.exe"><strong>Download Taskbar Widgets</strong></a>
   ·
-  <a href="https://github.com/pfcdev/TaskbarWidgets/issues">Report an issue</a>
+  <a href="https://github.com/pfcdev/TaskbarWidgets/releases/latest">Release notes</a>
   ·
-  <a href="README.tr.md">Türkçe</a>
+  <a href="https://github.com/pfcdev/TaskbarWidgets/issues">Report an issue</a>
 </p>

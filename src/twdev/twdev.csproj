@@ -6,13 +6,14 @@
     <Nullable>enable</Nullable>
     <AssemblyName>twdev</AssemblyName>
     <RootNamespace>TaskbarWidgets.TwDev</RootNamespace>
-    <Version>0.4.2</Version>
+    <Version>0.5.21</Version>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\loader\AppPaths.cs" Link="Loader\AppPaths.cs" />
     <Compile Include="..\loader\Core\WidgetContracts.cs" Link="Loader\Core\WidgetContracts.cs" />
     <Compile Include="..\loader\Core\WidgetConfiguration.cs" Link="Loader\Core\WidgetConfiguration.cs" />
     <Compile Include="..\loader\Core\CommunityWidgetRegistry.cs" Link="Loader\Core\CommunityWidgetRegistry.cs" />
+    <Compile Include="..\loader\Core\CommunityPermissions.cs" Link="Loader\Core\CommunityPermissions.cs" />
     <Compile Include="..\loader\Generated\WidgetCatalog.g.cs" Link="Loader\Generated\WidgetCatalog.g.cs" />
   </ItemGroup>
 </Project>

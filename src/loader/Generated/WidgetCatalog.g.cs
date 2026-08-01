@@ -9,6 +9,7 @@ internal static class WidgetCatalog
         "codex-status",
         "discord-voice",
         "media-player",
+        "parking-lot",
         "steam-download",
         "system-cpu",
         "system-memory",

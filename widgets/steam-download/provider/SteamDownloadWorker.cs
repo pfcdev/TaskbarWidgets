@@ -44,6 +44,12 @@ internal static class SteamDownloadWorker
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!ProviderActivation.IsEnabled("steam-download"))
+            {
+                previousBytes.Clear();
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                continue;
+            }
             try
             {
                 var snapshot = BuildSnapshot(previousBytes, cancellationToken);

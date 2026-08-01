@@ -10,23 +10,84 @@
         { "type": "object", "required": ["bind"], "properties": { "bind": { "pattern": "^(data|settings)\\." } } }
       ]
     },
+    "stringBinding": {
+      "oneOf": [
+        { "type": "string", "maxLength": 32768 },
+        {
+          "type": "object",
+          "required": ["bind"],
+          "properties": {
+            "bind": { "pattern": "^(data|settings)\\." },
+            "fallback": { "type": "string", "maxLength": 32768 }
+          }
+        }
+      ]
+    },
+    "colorBinding": {
+      "oneOf": [
+        { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" },
+        {
+          "type": "object",
+          "required": ["bind"],
+          "properties": {
+            "bind": { "pattern": "^(data|settings)\\." },
+            "fallback": { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" }
+          }
+        }
+      ]
+    },
+    "thickness": {
+      "oneOf": [
+        { "type": "number", "minimum": 0, "maximum": 32 },
+        {
+          "type": "object",
+          "properties": {
+            "left": { "type": "number", "minimum": 0, "maximum": 32 },
+            "top": { "type": "number", "minimum": 0, "maximum": 32 },
+            "right": { "type": "number", "minimum": 0, "maximum": 32 },
+            "bottom": { "type": "number", "minimum": 0, "maximum": 32 }
+          }
+        }
+      ]
+    },
     "node": {
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["row", "column", "spacer", "divider", "text", "icon", "image", "progress", "bar", "pie", "sparkline"] },
+        "type": { "enum": ["row", "column", "card", "button", "spacer", "divider", "text", "icon", "image", "progress", "bar", "pie", "sparkline"] },
         "gap": { "type": "number", "minimum": 0, "maximum": 24 },
         "children": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/node" } },
         "text": { "type": "string", "maxLength": 256 },
+        "label": { "type": "string", "maxLength": 80 },
+        "glyph": { "$ref": "#/$defs/stringBinding" },
+        "source": { "$ref": "#/$defs/stringBinding" },
+        "action": { "type": "string", "pattern": "^(\\$close|\\$settings|[a-zA-Z0-9._:-]{1,120})$" },
         "bind": { "type": "string", "pattern": "^(data|settings)\\." },
         "format": { "enum": ["bytesPerSecond", "percent", "number", "duration", "dateTime"] },
         "value": { "$ref": "#/$defs/binding" },
-        "color": { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" },
+        "color": { "$ref": "#/$defs/colorBinding" },
+        "backgroundColor": { "$ref": "#/$defs/colorBinding" },
+        "backgroundGradient": {
+          "type": "object",
+          "required": ["startColor", "endColor"],
+          "properties": {
+            "startColor": { "$ref": "#/$defs/colorBinding" },
+            "endColor": { "$ref": "#/$defs/colorBinding" }
+          }
+        },
         "outlineColor": { "type": "string", "pattern": "^(systemAccent|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$" },
-        "width": { "type": "number", "minimum": 0, "maximum": 480 },
-        "height": { "type": "number", "minimum": 0, "maximum": 48 },
+        "width": { "type": "number", "minimum": 0, "maximum": 640 },
+        "height": { "type": "number", "minimum": 0, "maximum": 480 },
+        "padding": { "$ref": "#/$defs/thickness" },
+        "radius": { "type": "number", "minimum": 0, "maximum": 24 },
         "diameter": { "type": "number", "minimum": 8, "maximum": 48 },
-        "fontSize": { "type": "number", "minimum": 8, "maximum": 18 }
+        "fontSize": { "type": "number", "minimum": 8, "maximum": 32 },
+        "fontWeight": { "enum": ["normal", "semibold", "bold"] },
+        "trimming": { "enum": ["none", "characterEllipsis"] },
+        "marquee": { "type": "boolean" },
+        "stretch": { "enum": ["uniformToFill", "uniform", "fill"] },
+        "horizontalAlignment": { "enum": ["left", "center", "right", "stretch"] },
+        "verticalAlignment": { "enum": ["top", "center", "bottom", "stretch"] }
       }
     }
   }

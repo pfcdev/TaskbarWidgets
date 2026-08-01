@@ -32,6 +32,11 @@ internal static class WeatherWorker
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!ProviderActivation.IsEnabled("weather-static"))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+                continue;
+            }
             var city = ReadConfiguredCity();
             var now = DateTimeOffset.UtcNow;
             var cityChanged = !string.Equals(city, lastCity, StringComparison.OrdinalIgnoreCase);

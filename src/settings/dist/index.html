@@ -1,5 +1,5 @@
 <!doctype html>
-<html class="dark" lang="en">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,14 +8,14 @@
   </head>
   <body>
     <main class="app-shell">
-      <aside class="sidebar">
+      <aside class="sidebar" aria-label="Taskbar Widgets">
         <div class="sidebar-head">
           <div class="app-icon">
             <img src="./assets/logo.png" alt="" />
           </div>
           <div>
             <h1>Taskbar Widgets</h1>
-            <p><span class="service-dot"></span>System Service: Running</p>
+            <p>Settings</p>
           </div>
         </div>
 
@@ -40,21 +40,27 @@
             <span class="material-symbols-outlined">system_update</span>
             <span>Updates</span>
           </button>
+        </nav>
+
+        <div class="sidebar-foot">
           <button class="nav-item" data-page="settings">
             <span class="material-symbols-outlined">settings</span>
             <span>Settings</span>
           </button>
-        </nav>
-
-        <div class="sidebar-foot">
-          <button class="nav-item muted" type="button">
+          <div class="nav-separator" role="separator"></div>
+          <button class="nav-item" data-page="help" type="button">
             <span class="material-symbols-outlined">help</span>
             <span>Help</span>
           </button>
-          <button class="nav-item muted" type="button">
+          <button class="nav-item" data-external-link="feedback" type="button">
             <span class="material-symbols-outlined">chat_bubble</span>
             <span>Feedback</span>
           </button>
+          <div class="service-state" aria-label="System service running">
+            <span class="service-dot"></span>
+            <span>System service</span>
+            <strong>Running</strong>
+          </div>
         </div>
       </aside>
 
@@ -62,8 +68,6 @@
         <div id="page" class="page"></div>
       </section>
     </main>
-
-    <div id="taskbar-preview" class="floating-taskbar"></div>
 
     <script src="./generated/widget-catalog.js"></script>
     <script src="./app.js"></script>

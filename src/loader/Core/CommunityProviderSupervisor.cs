@@ -31,7 +31,9 @@ internal static class CommunityProviderSupervisor
             {
                 Log("Community provider supervisor: " + ex.Message);
             }
-            await Task.Delay(250, cancellationToken);
+            // Community providers have a one-second minimum refresh contract.
+            // Avoid reparsing config.json four times per second while none run.
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
 
@@ -42,10 +44,14 @@ internal static class CommunityProviderSupervisor
         foreach (var instance in configuration.Widgets.Where(widget => widget.Enabled))
         {
             var definition = CommunityWidgetRegistry.Find(instance.WidgetId);
-            if (definition is not { Valid: true, Renderer: "declarative" }) continue;
+            if (definition is not { Valid: true } ||
+                definition.Renderer is not ("declarative" or "native" or "web") ||
+                definition.ProcessRuntime is not null) continue;
             if (!IsSafeInstanceId(instance.InstanceId)) continue;
-            if (definition.Permissions.Count > 0 &&
-                instance.Settings["_permissionsApproved"]?.GetValue<bool?>() != true)
+            if (definition.ManifestSchemaVersion >= 4
+                ? !CommunityPermissions.IsApproved(definition)
+                : definition.Permissions.Count > 0 &&
+                  instance.Settings["_permissionsApproved"]?.GetValue<bool?>() != true)
             {
                 continue;
             }
@@ -83,6 +89,7 @@ internal static class CommunityProviderSupervisor
         CancellationToken cancellationToken)
     {
         var provider = definition.Provider;
+        var effectivePermissions = CommunityPermissions.Effective(definition);
         if (provider is null || provider.Type == "static")
         {
             return provider?.Configuration["data"]?.DeepClone().AsObject() ?? new JsonObject();
@@ -102,7 +109,7 @@ internal static class CommunityProviderSupervisor
         {
             var url = provider.Configuration["url"]?.GetValue<string>()
                       ?? throw new InvalidDataException("http-json provider requires url.");
-            return await CommunityHttpBroker.GetJsonAsync(url, definition.Permissions, cancellationToken);
+            return await CommunityHttpBroker.GetJsonAsync(url, effectivePermissions, cancellationToken);
         }
         if (provider.Type != "javascript" || string.IsNullOrWhiteSpace(provider.Path))
         {
@@ -119,8 +126,14 @@ internal static class CommunityProviderSupervisor
         {
             ["source"] = source,
             ["settings"] = CommunitySecretStore.Unprotect(instance.Settings),
-            ["networkHosts"] = definition.Permissions["network"]?.DeepClone() ?? new JsonArray(),
-            ["systemMetrics"] = ReadAllowedSystemMetrics(definition.Permissions),
+            ["networkHosts"] = new JsonArray(
+                CommunityPermissions.NetworkHosts(effectivePermissions)
+                    .Select(host => JsonValue.Create(host))
+                    .ToArray()),
+            ["networkUnrestricted"] =
+                CommunityPermissions.HasUnrestrictedNetwork(effectivePermissions),
+            ["permissions"] = effectivePermissions.DeepClone(),
+            ["systemMetrics"] = ReadAllowedSystemMetrics(effectivePermissions),
             ["widgetId"] = definition.Id,
             ["instanceId"] = instance.InstanceId
         };
@@ -130,10 +143,8 @@ internal static class CommunityProviderSupervisor
     private static JsonObject ReadAllowedSystemMetrics(JsonObject permissions)
     {
         var result = new JsonObject();
-        if (permissions["systemMetrics"] is not JsonArray metrics) return result;
-        foreach (var node in metrics)
+        foreach (var metric in CommunityPermissions.SystemMetrics(permissions))
         {
-            var metric = node?.GetValue<string>();
             if (metric is not ("cpu" or "storage" or "network" or "memory")) continue;
             try
             {
@@ -413,12 +424,12 @@ internal static class CommunityHttpBroker
         JsonObject permissions,
         CancellationToken cancellationToken)
     {
-        var allowed = permissions["network"]?.AsArray()
-            .Select(node => node?.GetValue<string>())
-            .Where(host => !string.IsNullOrWhiteSpace(host))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var allowed = CommunityPermissions.NetworkHosts(permissions)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unrestricted = CommunityPermissions.HasUnrestrictedNetwork(permissions);
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps || !allowed.Contains(uri.IdnHost))
+            uri.Scheme != Uri.UriSchemeHttps ||
+            (!unrestricted && !allowed.Contains(uri.IdnHost)))
         {
             throw new InvalidOperationException("HTTP target is not allowed by the widget manifest.");
         }

@@ -7,13 +7,14 @@
     <AssemblyName>TaskbarWidgets</AssemblyName>
     <RootNamespace>TaskbarWidgets.Loader</RootNamespace>
     <ApplicationIcon>..\settings\src-tauri\icons\icon.ico</ApplicationIcon>
-    <Version>0.4.2</Version>
-    <AssemblyVersion>0.4.2.0</AssemblyVersion>
-    <FileVersion>0.4.2.0</FileVersion>
+    <Version>0.5.21</Version>
+    <AssemblyVersion>0.5.21.0</AssemblyVersion>
+    <FileVersion>0.5.21.0</FileVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +24,9 @@
     <EmbeddedResource Include="Resources\TaskbarWidgets.Settings.exe"
                       Condition="Exists('Resources\TaskbarWidgets.Settings.exe')"
                       LogicalName="TaskbarWidgets.Settings.exe" />
+    <EmbeddedResource Include="Resources\TaskbarWidgets.VoiceCapture.exe"
+                      Condition="Exists('Resources\TaskbarWidgets.VoiceCapture.exe')"
+                      LogicalName="TaskbarWidgets.VoiceCapture.exe" />
     <Compile Include="..\..\widgets\**\provider\*.cs"
              Link="Widgets\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

@@ -1,0 +1,11 @@
+{
+  "$schema": "../widget.schema.json",
+  "schemaVersion": 1,
+  "id": "parking-lot",
+  "displayName": "Parking Lot",
+  "category": "Utility",
+  "description": "Temporarily park files, folders, text and links on the taskbar for drag-and-drop reuse.",
+  "defaultSize": { "width": 64, "height": 32 },
+  "assets": [],
+  "settings": []
+}

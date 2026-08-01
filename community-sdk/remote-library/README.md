@@ -29,6 +29,10 @@ Each widget folder contains an `info.json` based on `info.example.json`.
 - `author.name` is displayed in Explore and Installed.
 - `permissions` is shown in Explore. The installer independently reads the authoritative permissions from the downloaded package.
 - `preview` is optional and, when present, must be a PNG file name in the same folder.
+- `renderer` is `declarative`, `native`, or `web` for schema v2-v4. Explore
+  displays this before download; the package manifest remains authoritative.
+- For schema v4, `permissions` must be an exact copy of the packaged
+  `permissions` object, including required/optional entries, scope and reason.
 
 Generate the hash on Windows with:
 
@@ -38,7 +42,11 @@ Generate the hash on Windows with:
 
 The server should return JSON and package files over HTTPS. Directory listing is not required. A missing or invalid `index.json` produces a friendly “library not ready” screen; it does not affect installed widgets.
 
-Downloads are limited to 10 MB. Settings re-fetches `info.json`, downloads only from this fixed PFC origin, verifies SHA-256, validates the `.twidget`, and then opens the permission review screen. Nothing is installed merely by opening Explore.
+Downloads are limited to 250 MB and packages to 5000 files. Settings re-fetches
+`info.json`, downloads only from this fixed PFC origin, verifies SHA-256,
+validates the `.twidget`, compares advertised permissions with the package, and
+then opens the permission review screen. Nothing is installed or executed
+merely by opening Explore or selecting a `.twidget`.
 
 ## Updates and removal
 

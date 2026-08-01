@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <title>Focus Island</title>
+</head>
+<body>
+  <main class="island" aria-label="Focus timer">
+    <section class="compact" data-taskbar-widget-drag>
+      <span class="status-dot"></span>
+      <span id="clock" class="clock">--:--</span>
+      <span class="divider"></span>
+      <span id="compact-state" class="compact-state">Ready</span>
+      <span id="compact-time" class="compact-time">25:00</span>
+    </section>
+
+    <section class="expanded">
+      <header data-taskbar-widget-drag>
+        <div>
+          <p class="eyebrow">FOCUS ISLAND</p>
+          <h1 id="title">Ready to focus</h1>
+        </div>
+        <time id="large-clock">--:--</time>
+      </header>
+      <div class="timer">
+        <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+          <circle class="ring-track" cx="50" cy="50" r="43"></circle>
+          <circle id="ring-value" class="ring-value" cx="50" cy="50" r="43"></circle>
+        </svg>
+        <div class="timer-copy">
+          <strong id="remaining">25:00</strong>
+          <span id="phase">Focus session</span>
+        </div>
+      </div>
+      <nav aria-label="Timer controls">
+        <button id="reset" class="ghost" type="button" title="Reset">↺</button>
+        <button id="toggle" class="primary" type="button">Start focus</button>
+        <button id="skip" class="ghost" type="button" title="Skip phase">›</button>
+      </nav>
+    </section>
+  </main>
+  <script src="widget.js"></script>
+</body>
+</html>

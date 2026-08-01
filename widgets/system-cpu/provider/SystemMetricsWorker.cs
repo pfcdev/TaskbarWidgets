@@ -15,6 +15,11 @@ internal static class SystemMetricsWorker
     {
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!ProviderActivation.IsEnabled(widgetId))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                continue;
+            }
             var settings = ReadSettings(widgetId);
             try
             {

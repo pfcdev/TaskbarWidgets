@@ -10,6 +10,7 @@
 #include <windowsx.h>
 #include <gdiplus.h>
 #include <ocidl.h>
+#include <UIAutomation.h>
 #include <xamlom.h>
 #undef DllGetClassObject
 #undef DllCanUnloadNow
@@ -24,15 +25,18 @@
 #include <cmath>
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <winrt/base.h>
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Storage.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
@@ -54,7 +58,9 @@
 #include <cstdio>
 
 namespace wf = winrt::Windows::Foundation;
+namespace wadt = winrt::Windows::ApplicationModel::DataTransfer;
 namespace wdj = winrt::Windows::Data::Json;
+namespace wst = winrt::Windows::Storage;
 namespace wuc = winrt::Windows::UI::Core;
 namespace wux = winrt::Windows::UI::Xaml;
 namespace wuxc = winrt::Windows::UI::Xaml::Controls;
@@ -69,6 +75,7 @@ std::atomic_bool g_tapInitialized = false;
 std::atomic_bool g_delayedInitializationScheduled = false;
 std::atomic_bool g_uninitializing = false;
 std::atomic_uint g_commandSequence = 0;
+std::atomic<HANDLE> g_refreshRequestEvent = nullptr;
 thread_local bool g_initializedForThread = false;
 bool g_inInjectTaskbarWidgetsTap = false;
 constexpr PCWSTR kTaskbarWidgetsLayoutMarkerName =
@@ -327,6 +334,51 @@ void WriteTaskbarWidgetsCommand(const std::wstring& command,
     }
 }
 
+void WriteCommunityWidgetCommand(const std::wstring& widgetId,
+                                 const std::wstring& instanceId,
+                                 const std::wstring& action) {
+    if (widgetId.empty() || instanceId.empty() || action.empty()) return;
+    std::wstring directory = GetTaskbarWidgetsPath(L"Commands");
+    if (directory.empty()) return;
+    CreateDirectory(directory.c_str(), nullptr);
+
+    SYSTEMTIME time{};
+    GetSystemTime(&time);
+    WCHAR fileName[128]{};
+    swprintf_s(fileName, L"\\%04u%02u%02u%02u%02u%02u%03u_%u_%u.json",
+               time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+               time.wSecond, time.wMilliseconds, GetCurrentProcessId(),
+               ++g_commandSequence);
+    const std::wstring path = directory + fileName;
+    const std::wstring temporaryPath = path + L".tmp";
+    const long long createdAt = static_cast<long long>(std::time(nullptr));
+    const std::string json =
+        "{\"schemaVersion\":1,\"commandId\":\"" +
+        WideToUtf8(std::to_wstring(createdAt)) + "-" +
+        WideToUtf8(std::to_wstring(GetCurrentProcessId())) +
+        "\",\"action\":\"communityInvoke\",\"createdAtUnix\":" +
+        std::to_string(createdAt) +
+        ",\"widgetId\":\"" + JsonEscapeUtf8(widgetId) +
+        "\",\"arguments\":{\"instanceId\":\"" + JsonEscapeUtf8(instanceId) +
+        "\",\"action\":\"" + JsonEscapeUtf8(action) +
+        "\",\"value\":{}}}\n";
+
+    HANDLE file = CreateFile(temporaryPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                             CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    const bool complete =
+        WriteFile(file, json.data(), static_cast<DWORD>(json.size()), &written,
+                  nullptr) &&
+        written == json.size();
+    FlushFileBuffers(file);
+    CloseHandle(file);
+    if (!complete ||
+        !MoveFileEx(temporaryPath.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        DeleteFile(temporaryPath.c_str());
+    }
+}
+
 HMODULE GetCurrentModuleHandle() {
     HMODULE module = nullptr;
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -445,6 +497,11 @@ std::vector<std::wstring> GetAntigravityProjectTitles();
 struct WidgetInstanceRuntime;
 struct DynamicWidgetDefinition;
 const DynamicWidgetDefinition* FindDynamicWidget(const std::wstring& id);
+bool HasNativeExpandedWidget(const std::wstring& id);
+bool ShowDynamicWidgetPopup(const wux::UIElement& anchor,
+                            const std::wstring& widgetId,
+                            const std::wstring& instanceId);
+void HideDynamicWidgetPopup();
 std::wstring ReadActiveWidgetDesign();
 wux::UIElement MakePngImage(PCWSTR assetName, double width, double height);
 long long CurrentUnixTime();
@@ -476,6 +533,17 @@ void RefreshInsertedTaskbarWidgetsRoots();
 void ApplyTaskbarWidgetsAnchorMargin(wux::FrameworkElement const& root,
                                    wuxc::Grid const& parent,
                                    wux::FrameworkElement const& trayElement);
+void RefreshParkingLotPanel(wux::UIElement const& root);
+void SetParkingLotDropHighlight(wux::UIElement const& root, bool highlighted);
+void SetNamedVisibility(wux::UIElement const& root, PCWSTR name,
+                        wux::Visibility visibility);
+void SetNamedIconGlyph(wux::UIElement const& root, PCWSTR name, PCWSTR glyph);
+winrt::fire_and_forget HandleParkingLotDrop(
+    wux::UIElement root, wux::DragEventArgs args);
+winrt::fire_and_forget HandleParkingLotDragStarting(
+    wux::UIElement root, wux::DragStartingEventArgs args);
+void CycleParkingLotSelection(wux::UIElement const& root);
+void ShowParkingLotContextMenu(wux::UIElement const& root);
 
 struct CodexAccountInfo {
     std::wstring id;
@@ -513,6 +581,8 @@ struct WidgetDragState {
     bool suppressTap{};
     double startPointerX{};
     double startLeft{};
+    double grabOffsetX{};
+    std::optional<taskbar_widgets::HorizontalSpan> activeGap;
 };
 
 struct WidgetDragOverride {
@@ -524,6 +594,31 @@ struct WidgetDragOverride {
 };
 
 thread_local std::unordered_map<uintptr_t, WidgetDragOverride> g_widgetDragOverrides;
+
+struct CachedTaskbarObstacles {
+    std::vector<taskbar_widgets::HorizontalSpan> spans;
+    std::chrono::steady_clock::time_point capturedAt{};
+};
+
+thread_local std::unordered_map<uintptr_t, CachedTaskbarObstacles>
+    g_taskbarObstacleCache;
+
+struct CachedTaskbarUiaButtons {
+    std::vector<RECT> rectangles;
+    std::chrono::steady_clock::time_point capturedAt{};
+};
+
+std::mutex g_taskbarUiaCacheMutex;
+std::unordered_map<HWND, CachedTaskbarUiaButtons> g_taskbarUiaButtonCache;
+
+void RefreshTaskbarUiaButtonCache();
+
+void RefreshTaskbarObstacleCacheForDrag(
+    wux::UIElement const& draggedWidget,
+    wuxc::Canvas const& host);
+std::vector<taskbar_widgets::HorizontalSpan> BuildLiveDragObstacles(
+    wux::UIElement const& draggedWidget,
+    wuxc::Canvas const& host);
 
 uintptr_t WidgetElementKey(wux::UIElement const& element) noexcept {
     return reinterpret_cast<uintptr_t>(winrt::get_abi(element));
@@ -687,19 +782,118 @@ wux::FrameworkElement MakeWeatherPanel() {
     return weather;
 }
 
+wux::FrameworkElement MakeDiscordMuteIcon(PCWSTR name, double size) {
+    wuxc::Canvas icon;
+    icon.Name(name);
+    icon.Width(size);
+    icon.Height(size);
+    icon.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    icon.VerticalAlignment(wux::VerticalAlignment::Bottom);
+    icon.Visibility(wux::Visibility::Collapsed);
+
+    // Discord's mute mark is a microphone silhouette crossed by a diagonal
+    // stroke. Keep the geometry, but use neutral tones and no badge/background.
+    auto microphoneBrush = MakeBrush(0xFF, 0x94, 0x9B, 0xA4);
+    auto slashBrush = MakeBrush(0xFF, 0xF2, 0xF3, 0xF5);
+    const double bodyStroke = std::max(1.0, size * 0.12);
+    const double slashStroke = std::max(1.2, size * 0.15);
+
+    wuxs::Rectangle body;
+    body.Width(size * 0.28);
+    body.Height(size * 0.50);
+    body.RadiusX(size * 0.14);
+    body.RadiusY(size * 0.14);
+    body.Fill(microphoneBrush);
+    wuxc::Canvas::SetLeft(body, size * 0.36);
+    wuxc::Canvas::SetTop(body, size * 0.06);
+
+    wuxm::PathGeometry cradleGeometry;
+    wuxm::PathFigure cradleFigure;
+    cradleFigure.StartPoint(wf::Point{
+        static_cast<float>(size * 0.18), static_cast<float>(size * 0.43)});
+
+    wuxm::BezierSegment cradleLeft;
+    cradleLeft.Point1(wf::Point{
+        static_cast<float>(size * 0.18), static_cast<float>(size * 0.67)});
+    cradleLeft.Point2(wf::Point{
+        static_cast<float>(size * 0.31), static_cast<float>(size * 0.77)});
+    cradleLeft.Point3(wf::Point{
+        static_cast<float>(size * 0.50), static_cast<float>(size * 0.77)});
+    cradleFigure.Segments().Append(cradleLeft);
+
+    wuxm::BezierSegment cradleRight;
+    cradleRight.Point1(wf::Point{
+        static_cast<float>(size * 0.69), static_cast<float>(size * 0.77)});
+    cradleRight.Point2(wf::Point{
+        static_cast<float>(size * 0.82), static_cast<float>(size * 0.67)});
+    cradleRight.Point3(wf::Point{
+        static_cast<float>(size * 0.82), static_cast<float>(size * 0.43)});
+    cradleFigure.Segments().Append(cradleRight);
+    cradleGeometry.Figures().Append(cradleFigure);
+
+    wuxs::Path cradle;
+    cradle.Data(cradleGeometry);
+    cradle.Stroke(microphoneBrush);
+    cradle.StrokeThickness(bodyStroke);
+    cradle.StrokeStartLineCap(wuxm::PenLineCap::Round);
+    cradle.StrokeEndLineCap(wuxm::PenLineCap::Round);
+
+    wuxs::Line stem;
+    stem.X1(size * 0.50);
+    stem.Y1(size * 0.75);
+    stem.X2(size * 0.50);
+    stem.Y2(size * 0.91);
+    stem.Stroke(microphoneBrush);
+    stem.StrokeThickness(bodyStroke);
+    stem.StrokeStartLineCap(wuxm::PenLineCap::Round);
+    stem.StrokeEndLineCap(wuxm::PenLineCap::Round);
+
+    wuxs::Line base;
+    base.X1(size * 0.31);
+    base.Y1(size * 0.91);
+    base.X2(size * 0.69);
+    base.Y2(size * 0.91);
+    base.Stroke(microphoneBrush);
+    base.StrokeThickness(bodyStroke);
+    base.StrokeStartLineCap(wuxm::PenLineCap::Round);
+    base.StrokeEndLineCap(wuxm::PenLineCap::Round);
+
+    wuxs::Line slash;
+    slash.X1(size * 0.12);
+    slash.Y1(size * 0.88);
+    slash.X2(size * 0.88);
+    slash.Y2(size * 0.12);
+    slash.Stroke(slashBrush);
+    slash.StrokeThickness(slashStroke);
+    slash.StrokeStartLineCap(wuxm::PenLineCap::Round);
+    slash.StrokeEndLineCap(wuxm::PenLineCap::Round);
+
+    icon.Children().Append(body.as<wux::UIElement>());
+    icon.Children().Append(cradle.as<wux::UIElement>());
+    icon.Children().Append(stem.as<wux::UIElement>());
+    icon.Children().Append(base.as<wux::UIElement>());
+    icon.Children().Append(slash.as<wux::UIElement>());
+    return icon;
+}
+
 wux::FrameworkElement MakeDiscordPanel() {
     wuxc::Border discord;
     discord.Name(L"TaskbarWidgetsDiscordPanel");
-    discord.Height(36);
+    discord.Height(40);
     discord.Width(184);
     discord.Visibility(wux::Visibility::Collapsed);
     discord.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
     discord.Background(MakeBrush(0xF5, 0x11, 0x11, 0x11));
     discord.BorderBrush(MakeBrush(0xFF, 0x2D, 0x2D, 0x2D));
     discord.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
-    discord.Padding(wux::ThicknessHelper::FromLengths(8, 3, 8, 3));
+    discord.Padding(wux::ThicknessHelper::FromUniformLength(1));
+
+    wuxc::Grid themes;
+    themes.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    themes.VerticalAlignment(wux::VerticalAlignment::Center);
 
     wuxc::StackPanel row;
+    row.Name(L"TaskbarWidgetsDiscordAvatarsTheme");
     row.Orientation(wuxc::Orientation::Horizontal);
     row.VerticalAlignment(wux::VerticalAlignment::Center);
     row.HorizontalAlignment(wux::HorizontalAlignment::Center);
@@ -707,6 +901,14 @@ wux::FrameworkElement MakeDiscordPanel() {
     for (int i = 0; i < 5; ++i) {
         std::wstring frameName = L"TaskbarWidgetsDiscordAvatarFrame" + std::to_wstring(i);
         std::wstring avatarName = L"TaskbarWidgetsDiscordAvatarEllipse" + std::to_wstring(i);
+        std::wstring mutedName = L"TaskbarWidgetsDiscordAvatarMuted" + std::to_wstring(i);
+
+        wuxc::Grid slot;
+        slot.Width(34);
+        slot.Height(36);
+        slot.Margin(wux::ThicknessHelper::FromLengths(1, 0, 1, 0));
+        slot.Visibility(wux::Visibility::Collapsed);
+        slot.Name(L"TaskbarWidgetsDiscordAvatarSlot" + std::to_wstring(i));
 
         wuxc::Border frame;
         frame.Name(frameName);
@@ -716,9 +918,9 @@ wux::FrameworkElement MakeDiscordPanel() {
         frame.BorderThickness(wux::ThicknessHelper::FromUniformLength(2));
         frame.BorderBrush(MakeBrush(0x00, 0x00, 0x00, 0x00));
         frame.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
-        frame.Margin(wux::ThicknessHelper::FromLengths(2, 0, 2, 0));
-        frame.Visibility(wux::Visibility::Collapsed);
         frame.Padding(wux::ThicknessHelper::FromUniformLength(1));
+        frame.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        frame.VerticalAlignment(wux::VerticalAlignment::Center);
 
         wuxs::Ellipse avatar;
         avatar.Name(avatarName);
@@ -726,13 +928,141 @@ wux::FrameworkElement MakeDiscordPanel() {
         avatar.Height(24);
         avatar.HorizontalAlignment(wux::HorizontalAlignment::Center);
         avatar.VerticalAlignment(wux::VerticalAlignment::Center);
-        avatar.Opacity(0.38);
+        avatar.Opacity(1.0);
         avatar.Fill(MakeBrush(0xFF, 0x1F, 0x24, 0x2D));
         frame.Child(avatar);
-        row.Children().Append(frame.as<wux::UIElement>());
+
+        auto muted = MakeDiscordMuteIcon(mutedName.c_str(), 12);
+        // Centre the icon on the avatar's bottom-right edge: approximately
+        // half of the mark remains over the avatar and half extends outside.
+        muted.Margin(wux::ThicknessHelper::FromLengths(0, 0, -1, 0));
+        wuxc::Canvas::SetZIndex(muted, 2);
+
+        slot.Children().Append(frame.as<wux::UIElement>());
+        slot.Children().Append(muted.as<wux::UIElement>());
+        row.Children().Append(slot.as<wux::UIElement>());
     }
 
-    discord.Child(row);
+    wuxc::Grid channelTheme;
+    channelTheme.Name(L"TaskbarWidgetsDiscordChannelTheme");
+    channelTheme.Width(118);
+    channelTheme.Height(38);
+    channelTheme.Visibility(wux::Visibility::Collapsed);
+
+    wuxc::ColumnDefinition iconColumn;
+    iconColumn.Width(wux::GridLengthHelper::FromPixels(24));
+    wuxc::ColumnDefinition contentColumn;
+    contentColumn.Width(wux::GridLengthHelper::FromPixels(94));
+    channelTheme.ColumnDefinitions().Append(iconColumn);
+    channelTheme.ColumnDefinitions().Append(contentColumn);
+
+    wuxc::FontIcon voiceIcon;
+    voiceIcon.Name(L"TaskbarWidgetsDiscordVoiceIcon");
+    voiceIcon.Glyph(L"\xE767");
+    voiceIcon.FontFamily(wuxm::FontFamily(L"Segoe MDL2 Assets"));
+    voiceIcon.FontSize(14);
+    voiceIcon.Foreground(MakeBrush(0xFF, 0x57, 0xD1, 0x8C));
+    voiceIcon.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    voiceIcon.VerticalAlignment(wux::VerticalAlignment::Center);
+    wuxc::Grid::SetColumn(voiceIcon, 0);
+
+    wuxc::Grid channelContent;
+    channelContent.Width(94);
+    channelContent.Height(38);
+    channelContent.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    wuxc::RowDefinition channelTitleRow;
+    channelTitleRow.Height(wux::GridLengthHelper::FromPixels(17));
+    wuxc::RowDefinition channelUsersRow;
+    channelUsersRow.Height(wux::GridLengthHelper::FromPixels(21));
+    channelContent.RowDefinitions().Append(channelTitleRow);
+    channelContent.RowDefinitions().Append(channelUsersRow);
+    wuxc::Grid::SetColumn(channelContent, 1);
+
+    wuxc::StackPanel channelTitleLine;
+    channelTitleLine.Orientation(wuxc::Orientation::Horizontal);
+    channelTitleLine.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    channelTitleLine.VerticalAlignment(wux::VerticalAlignment::Center);
+    channelTitleLine.Spacing(3);
+    wuxc::Grid::SetRow(channelTitleLine, 0);
+
+    wuxc::FontIcon channelMark;
+    channelMark.Name(L"TaskbarWidgetsDiscordChannelMark");
+    channelMark.Glyph(L"\xE945");
+    channelMark.FontFamily(wuxm::FontFamily(L"Segoe MDL2 Assets"));
+    channelMark.FontSize(9);
+    channelMark.Width(10);
+    channelMark.Foreground(MakeBrush(0xFF, 0xFB, 0x92, 0x3C));
+    channelMark.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    channelMark.VerticalAlignment(wux::VerticalAlignment::Center);
+
+    auto channelTitle = MakeNamedText(
+        L"TaskbarWidgetsDiscordChannelName", L"Voice", 10, 0xFF);
+    channelTitle.Width(80);
+    channelTitle.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    channelTitle.TextAlignment(wux::TextAlignment::Left);
+    channelTitle.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+    channelTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    channelTitle.Foreground(MakeBrush(0xFF, 0xF1, 0xF5, 0xF9));
+    channelTitleLine.Children().Append(channelMark.as<wux::UIElement>());
+    channelTitleLine.Children().Append(channelTitle.as<wux::UIElement>());
+
+    wuxc::StackPanel channelUsers;
+    channelUsers.Orientation(wuxc::Orientation::Horizontal);
+    channelUsers.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    channelUsers.VerticalAlignment(wux::VerticalAlignment::Center);
+    wuxc::Grid::SetRow(channelUsers, 1);
+
+    for (int i = 0; i < 5; ++i) {
+        std::wstring frameName = L"TaskbarWidgetsDiscordChannelAvatarFrame" + std::to_wstring(i);
+        std::wstring avatarName = L"TaskbarWidgetsDiscordChannelAvatarEllipse" + std::to_wstring(i);
+        std::wstring mutedName = L"TaskbarWidgetsDiscordChannelAvatarMuted" + std::to_wstring(i);
+
+        wuxc::Grid slot;
+        slot.Name(L"TaskbarWidgetsDiscordChannelAvatarSlot" + std::to_wstring(i));
+        slot.Width(22);
+        slot.Height(21);
+        slot.Margin(wux::ThicknessHelper::FromLengths(i == 0 ? 0 : -6, 0, 0, 0));
+        slot.Visibility(wux::Visibility::Collapsed);
+        wuxc::Canvas::SetZIndex(slot, i + 1);
+
+        wuxc::Border frame;
+        frame.Name(frameName);
+        frame.Width(22);
+        frame.Height(22);
+        frame.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(11));
+        frame.BorderThickness(wux::ThicknessHelper::FromUniformLength(1.5));
+        frame.BorderBrush(MakeBrush(0x00, 0x00, 0x00, 0x00));
+        frame.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+        frame.Padding(wux::ThicknessHelper::FromUniformLength(1));
+        frame.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        frame.VerticalAlignment(wux::VerticalAlignment::Center);
+
+        wuxs::Ellipse avatar;
+        avatar.Name(avatarName);
+        avatar.Width(16);
+        avatar.Height(16);
+        avatar.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        avatar.VerticalAlignment(wux::VerticalAlignment::Center);
+        avatar.Fill(MakeBrush(0xFF, 0x1F, 0x24, 0x2D));
+        frame.Child(avatar);
+
+        auto muted = MakeDiscordMuteIcon(mutedName.c_str(), 9);
+        muted.Margin(wux::ThicknessHelper::FromLengths(0, 0, -1, -2));
+        wuxc::Canvas::SetZIndex(muted, 2);
+
+        slot.Children().Append(frame.as<wux::UIElement>());
+        slot.Children().Append(muted.as<wux::UIElement>());
+        channelUsers.Children().Append(slot.as<wux::UIElement>());
+    }
+
+    channelContent.Children().Append(channelTitleLine.as<wux::UIElement>());
+    channelContent.Children().Append(channelUsers.as<wux::UIElement>());
+    channelTheme.Children().Append(voiceIcon.as<wux::UIElement>());
+    channelTheme.Children().Append(channelContent.as<wux::UIElement>());
+
+    themes.Children().Append(row.as<wux::UIElement>());
+    themes.Children().Append(channelTheme.as<wux::UIElement>());
+    discord.Child(themes);
     return discord;
 }
 
@@ -1068,6 +1398,125 @@ wux::FrameworkElement MakeSystemMetricPanel() {
     return panel;
 }
 
+wux::FrameworkElement MakeParkingLotPanel() {
+    wuxc::Border panel;
+    panel.Name(L"TaskbarWidgetsParkingLotPanel");
+    panel.Width(56);
+    panel.Height(32);
+    panel.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    panel.Background(MakeBrush(0xE8, 0x17, 0x1A, 0x1F));
+    panel.Visibility(wux::Visibility::Collapsed);
+    panel.AllowDrop(true);
+
+    wuxc::Grid content;
+    content.Width(56);
+    content.Height(32);
+
+    wuxs::Rectangle outline;
+    outline.Name(L"TaskbarWidgetsParkingLotOutline");
+    outline.Width(52);
+    outline.Height(28);
+    outline.RadiusX(5);
+    outline.RadiusY(5);
+    outline.Stroke(MakeBrush(0xD8, 0x5F, 0x70, 0x82));
+    outline.StrokeThickness(1);
+    wuxm::DoubleCollection dashPattern;
+    dashPattern.Append(3);
+    dashPattern.Append(2);
+    outline.StrokeDashArray(dashPattern);
+    outline.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    outline.VerticalAlignment(wux::VerticalAlignment::Center);
+    outline.IsHitTestVisible(false);
+
+    auto emptyText = MakeNamedText(
+        L"TaskbarWidgetsParkingLotEmptyText", L"DRAG\nHERE", 7.5, 0xDD);
+    emptyText.LineHeight(8);
+    emptyText.Foreground(MakeBrush(0xDD, 0xB7, 0xC0, 0xCA));
+    emptyText.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    emptyText.VerticalAlignment(wux::VerticalAlignment::Center);
+    emptyText.IsHitTestVisible(false);
+
+    wuxc::StackPanel itemLine;
+    itemLine.Name(L"TaskbarWidgetsParkingLotItemLine");
+    itemLine.Orientation(wuxc::Orientation::Horizontal);
+    itemLine.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    itemLine.VerticalAlignment(wux::VerticalAlignment::Center);
+    itemLine.Spacing(2);
+    itemLine.Visibility(wux::Visibility::Collapsed);
+    itemLine.CanDrag(true);
+
+    wuxc::FontIcon itemIcon;
+    itemIcon.Name(L"TaskbarWidgetsParkingLotItemIcon");
+    itemIcon.Glyph(L"\xE8A5");
+    itemIcon.FontFamily(wuxm::FontFamily(L"Segoe Fluent Icons"));
+    itemIcon.FontSize(9);
+    itemIcon.Width(10);
+    itemIcon.Foreground(MakeBrush(0xEE, 0xA9, 0xB5, 0xC2));
+
+    auto itemText = MakeNamedText(
+        L"TaskbarWidgetsParkingLotItemText", L"Item", 8, 0xF5);
+    itemText.Width(26);
+    itemText.TextAlignment(wux::TextAlignment::Left);
+    itemText.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    itemText.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+    itemText.Foreground(MakeBrush(0xF5, 0xE2, 0xE8, 0xEF));
+
+    wuxc::Border countBadge;
+    countBadge.Name(L"TaskbarWidgetsParkingLotCountBadge");
+    countBadge.MinWidth(12);
+    countBadge.Height(12);
+    countBadge.Padding(wux::ThicknessHelper::FromLengths(2, 0, 2, 0));
+    countBadge.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    countBadge.Background(MakeBrush(0xFF, 0x32, 0x3B, 0x47));
+    countBadge.VerticalAlignment(wux::VerticalAlignment::Center);
+    countBadge.Visibility(wux::Visibility::Collapsed);
+    auto countText = MakeNamedText(
+        L"TaskbarWidgetsParkingLotCountText", L"1", 7, 0xF0);
+    countText.Foreground(MakeBrush(0xF0, 0xD7, 0xDF, 0xE8));
+    countText.VerticalAlignment(wux::VerticalAlignment::Center);
+    countBadge.Child(countText);
+
+    itemLine.Children().Append(itemIcon.as<wux::UIElement>());
+    itemLine.Children().Append(itemText.as<wux::UIElement>());
+    itemLine.Children().Append(countBadge.as<wux::UIElement>());
+    content.Children().Append(outline.as<wux::UIElement>());
+    content.Children().Append(emptyText.as<wux::UIElement>());
+    content.Children().Append(itemLine.as<wux::UIElement>());
+    panel.Child(content);
+
+    panel.DragEnter([](auto const& sender, wux::DragEventArgs const&) {
+        SetParkingLotDropHighlight(sender.template as<wux::UIElement>(), true);
+    });
+    panel.DragLeave([](auto const& sender, wux::DragEventArgs const&) {
+        SetParkingLotDropHighlight(sender.template as<wux::UIElement>(), false);
+    });
+    panel.DragOver([](auto const&, wux::DragEventArgs const& args) {
+        try {
+            auto data = args.DataView();
+            const bool supported =
+                data.Contains(wadt::StandardDataFormats::StorageItems()) ||
+                data.Contains(wadt::StandardDataFormats::WebLink()) ||
+                data.Contains(wadt::StandardDataFormats::Text());
+            args.AcceptedOperation(supported ? wadt::DataPackageOperation::Copy
+                                             : wadt::DataPackageOperation::None);
+            args.Handled(supported);
+        } catch (...) {
+            args.AcceptedOperation(wadt::DataPackageOperation::None);
+        }
+    });
+    panel.Drop([](auto const& sender, wux::DragEventArgs const& args) {
+        auto element = sender.template as<wux::UIElement>();
+        SetParkingLotDropHighlight(element, false);
+        HandleParkingLotDrop(element, args);
+    });
+    itemLine.DragStarting([](auto const& sender,
+                             wux::DragStartingEventArgs const& args) {
+        HandleParkingLotDragStarting(
+            sender.template as<wux::UIElement>(), args);
+    });
+    return panel;
+}
+
 wux::FrameworkElement MakeDynamicWidgetPanel() {
     wuxc::Border panel;
     panel.Name(L"TaskbarWidgetsDynamicPanel");
@@ -1287,6 +1736,7 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     root.Children().Append(MakeMediaPanel().as<wux::UIElement>());
     root.Children().Append(MakeSteamDownloadPanel().as<wux::UIElement>());
     root.Children().Append(MakeSystemMetricPanel().as<wux::UIElement>());
+    root.Children().Append(MakeParkingLotPanel().as<wux::UIElement>());
     root.Children().Append(MakeDynamicWidgetPanel().as<wux::UIElement>());
 
     wuxc::Border layoutMarker;
@@ -1309,11 +1759,29 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         }
     });
     root.PointerPressed([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
-        auto host = root.Parent().try_as<wux::UIElement>();
+        if (GetWidgetDesignFromRoot(root.as<wux::UIElement>()) == L"parking-lot") {
+            // A drag that starts on the visible parked-item row exports the
+            // item. Empty space, the dashed edge, and the empty prompt retain
+            // the normal widget-position drag behavior.
+            auto current = args.OriginalSource().try_as<wux::DependencyObject>();
+            auto rootObject = root.as<wux::DependencyObject>();
+            while (current) {
+                auto element = current.try_as<wux::FrameworkElement>();
+                if (element &&
+                    element.Name() == L"TaskbarWidgetsParkingLotItemLine") {
+                    return;
+                }
+                if (current == rootObject) {
+                    break;
+                }
+                current = wuxm::VisualTreeHelper::GetParent(current);
+            }
+        }
+        auto host = root.Parent().try_as<wuxc::Canvas>();
         if (!host) {
             return;
         }
-        auto point = args.GetCurrentPoint(host);
+        auto point = args.GetCurrentPoint(host.as<wux::UIElement>());
         if (!point.Properties().IsLeftButtonPressed()) {
             return;
         }
@@ -1326,13 +1794,19 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         if (!std::isfinite(dragState->startLeft)) {
             dragState->startLeft = 0.0;
         }
+        dragState->grabOffsetX = std::clamp(
+            point.Position().X - dragState->startLeft,
+            0.0,
+            std::max(0.0, root.ActualWidth()));
+        dragState->activeGap.reset();
+        RefreshTaskbarObstacleCacheForDrag(root.as<wux::UIElement>(), host);
         root.CapturePointer(args.Pointer());
     });
     root.PointerMoved([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
         if (!dragState->pressed) {
             return;
         }
-        auto host = root.Parent().try_as<wux::FrameworkElement>();
+        auto host = root.Parent().try_as<wuxc::Canvas>();
         if (!host) {
             return;
         }
@@ -1347,11 +1821,29 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         }
         dragState->dragging = true;
         double width = root.ActualWidth() > 0.0 ? root.ActualWidth() : root.Width();
-        double maximumLeft = std::max(0.0, host.ActualWidth() - width);
-        double left = std::clamp(dragState->startLeft + deltaX, 0.0, maximumLeft);
+        const double cursorX = point.Position().X;
+        const double desiredLeft = cursorX - dragState->grabOffsetX;
+        const auto obstacles = BuildLiveDragObstacles(
+            root.as<wux::UIElement>(), host);
+        const auto placement = taskbar_widgets::PlaceDuringDrag(
+            cursorX, desiredLeft, 0.0, host.ActualWidth(), width,
+            obstacles, dragState->activeGap);
+        if (!placement) {
+            args.Handled(true);
+            return;
+        }
+
+        dragState->activeGap = placement->gap;
+        const double left = placement->left;
         wuxc::Canvas::SetLeft(root, left);
         g_widgetDragOverrides[WidgetElementKey(root.as<wux::UIElement>())] = {
             left, 0, 0, false, std::chrono::steady_clock::time_point::max()};
+        if (std::fabs(desiredLeft - left) > 0.5) {
+            // Re-anchor the grab point while pinned at an obstacle edge. This
+            // prevents hidden pointer debt and makes reversing direction react
+            // immediately, without trapping the physical mouse cursor.
+            dragState->grabOffsetX = std::clamp(cursorX - left, 0.0, width);
+        }
         args.Handled(true);
     });
     root.PointerReleased([root, dragState](auto const&, wuxi::PointerRoutedEventArgs const& args) {
@@ -1361,12 +1853,14 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         dragState->pressed = false;
         root.ReleasePointerCapture(args.Pointer());
         if (!dragState->dragging) {
+            dragState->activeGap.reset();
             g_widgetDragOverrides.erase(WidgetElementKey(root.as<wux::UIElement>()));
             return;
         }
 
         dragState->dragging = false;
         dragState->suppressTap = true;
+        dragState->activeGap.reset();
         auto host = root.Parent().try_as<wux::FrameworkElement>();
         if (!host) {
             return;
@@ -1388,6 +1882,7 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         if (dragState->pressed) {
             dragState->pressed = false;
             dragState->dragging = false;
+            dragState->activeGap.reset();
             g_widgetDragOverrides.erase(WidgetElementKey(root.as<wux::UIElement>()));
         }
     });
@@ -1399,11 +1894,15 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         }
         std::wstring activeDesign = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
         if (FindDynamicWidget(activeDesign)) {
-            WriteTaskbarWidgetsCommand(L"openSettings", L"", activeDesign);
+            if (!HasNativeExpandedWidget(activeDesign)) {
+                WriteTaskbarWidgetsCommand(L"openSettings", L"", activeDesign);
+            }
         } else if (activeDesign == L"weather-static") {
             ShowWeatherMenu(root);
         } else if (activeDesign == L"discord-voice") {
             ShowWidgetLibraryWindow();
+        } else if (activeDesign == L"parking-lot") {
+            CycleParkingLotSelection(root.as<wux::UIElement>());
         } else if (activeDesign == L"media-player") {
             wf::Point point = args.GetPosition(root);
             if (point.X >= 190.0) {
@@ -1425,7 +1924,9 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
     });
     root.RightTapped([root](auto const&, wuxi::RightTappedRoutedEventArgs const& args) {
         auto design = GetWidgetDesignFromRoot(root.as<wux::UIElement>());
-        if (design.rfind(L"system-", 0) == 0 || FindDynamicWidget(design)) {
+        if (design == L"parking-lot") {
+            ShowParkingLotContextMenu(root.as<wux::UIElement>());
+        } else if (design.rfind(L"system-", 0) == 0 || FindDynamicWidget(design)) {
             WriteTaskbarWidgetsCommand(L"openSettings", L"", design);
         } else {
             ShowWidgetContextMenu();
@@ -1490,10 +1991,23 @@ std::wstring GetWidgetSettingsPath() {
 }
 
 std::string ReadUtf8File(const std::wstring& path) {
+    struct CachedFile {
+        unsigned long long version{};
+        bool initialized{};
+        std::string contents;
+    };
+    static thread_local std::unordered_map<std::wstring, CachedFile> cache;
+    auto& cached = cache[path];
+    const unsigned long long version = GetFileWriteVersion(path);
+    if (cached.initialized && cached.version == version) {
+        return cached.contents;
+    }
+
     HANDLE file = CreateFile(path.c_str(), GENERIC_READ,
                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
+        cached = CachedFile{version, true, {}};
         return {};
     }
 
@@ -1501,6 +2015,7 @@ std::string ReadUtf8File(const std::wstring& path) {
     if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 ||
         size.QuadPart > 1024 * 1024) {
         CloseHandle(file);
+        cached = CachedFile{version, true, {}};
         return {};
     }
 
@@ -1515,6 +2030,7 @@ std::string ReadUtf8File(const std::wstring& path) {
     }
 
     data.resize(read);
+    cached = CachedFile{version, true, data};
     return data;
 }
 
@@ -1585,9 +2101,23 @@ bool ExtractJsonBool(const std::string& json, const char* key, bool& value) {
 struct DynamicWidgetDefinition {
     std::wstring id;
     std::wstring displayName;
+    std::wstring renderer = L"declarative";
+    std::wstring sourcePath;
+    std::wstring webEntry;
     double width = 96.0;
     double height = 24.0;
+    double expandedWidth = 96.0;
+    double expandedHeight = 24.0;
+    std::wstring expandDirection = L"auto";
+    std::wstring activation = L"hover";
+    int hoverDelayMs = 100;
+    int collapseDelayMs = 180;
+    int transitionMs = 280;
+    bool storageAllowed = false;
+    bool webglAllowed = false;
+    bool continuousAnimationAllowed = false;
     wdj::JsonObject layout{nullptr};
+    wdj::JsonObject expandedLayout{nullptr};
 };
 
 thread_local unsigned long long g_dynamicCatalogVersion = 0;
@@ -1643,18 +2173,78 @@ void RefreshDynamicWidgetCatalog() {
         auto widgets = catalog.GetNamedArray(L"widgets");
         for (uint32_t index = 0; index < widgets.Size(); ++index) {
             auto item = widgets.GetObjectAt(index);
-            if (!JsonBool(item, L"valid", false) ||
-                _wcsicmp(JsonString(item, L"renderer").c_str(), L"declarative") != 0 ||
-                !item.HasKey(L"layout")) {
+            if (!JsonBool(item, L"valid", false)) {
                 continue;
             }
             DynamicWidgetDefinition definition;
             definition.id = JsonString(item, L"id");
             definition.displayName = JsonString(item, L"displayName", definition.id);
+            definition.renderer = JsonString(item, L"renderer", L"declarative");
             definition.width = std::clamp(JsonNumber(item, L"width", 96.0), 32.0, 480.0);
             definition.height = std::clamp(JsonNumber(item, L"height", 24.0), 24.0, 48.0);
-            definition.layout = item.GetNamedObject(L"layout");
-            if (!definition.id.empty() && definition.layout) {
+            if (item.HasKey(L"permissions")) {
+                auto permissions = item.GetNamedObject(L"permissions");
+                definition.storageAllowed = JsonBool(permissions, L"storage", false);
+                if (permissions.HasKey(L"graphics")) {
+                    try {
+                        auto graphics = permissions.GetNamedArray(L"graphics");
+                        for (uint32_t graphicsIndex = 0;
+                             graphicsIndex < graphics.Size(); ++graphicsIndex) {
+                            const std::wstring permission =
+                                graphics.GetStringAt(graphicsIndex).c_str();
+                            definition.webglAllowed |= permission == L"webgl";
+                            definition.continuousAnimationAllowed |=
+                                permission == L"continuousAnimation";
+                        }
+                    } catch (...) {
+                    }
+                }
+            }
+            if ((_wcsicmp(definition.renderer.c_str(), L"declarative") == 0 ||
+                 _wcsicmp(definition.renderer.c_str(), L"native") == 0) &&
+                item.HasKey(L"layout")) {
+                definition.layout = item.GetNamedObject(L"layout");
+                if (_wcsicmp(definition.renderer.c_str(), L"native") == 0 &&
+                    item.HasKey(L"nativeRenderer")) {
+                    auto renderer = item.GetNamedObject(L"nativeRenderer");
+                    definition.expandedWidth = std::clamp(
+                        JsonNumber(renderer, L"expandedWidth", definition.width),
+                        32.0, 640.0);
+                    definition.expandedHeight = std::clamp(
+                        JsonNumber(renderer, L"expandedHeight", definition.height),
+                        24.0, 480.0);
+                    definition.expandDirection =
+                        JsonString(renderer, L"expandDirection", L"auto");
+                    definition.activation =
+                        JsonString(renderer, L"activation", L"click");
+                    if (item.HasKey(L"expandedLayout") &&
+                        item.GetNamedValue(L"expandedLayout").ValueType() ==
+                            wdj::JsonValueType::Object) {
+                        definition.expandedLayout =
+                            item.GetNamedObject(L"expandedLayout");
+                    }
+                }
+            } else if (_wcsicmp(definition.renderer.c_str(), L"web") == 0 &&
+                       item.HasKey(L"webRenderer")) {
+                auto renderer = item.GetNamedObject(L"webRenderer");
+                definition.sourcePath = JsonString(item, L"sourcePath");
+                definition.webEntry = JsonString(renderer, L"entry");
+                definition.expandedWidth = std::clamp(
+                    JsonNumber(renderer, L"expandedWidth", definition.width), 32.0, 640.0);
+                definition.expandedHeight = std::clamp(
+                    JsonNumber(renderer, L"expandedHeight", definition.height), 24.0, 480.0);
+                definition.expandDirection = JsonString(renderer, L"expandDirection", L"auto");
+                definition.activation = JsonString(renderer, L"activation", L"hover");
+                definition.hoverDelayMs = static_cast<int>(std::clamp(
+                    JsonNumber(renderer, L"hoverDelayMs", 100), 0.0, 1000.0));
+                definition.collapseDelayMs = static_cast<int>(std::clamp(
+                    JsonNumber(renderer, L"collapseDelayMs", 180), 0.0, 2000.0));
+                definition.transitionMs = static_cast<int>(std::clamp(
+                    JsonNumber(renderer, L"transitionMs", 280), 0.0, 500.0));
+            }
+            const bool usableDeclarative = definition.layout != nullptr;
+            const bool usableWeb = !definition.sourcePath.empty() && !definition.webEntry.empty();
+            if (!definition.id.empty() && (usableDeclarative || usableWeb)) {
                 g_dynamicWidgets[definition.id] = definition;
             }
         }
@@ -1667,6 +2257,13 @@ const DynamicWidgetDefinition* FindDynamicWidget(const std::wstring& id) {
     RefreshDynamicWidgetCatalog();
     auto found = g_dynamicWidgets.find(id);
     return found == g_dynamicWidgets.end() ? nullptr : &found->second;
+}
+
+bool HasNativeExpandedWidget(const std::wstring& id) {
+    const auto* definition = FindDynamicWidget(id);
+    return definition &&
+           _wcsicmp(definition->renderer.c_str(), L"native") == 0 &&
+           definition->expandedLayout;
 }
 
 bool IsKnownWidgetDesign(const std::wstring& designId) {
@@ -1760,6 +2357,7 @@ struct WidgetRuntimeSettings {
     long long rotationIntervalSecs = 30;
     std::vector<std::wstring> rotationDesigns;
     bool discordBackgroundEnabled = true;
+    std::wstring discordDisplayMode = L"avatars";
     bool mediaDarkMode = true;
     long long widgetOffsetPx = 0;
     long long widgetMoveX = 0;
@@ -1788,9 +2386,21 @@ WidgetRuntimeSettings ReadWidgetRuntimeSettings() {
         settings.rotationEnabled = _wcsicmp(layoutMode.c_str(), L"rotation") == 0;
     }
 
-    bool discordBackgroundEnabled = true;
-    if (ExtractJsonBool(json, "backgroundEnabled", discordBackgroundEnabled)) {
-        settings.discordBackgroundEnabled = discordBackgroundEnabled;
+    for (const auto& object : ExtractJsonObjectArray(json, "widgets")) {
+        std::wstring designId;
+        if (!ExtractJsonString(object, "widgetId", designId)) {
+            ExtractJsonString(object, "id", designId);
+        }
+        if (_wcsicmp(designId.c_str(), L"discord-voice") != 0) {
+            continue;
+        }
+        ExtractJsonBool(object, "backgroundEnabled",
+                        settings.discordBackgroundEnabled);
+        ExtractJsonString(object, "displayMode", settings.discordDisplayMode);
+        break;
+    }
+    if (settings.discordDisplayMode != L"channel") {
+        settings.discordDisplayMode = L"avatars";
     }
 
     bool mediaDarkMode = true;
@@ -1974,7 +2584,21 @@ SystemMetricWidgetSettings ReadSystemMetricWidgetSettings(
 }
 
 std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
-    std::string json = ReadUtf8File(GetWidgetSettingsPath());
+    static thread_local bool cacheInitialized = false;
+    static thread_local bool cachedRotationEnabled = false;
+    static thread_local unsigned long long cachedConfigVersion = 0;
+    static thread_local long long cachedRotationSecond = -1;
+    static thread_local std::vector<WidgetInstanceRuntime> cachedWidgets;
+
+    const std::wstring settingsPath = GetWidgetSettingsPath();
+    const unsigned long long configVersion = GetFileWriteVersion(settingsPath);
+    const long long currentSecond = CurrentUnixTime();
+    if (cacheInitialized && configVersion == cachedConfigVersion &&
+        (!cachedRotationEnabled || currentSecond == cachedRotationSecond)) {
+        return cachedWidgets;
+    }
+
+    std::string json = ReadUtf8File(settingsPath);
     std::vector<WidgetInstanceRuntime> widgets;
 
     auto objects = ExtractJsonObjectArray(json, "widgets");
@@ -2067,6 +2691,11 @@ std::vector<WidgetInstanceRuntime> ReadWidgetInstances() {
                   }
                   return left.id < right.id;
               });
+    cacheInitialized = true;
+    cachedRotationEnabled = runtimeSettings.rotationEnabled;
+    cachedConfigVersion = configVersion;
+    cachedRotationSecond = currentSecond;
+    cachedWidgets = widgets;
     return widgets;
 }
 
@@ -3490,6 +4119,8 @@ struct DiscordVoiceUserSnapshot {
     std::wstring avatarPath;
     std::wstring animatedAvatarPath;
     bool speaking{};
+    bool muted{};
+    bool deafened{};
 };
 
 struct DiscordVoiceSnapshot {
@@ -3539,6 +4170,8 @@ DiscordVoiceSnapshot ReadDiscordVoiceSnapshot() {
             ExtractJsonString(object, "avatarPath", user.avatarPath);
             ExtractJsonString(object, "animatedAvatarPath", user.animatedAvatarPath);
             ExtractJsonBool(object, "speaking", user.speaking);
+            ExtractJsonBool(object, "muted", user.muted);
+            ExtractJsonBool(object, "deafened", user.deafened);
             if (!user.id.empty() || !user.avatarPath.empty()) {
                 snapshot.users.push_back(user);
             }
@@ -4362,6 +4995,546 @@ void SetNamedText(wux::UIElement const& root,
     }
 }
 
+enum class ParkingLotItemKind {
+    File,
+    Folder,
+    Text,
+    Link,
+};
+
+struct ParkingLotItem {
+    ParkingLotItemKind kind = ParkingLotItemKind::File;
+    std::wstring value;
+    std::wstring displayName;
+};
+
+std::mutex g_parkingLotMutex;
+thread_local size_t g_parkingLotSelectedIndex = 0;
+
+std::wstring ParkingLotKindName(ParkingLotItemKind kind) {
+    switch (kind) {
+    case ParkingLotItemKind::Folder:
+        return L"folder";
+    case ParkingLotItemKind::Text:
+        return L"text";
+    case ParkingLotItemKind::Link:
+        return L"link";
+    default:
+        return L"file";
+    }
+}
+
+ParkingLotItemKind ParseParkingLotKind(const std::wstring& value) {
+    if (_wcsicmp(value.c_str(), L"folder") == 0) {
+        return ParkingLotItemKind::Folder;
+    }
+    if (_wcsicmp(value.c_str(), L"text") == 0) {
+        return ParkingLotItemKind::Text;
+    }
+    if (_wcsicmp(value.c_str(), L"link") == 0) {
+        return ParkingLotItemKind::Link;
+    }
+    return ParkingLotItemKind::File;
+}
+
+std::wstring GetParkingLotStatePath() {
+    return GetTaskbarWidgetsPath(L"State\\parking-lot.json");
+}
+
+std::vector<ParkingLotItem> ReadParkingLotItemsUnlocked() {
+    std::vector<ParkingLotItem> result;
+    try {
+        auto json = Utf8ToWide(ReadUtf8File(GetParkingLotStatePath()));
+        if (json.empty()) {
+            return result;
+        }
+        auto root = wdj::JsonObject::Parse(winrt::hstring(json));
+        if (!root.HasKey(L"items")) {
+            return result;
+        }
+        auto items = root.GetNamedArray(L"items");
+        for (uint32_t index = 0; index < items.Size() && result.size() < 8;
+             ++index) {
+            auto item = items.GetObjectAt(index);
+            std::wstring value = JsonString(item, L"value");
+            if (value.empty() || value.size() > 65536) {
+                continue;
+            }
+            ParkingLotItem parsed;
+            parsed.kind = ParseParkingLotKind(JsonString(item, L"kind"));
+            parsed.value = std::move(value);
+            parsed.displayName = JsonString(item, L"displayName");
+            if (parsed.displayName.empty()) {
+                parsed.displayName =
+                    parsed.kind == ParkingLotItemKind::File ||
+                            parsed.kind == ParkingLotItemKind::Folder
+                        ? FileNameFromPath(parsed.value)
+                        : (parsed.kind == ParkingLotItemKind::Link ? L"Link"
+                                                                   : L"Text note");
+            }
+            result.push_back(std::move(parsed));
+        }
+    } catch (...) {
+        Wh_Log(L"Parking Lot state could not be parsed");
+    }
+    return result;
+}
+
+bool WriteParkingLotItemsUnlocked(const std::vector<ParkingLotItem>& items) {
+    try {
+        wdj::JsonObject root;
+        root.Insert(L"schemaVersion", wdj::JsonValue::CreateNumberValue(1));
+        wdj::JsonArray array;
+        for (const auto& item : items) {
+            wdj::JsonObject object;
+            object.Insert(L"kind", wdj::JsonValue::CreateStringValue(
+                                        ParkingLotKindName(item.kind)));
+            object.Insert(L"value",
+                          wdj::JsonValue::CreateStringValue(item.value));
+            object.Insert(L"displayName",
+                          wdj::JsonValue::CreateStringValue(item.displayName));
+            array.Append(object);
+        }
+        root.Insert(L"items", array);
+
+        CreateDirectory(GetTaskbarWidgetsPath(L"State").c_str(), nullptr);
+        const std::wstring path = GetParkingLotStatePath();
+        const std::wstring temporaryPath = path + L".tmp";
+        DeleteFile(temporaryPath.c_str());
+        if (!WriteUtf8File(temporaryPath,
+                           WideToUtf8(std::wstring(root.Stringify().c_str())))) {
+            return false;
+        }
+        if (!MoveFileEx(temporaryPath.c_str(), path.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            DeleteFile(temporaryPath.c_str());
+            return false;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<ParkingLotItem> ReadParkingLotItems() {
+    std::scoped_lock lock(g_parkingLotMutex);
+    return ReadParkingLotItemsUnlocked();
+}
+
+bool ParkingLotItemsMatch(const ParkingLotItem& left,
+                          const ParkingLotItem& right) {
+    if (left.kind != right.kind) {
+        return false;
+    }
+    if (left.kind == ParkingLotItemKind::File ||
+        left.kind == ParkingLotItemKind::Folder) {
+        return _wcsicmp(left.value.c_str(), right.value.c_str()) == 0;
+    }
+    return left.value == right.value;
+}
+
+void AddParkingLotItems(const std::vector<ParkingLotItem>& additions) {
+    if (additions.empty()) {
+        return;
+    }
+    std::scoped_lock lock(g_parkingLotMutex);
+    auto items = ReadParkingLotItemsUnlocked();
+    for (auto addition = additions.rbegin(); addition != additions.rend();
+         ++addition) {
+        items.erase(std::remove_if(items.begin(), items.end(),
+                                   [&](const ParkingLotItem& existing) {
+                                       return ParkingLotItemsMatch(
+                                           existing, *addition);
+                                   }),
+                    items.end());
+        items.insert(items.begin(), *addition);
+    }
+    if (items.size() > 8) {
+        items.resize(8);
+    }
+    WriteParkingLotItemsUnlocked(items);
+    g_parkingLotSelectedIndex = 0;
+}
+
+std::wstring ParkingLotLinkLabel(const std::wstring& value) {
+    std::wstring label = value;
+    size_t scheme = label.find(L"://");
+    if (scheme != std::wstring::npos) {
+        label = label.substr(scheme + 3);
+    }
+    size_t slash = label.find(L'/');
+    if (slash != std::wstring::npos) {
+        label.resize(slash);
+    }
+    return label.empty() ? L"Link" : label;
+}
+
+std::wstring ParkingLotTextLabel(const std::wstring& value) {
+    std::wstring label;
+    label.reserve(std::min<size_t>(value.size(), 48));
+    for (wchar_t character : value) {
+        if (character == L'\r' || character == L'\n' || character == L'\t') {
+            character = L' ';
+        }
+        if (!label.empty() && label.back() == L' ' && character == L' ') {
+            continue;
+        }
+        label.push_back(character);
+        if (label.size() >= 48) {
+            break;
+        }
+    }
+    label = Trim(label);
+    return label.empty() ? L"Text note" : label;
+}
+
+void SetParkingLotDropHighlight(wux::UIElement const& root, bool highlighted) {
+    auto outline = FindNamedFrameworkElement(
+                       root, L"TaskbarWidgetsParkingLotOutline")
+                       .try_as<wuxs::Rectangle>();
+    if (outline) {
+        outline.Stroke(highlighted
+                           ? MakeBrush(0xFF, 0x93, 0xC5, 0xFD)
+                           : MakeBrush(0xD8, 0x5F, 0x70, 0x82));
+        outline.StrokeThickness(highlighted ? 1.5 : 1.0);
+    }
+    auto items = ReadParkingLotItems();
+    if (items.empty()) {
+        SetNamedText(root, L"TaskbarWidgetsParkingLotEmptyText",
+                     highlighted ? L"DROP\nHERE" : L"DRAG\nHERE");
+    }
+}
+
+void SetParkingLotItemDragEnabled(wux::UIElement const& root,
+                                  bool enabled) {
+    auto itemLine = FindNamedFrameworkElement(
+                        root, L"TaskbarWidgetsParkingLotItemLine")
+                        .try_as<wuxc::StackPanel>();
+    if (itemLine) {
+        itemLine.CanDrag(enabled);
+    }
+}
+
+void ReArmParkingLotDropTarget(wux::UIElement const& root) {
+    // Re-register the XAML drop target after a Clear transition. Explorer can
+    // otherwise retain the former drag-source state of the item row and stop
+    // routing subsequent DragEnter/Drop events to this injected surface.
+    auto panel = FindNamedFrameworkElement(
+                     root, L"TaskbarWidgetsParkingLotPanel")
+                     .try_as<wuxc::Border>();
+    if (panel) {
+        panel.AllowDrop(false);
+        panel.AllowDrop(true);
+    }
+    SetParkingLotItemDragEnabled(root, false);
+}
+
+void RefreshParkingLotPanel(wux::UIElement const& root) {
+    auto items = ReadParkingLotItems();
+    if (items.empty()) {
+        g_parkingLotSelectedIndex = 0;
+        SetParkingLotItemDragEnabled(root, false);
+        SetNamedVisibility(root, L"TaskbarWidgetsParkingLotEmptyText",
+                           wux::Visibility::Visible);
+        SetNamedVisibility(root, L"TaskbarWidgetsParkingLotItemLine",
+                           wux::Visibility::Collapsed);
+        SetNamedText(root, L"TaskbarWidgetsParkingLotEmptyText",
+                     L"DRAG\nHERE");
+        return;
+    }
+
+    SetParkingLotItemDragEnabled(root, true);
+    g_parkingLotSelectedIndex =
+        std::min(g_parkingLotSelectedIndex, items.size() - 1);
+    const auto& item = items[g_parkingLotSelectedIndex];
+    std::wstring displayName = item.displayName;
+    bool missing = false;
+    if (item.kind == ParkingLotItemKind::File ||
+        item.kind == ParkingLotItemKind::Folder) {
+        missing = GetFileAttributes(item.value.c_str()) == INVALID_FILE_ATTRIBUTES;
+    }
+    if (missing) {
+        displayName = L"Missing: " + displayName;
+    }
+
+    SetNamedVisibility(root, L"TaskbarWidgetsParkingLotEmptyText",
+                       wux::Visibility::Collapsed);
+    SetNamedVisibility(root, L"TaskbarWidgetsParkingLotItemLine",
+                       wux::Visibility::Visible);
+    SetNamedText(root, L"TaskbarWidgetsParkingLotItemText", displayName);
+    SetNamedText(root, L"TaskbarWidgetsParkingLotCountText",
+                 std::to_wstring(items.size()));
+    SetNamedVisibility(root, L"TaskbarWidgetsParkingLotCountBadge",
+                       items.size() > 1 ? wux::Visibility::Visible
+                                        : wux::Visibility::Collapsed);
+    SetNamedIconGlyph(root, L"TaskbarWidgetsParkingLotItemIcon",
+                      item.kind == ParkingLotItemKind::Folder
+                          ? L"\xE8B7"
+                          : item.kind == ParkingLotItemKind::Link
+                                ? L"\xE71B"
+                                : item.kind == ParkingLotItemKind::Text
+                                      ? L"\xE8A5"
+                                      : L"\xE7C3");
+}
+
+winrt::fire_and_forget HandleParkingLotDrop(
+    wux::UIElement root, wux::DragEventArgs args) {
+    auto deferral = args.GetDeferral();
+    try {
+        std::vector<ParkingLotItem> additions;
+        auto data = args.DataView();
+        if (data.Contains(wadt::StandardDataFormats::StorageItems())) {
+            try {
+                auto storageItems = co_await data.GetStorageItemsAsync();
+                for (auto const& storageItem : storageItems) {
+                    std::wstring path = storageItem.Path().c_str();
+                    if (path.empty()) {
+                        continue;
+                    }
+                    ParkingLotItem item;
+                    item.kind = storageItem.IsOfType(wst::StorageItemTypes::Folder)
+                                    ? ParkingLotItemKind::Folder
+                                    : ParkingLotItemKind::File;
+                    item.value = std::move(path);
+                    item.displayName = storageItem.Name().c_str();
+                    additions.push_back(std::move(item));
+                }
+            } catch (...) {
+                // Some browsers advertise a virtual StorageItem for links.
+                // Fall through to WebLink/Text when it has no filesystem path.
+            }
+        }
+        if (additions.empty() &&
+            data.Contains(wadt::StandardDataFormats::WebLink())) {
+            auto uri = co_await data.GetWebLinkAsync();
+            std::wstring value = uri.AbsoluteUri().c_str();
+            additions.push_back(ParkingLotItem{
+                ParkingLotItemKind::Link, value, ParkingLotLinkLabel(value)});
+        }
+        if (additions.empty() &&
+            data.Contains(wadt::StandardDataFormats::Text())) {
+            std::wstring value = (co_await data.GetTextAsync()).c_str();
+            if (value.size() > 65536) {
+                value.resize(65536);
+            }
+            if (!Trim(value).empty()) {
+                additions.push_back(ParkingLotItem{
+                    ParkingLotItemKind::Text, value, ParkingLotTextLabel(value)});
+            }
+        }
+
+        AddParkingLotItems(additions);
+        RefreshParkingLotPanel(root);
+        args.AcceptedOperation(additions.empty()
+                                   ? wadt::DataPackageOperation::None
+                                   : wadt::DataPackageOperation::Copy);
+        args.Handled(!additions.empty());
+    } catch (...) {
+        args.AcceptedOperation(wadt::DataPackageOperation::None);
+        Wh_Log(L"Parking Lot drop failed");
+    }
+    deferral.Complete();
+}
+
+uint64_t ParkingLotStableHash(const std::wstring& value) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (wchar_t character : value) {
+        hash ^= static_cast<uint16_t>(character);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+std::wstring PrepareParkingLotTextExport(const ParkingLotItem& item) {
+    const std::wstring parkingDirectory = GetTaskbarWidgetsPath(L"ParkingLot");
+    const std::wstring cacheDirectory = parkingDirectory + L"\\DragCache";
+    CreateDirectory(parkingDirectory.c_str(), nullptr);
+    CreateDirectory(cacheDirectory.c_str(), nullptr);
+
+    WCHAR hashText[24]{};
+    swprintf_s(hashText, L"%08llX",
+               static_cast<unsigned long long>(
+                   ParkingLotStableHash(item.value) & 0xFFFFFFFFULL));
+    const bool isLink = item.kind == ParkingLotItemKind::Link;
+    const std::wstring path = cacheDirectory +
+        (isLink ? L"\\Parking Link " : L"\\Parking Note ") + hashText +
+        (isLink ? L".url" : L".txt");
+    const std::wstring contents =
+        isLink ? L"[InternetShortcut]\r\nURL=" + item.value + L"\r\n"
+               : item.value;
+    return WriteUtf8File(path, WideToUtf8(contents)) ? path : L"";
+}
+
+winrt::fire_and_forget HandleParkingLotDragStarting(
+    wux::UIElement root, wux::DragStartingEventArgs args) {
+    auto deferral = args.GetDeferral();
+    try {
+        auto items = ReadParkingLotItems();
+        if (items.empty()) {
+            args.Cancel(true);
+            deferral.Complete();
+            co_return;
+        }
+        g_parkingLotSelectedIndex =
+            std::min(g_parkingLotSelectedIndex, items.size() - 1);
+        const auto item = items[g_parkingLotSelectedIndex];
+        auto package = args.Data();
+        package.RequestedOperation(wadt::DataPackageOperation::Copy);
+        args.AllowedOperations(wadt::DataPackageOperation::Copy);
+
+        winrt::Windows::Foundation::Collections::IVector<wst::IStorageItem>
+            storageItems = winrt::single_threaded_vector<wst::IStorageItem>();
+        if (item.kind == ParkingLotItemKind::File) {
+            auto file = co_await wst::StorageFile::GetFileFromPathAsync(item.value);
+            storageItems.Append(file.as<wst::IStorageItem>());
+        } else if (item.kind == ParkingLotItemKind::Folder) {
+            auto folder =
+                co_await wst::StorageFolder::GetFolderFromPathAsync(item.value);
+            storageItems.Append(folder.as<wst::IStorageItem>());
+        } else {
+            if (item.kind == ParkingLotItemKind::Link) {
+                package.SetWebLink(wf::Uri(item.value));
+                package.SetText(item.value);
+            } else {
+                package.SetText(item.value);
+            }
+            const std::wstring exportPath = PrepareParkingLotTextExport(item);
+            if (!exportPath.empty()) {
+                auto exportFile =
+                    co_await wst::StorageFile::GetFileFromPathAsync(exportPath);
+                storageItems.Append(exportFile.as<wst::IStorageItem>());
+            }
+        }
+        if (storageItems.Size() > 0) {
+            package.SetStorageItems(storageItems, true);
+        }
+        args.DragUI().SetContentFromDataPackage();
+    } catch (...) {
+        args.Cancel(true);
+        Wh_Log(L"Parking Lot drag export failed");
+    }
+    deferral.Complete();
+}
+
+void CycleParkingLotSelection(wux::UIElement const& root) {
+    auto items = ReadParkingLotItems();
+    if (items.size() <= 1) {
+        return;
+    }
+    g_parkingLotSelectedIndex =
+        (g_parkingLotSelectedIndex + 1) % items.size();
+    RefreshParkingLotPanel(root);
+}
+
+void ShowParkingLotContextMenu(wux::UIElement const& root) {
+    constexpr UINT_PTR kRemoveCommand = 1201;
+    constexpr UINT_PTR kClearCommand = 1202;
+    constexpr UINT_PTR kSettingsCommand = 1203;
+
+    auto items = ReadParkingLotItems();
+    HMENU menu = CreatePopupMenu();
+    if (!menu) {
+        return;
+    }
+    if (!items.empty()) {
+        AppendMenuW(menu, MF_STRING, kRemoveCommand, L"Remove current item");
+        AppendMenuW(menu, MF_STRING, kClearCommand, L"Clear Parking Lot");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+    AppendMenuW(menu, MF_STRING, kSettingsCommand, L"Open Settings");
+
+    POINT point{};
+    GetCursorPos(&point);
+    HWND owner = GetForegroundWindow();
+    if (!owner) {
+        owner = GetDesktopWindow();
+    }
+    SetForegroundWindow(owner);
+    UINT command = TrackPopupMenu(menu,
+                                  TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                                  point.x, point.y, 0, owner, nullptr);
+    DestroyMenu(menu);
+
+    if (command == kSettingsCommand) {
+        WriteTaskbarWidgetsCommand(L"openSettings", L"", L"parking-lot");
+        return;
+    }
+    if (command != kRemoveCommand && command != kClearCommand) {
+        return;
+    }
+
+    bool becameEmpty = false;
+    {
+        std::scoped_lock lock(g_parkingLotMutex);
+        items = ReadParkingLotItemsUnlocked();
+        if (command == kClearCommand) {
+            items.clear();
+            g_parkingLotSelectedIndex = 0;
+        } else if (!items.empty()) {
+            g_parkingLotSelectedIndex =
+                std::min(g_parkingLotSelectedIndex, items.size() - 1);
+            items.erase(items.begin() +
+                        static_cast<ptrdiff_t>(g_parkingLotSelectedIndex));
+            if (items.empty()) {
+                g_parkingLotSelectedIndex = 0;
+            } else {
+                g_parkingLotSelectedIndex =
+                    std::min(g_parkingLotSelectedIndex, items.size() - 1);
+            }
+        }
+        becameEmpty = items.empty();
+        WriteParkingLotItemsUnlocked(items);
+    }
+    if (becameEmpty) {
+        ReArmParkingLotDropTarget(root);
+        SetParkingLotDropHighlight(root, false);
+    }
+    RefreshParkingLotPanel(root);
+}
+
+struct MarqueeAnimationState {
+    winrt::weak_ref<wux::FrameworkElement> element;
+    double itemWidth{};
+    double pixelsPerSecond{};
+};
+
+thread_local std::unordered_map<uintptr_t, MarqueeAnimationState>
+    g_marqueeAnimations;
+
+void ConfigureMarqueeAnimation(const wux::FrameworkElement& element,
+                               double itemWidth,
+                               double pixelsPerSecond) {
+    const auto key = reinterpret_cast<uintptr_t>(winrt::get_abi(element));
+    if (itemWidth <= 0 || pixelsPerSecond <= 0) {
+        g_marqueeAnimations.erase(key);
+        return;
+    }
+    g_marqueeAnimations[key] = MarqueeAnimationState{
+        winrt::make_weak(element), itemWidth, pixelsPerSecond};
+}
+
+void AnimateTaskbarWidgetMarquees() {
+    const double elapsed =
+        static_cast<double>(CurrentUnixMillis() % 600000LL) / 1000.0;
+    for (auto iterator = g_marqueeAnimations.begin();
+         iterator != g_marqueeAnimations.end();) {
+        auto element = iterator->second.element.get();
+        if (!element) {
+            iterator = g_marqueeAnimations.erase(iterator);
+            continue;
+        }
+        auto transform =
+            element.RenderTransform().try_as<wuxm::TranslateTransform>();
+        if (transform) {
+            const double offset = std::fmod(
+                elapsed * iterator->second.pixelsPerSecond,
+                iterator->second.itemWidth);
+            transform.X(-offset);
+        }
+        ++iterator;
+    }
+}
+
 void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
     auto first = FindNamedTextBlock(root, L"TaskbarWidgetsMediaTitle");
     auto second = FindNamedTextBlock(root, L"TaskbarWidgetsMediaTitleClone");
@@ -4399,6 +5572,7 @@ void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
             marqueeElement.RenderTransform(transform);
         }
         transform.X(0);
+        ConfigureMarqueeAnimation(marqueeElement, 0, 0);
         return;
     }
 
@@ -4420,9 +5594,7 @@ void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
         marqueeElement.RenderTransform(transform);
     }
 
-    double elapsed = static_cast<double>(CurrentUnixMillis() % 600000LL) / 1000.0;
-    double offset = std::fmod(elapsed * pixelsPerSecond, itemWidth);
-    transform.X(-offset);
+    ConfigureMarqueeAnimation(marqueeElement, itemWidth, pixelsPerSecond);
 }
 
 void SetSteamTitleText(wux::UIElement const& root, const std::wstring& text) {
@@ -4462,6 +5634,7 @@ void SetSteamTitleText(wux::UIElement const& root, const std::wstring& text) {
             marqueeElement.RenderTransform(transform);
         }
         transform.X(0);
+        ConfigureMarqueeAnimation(marqueeElement, 0, 0);
         return;
     }
 
@@ -4483,9 +5656,7 @@ void SetSteamTitleText(wux::UIElement const& root, const std::wstring& text) {
         marqueeElement.RenderTransform(transform);
     }
 
-    double elapsed = static_cast<double>(CurrentUnixMillis() % 600000LL) / 1000.0;
-    double offset = std::fmod(elapsed * pixelsPerSecond, itemWidth);
-    transform.X(-offset);
+    ConfigureMarqueeAnimation(marqueeElement, itemWidth, pixelsPerSecond);
 }
 
 void SetNamedTextColor(wux::UIElement const& root,
@@ -5254,8 +6425,154 @@ std::wstring DynamicText(const wdj::JsonObject& node,
     return text.empty() ? L"--" : text;
 }
 
-wux::UIElement BuildDynamicElement(const wdj::JsonObject& node,
-                                   const wdj::JsonObject& context) {
+std::wstring DynamicStringProperty(const wdj::JsonObject& node,
+                                   const wdj::JsonObject& context,
+                                   PCWSTR key,
+                                   const std::wstring& fallback = L"") {
+    try {
+        if (!node || !node.HasKey(key)) return fallback;
+        auto value = node.GetNamedValue(key);
+        if (value.ValueType() == wdj::JsonValueType::String) {
+            return std::wstring(value.GetString().c_str());
+        }
+        if (value.ValueType() == wdj::JsonValueType::Object) {
+            auto binding = value.GetObject();
+            auto resolved = ResolveDynamicBinding(
+                context, JsonString(binding, L"bind"));
+            if (resolved) {
+                auto formatted = FormatDynamicValue(
+                    resolved, JsonString(binding, L"format"));
+                if (formatted != L"--") return formatted;
+            }
+            return JsonString(binding, L"fallback", fallback);
+        }
+    } catch (...) {
+    }
+    return fallback;
+}
+
+winrt::Windows::UI::Color DynamicColorProperty(
+    const wdj::JsonObject& node,
+    const wdj::JsonObject& context,
+    PCWSTR key,
+    const std::wstring& fallback) {
+    return ResolveDynamicColor(
+        DynamicStringProperty(node, context, key, fallback),
+        ResolveDynamicColor(fallback));
+}
+
+wux::Thickness DynamicThickness(const wdj::JsonObject& node,
+                                PCWSTR key,
+                                double fallback = 0.0) {
+    try {
+        if (!node || !node.HasKey(key)) {
+            return wux::ThicknessHelper::FromUniformLength(fallback);
+        }
+        auto value = node.GetNamedValue(key);
+        if (value.ValueType() == wdj::JsonValueType::Number) {
+            return wux::ThicknessHelper::FromUniformLength(
+                std::clamp(value.GetNumber(), 0.0, 32.0));
+        }
+        if (value.ValueType() == wdj::JsonValueType::Object) {
+            auto object = value.GetObject();
+            return wux::ThicknessHelper::FromLengths(
+                std::clamp(JsonNumber(object, L"left", fallback), 0.0, 32.0),
+                std::clamp(JsonNumber(object, L"top", fallback), 0.0, 32.0),
+                std::clamp(JsonNumber(object, L"right", fallback), 0.0, 32.0),
+                std::clamp(JsonNumber(object, L"bottom", fallback), 0.0, 32.0));
+        }
+    } catch (...) {
+    }
+    return wux::ThicknessHelper::FromUniformLength(fallback);
+}
+
+void ApplyDynamicElementLayout(const wux::FrameworkElement& element,
+                               const wdj::JsonObject& node) {
+    const double width = JsonNumber(node, L"width", 0.0);
+    const double height = JsonNumber(node, L"height", 0.0);
+    if (width > 0.0) element.Width(std::clamp(width, 1.0, 640.0));
+    if (height > 0.0) element.Height(std::clamp(height, 1.0, 480.0));
+    const auto horizontal = JsonString(node, L"horizontalAlignment");
+    if (horizontal == L"left") element.HorizontalAlignment(wux::HorizontalAlignment::Left);
+    else if (horizontal == L"right") element.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    else if (horizontal == L"center") element.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    else if (horizontal == L"stretch") element.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+    const auto vertical = JsonString(node, L"verticalAlignment");
+    if (vertical == L"top") element.VerticalAlignment(wux::VerticalAlignment::Top);
+    else if (vertical == L"bottom") element.VerticalAlignment(wux::VerticalAlignment::Bottom);
+    else if (vertical == L"center") element.VerticalAlignment(wux::VerticalAlignment::Center);
+    else if (vertical == L"stretch") element.VerticalAlignment(wux::VerticalAlignment::Stretch);
+}
+
+wux::UIElement MakeDynamicMarqueeText(const std::wstring& text,
+                                      double fontSize,
+                                      double viewportWidth,
+                                      double viewportHeight,
+                                      const winrt::Windows::UI::Color& color,
+                                      const std::wstring& weight) {
+    auto makeBlock = [&]() {
+        auto block = MakeText(text.c_str(), fontSize);
+        block.Foreground(wuxm::SolidColorBrush(color));
+        block.TextWrapping(wux::TextWrapping::NoWrap);
+        if (weight == L"semibold") {
+            block.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        } else if (weight == L"bold") {
+            block.FontWeight(winrt::Windows::UI::Text::FontWeights::Bold());
+        }
+        block.Measure(wf::Size{10000.0f, static_cast<float>(viewportHeight)});
+        return block;
+    };
+
+    auto first = makeBlock();
+    const double textWidth =
+        std::max(1.0, static_cast<double>(first.DesiredSize().Width));
+    if (textWidth <= viewportWidth) {
+        first.Width(viewportWidth);
+        first.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+        return first;
+    }
+
+    wuxc::Grid viewport;
+    viewport.Width(viewportWidth);
+    viewport.Height(viewportHeight);
+    wuxm::RectangleGeometry clip;
+    clip.Rect(wf::Rect{0, 0, static_cast<float>(viewportWidth),
+                      static_cast<float>(viewportHeight)});
+    viewport.Clip(clip);
+
+    wuxc::StackPanel strip;
+    strip.Orientation(wuxc::Orientation::Horizontal);
+    strip.Spacing(24);
+    strip.Children().Append(first);
+    strip.Children().Append(makeBlock());
+    wuxm::TranslateTransform transform;
+    strip.RenderTransform(transform);
+    viewport.Children().Append(strip);
+    const double resetAt = textWidth + 24.0;
+    ConfigureMarqueeAnimation(strip, resetAt, 14.0);
+    return viewport;
+}
+
+thread_local wuxc::Flyout g_dynamicWidgetPopup{nullptr};
+thread_local wuxc::Border g_dynamicWidgetPopupShell{nullptr};
+thread_local std::wstring g_dynamicWidgetPopupInstance;
+thread_local std::wstring g_dynamicWidgetPopupSignature;
+
+void HideDynamicWidgetPopup() {
+    if (g_dynamicWidgetPopup) {
+        g_dynamicWidgetPopup.Hide();
+        g_dynamicWidgetPopup.Content(nullptr);
+    }
+    g_dynamicWidgetPopup = nullptr;
+    g_dynamicWidgetPopupShell = nullptr;
+    g_dynamicWidgetPopupInstance.clear();
+    g_dynamicWidgetPopupSignature.clear();
+}
+
+wux::UIElement BuildDynamicElement(
+    const wdj::JsonObject& node,
+    const wdj::JsonObject& context,
+    const WidgetInstanceRuntime* instance = nullptr) {
     std::wstring type = JsonString(node, L"type");
     if (type == L"row" || type == L"column") {
         wuxc::StackPanel panel;
@@ -5263,30 +6580,145 @@ wux::UIElement BuildDynamicElement(const wdj::JsonObject& node,
                                           : wuxc::Orientation::Vertical);
         panel.Spacing(std::clamp(JsonNumber(node, L"gap", 0.0), 0.0, 24.0));
         panel.VerticalAlignment(wux::VerticalAlignment::Center);
+        panel.Padding(DynamicThickness(node, L"padding"));
+        ApplyDynamicElementLayout(panel, node);
         try {
             auto children = node.GetNamedArray(L"children");
             for (uint32_t i = 0; i < children.Size(); ++i) {
-                panel.Children().Append(BuildDynamicElement(children.GetObjectAt(i), context));
+                panel.Children().Append(
+                    BuildDynamicElement(children.GetObjectAt(i), context, instance));
             }
         } catch (...) {
             panel.Children().Append(MakeText(L"--", 10));
         }
         return panel;
     }
+    if (type == L"card") {
+        wuxc::Border card;
+        try {
+            if (node.HasKey(L"backgroundGradient")) {
+                auto gradient = node.GetNamedObject(L"backgroundGradient");
+                const auto start = DynamicColorProperty(
+                    gradient, context, L"startColor", L"#FF0F172A");
+                const auto end = DynamicColorProperty(
+                    gradient, context, L"endColor", L"#FF111827");
+                card.Background(MakeMediaGradientBrush(start, end));
+            } else {
+                card.Background(wuxm::SolidColorBrush(DynamicColorProperty(
+                    node, context, L"backgroundColor", L"#CC111827")));
+            }
+        } catch (...) {
+            card.Background(MakeBrush(0xCC, 0x11, 0x18, 0x27));
+        }
+        card.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(
+            std::clamp(JsonNumber(node, L"radius", 10.0), 0.0, 24.0)));
+        card.Padding(DynamicThickness(node, L"padding", 10.0));
+        ApplyDynamicElementLayout(card, node);
+        wuxc::StackPanel content;
+        content.Orientation(wuxc::Orientation::Vertical);
+        content.Spacing(std::clamp(JsonNumber(node, L"gap", 6.0), 0.0, 24.0));
+        try {
+            auto children = node.GetNamedArray(L"children");
+            for (uint32_t i = 0; i < children.Size(); ++i) {
+                content.Children().Append(
+                    BuildDynamicElement(children.GetObjectAt(i), context, instance));
+            }
+        } catch (...) {
+            content.Children().Append(MakeText(L"--", 10));
+        }
+        card.Child(content);
+        return card;
+    }
+    if (type == L"button") {
+        wuxc::Button button;
+        button.Name(L"TaskbarWidgetsDynamicActionButton");
+        const std::wstring glyph =
+            DynamicStringProperty(node, context, L"glyph");
+        const std::wstring label = DynamicStringProperty(
+            node, context, L"label",
+            DynamicStringProperty(node, context, L"text", L"Action"));
+        if (!glyph.empty()) {
+            wuxc::FontIcon icon;
+            icon.Glyph(winrt::hstring(glyph));
+            icon.FontFamily(wuxm::FontFamily(L"Segoe MDL2 Assets"));
+            icon.FontSize(std::clamp(JsonNumber(node, L"fontSize", 10.0), 8.0, 32.0));
+            icon.Foreground(wuxm::SolidColorBrush(DynamicColorProperty(
+                node, context, L"color", L"#FFFFFFFF")));
+            button.Content(icon);
+        } else {
+            button.Content(winrt::box_value(winrt::hstring(label)));
+            button.Foreground(wuxm::SolidColorBrush(DynamicColorProperty(
+                node, context, L"color", L"#FFF8FAFC")));
+        }
+        const double height = JsonNumber(node, L"height", 30.0);
+        button.MinHeight(0);
+        button.Height(std::clamp(height, 12.0, 480.0));
+        ApplyDynamicElementLayout(button, node);
+        button.Padding(DynamicThickness(node, L"padding", 0.0));
+        button.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(
+            std::clamp(JsonNumber(node, L"radius", height / 2.0), 0.0, 24.0)));
+        button.BorderThickness(wux::ThicknessHelper::FromUniformLength(0));
+        button.Background(wuxm::SolidColorBrush(DynamicColorProperty(
+            node, context, L"backgroundColor", L"#00000000")));
+        const std::wstring action = JsonString(node, L"action");
+        if (instance && !action.empty()) {
+            const auto widgetId = instance->designId;
+            const auto instanceId = instance->instanceId;
+            button.Click([widgetId, instanceId, action](
+                auto const&, wux::RoutedEventArgs const&) {
+                if (action == L"$close") {
+                    HideDynamicWidgetPopup();
+                } else if (action == L"$settings") {
+                    WriteTaskbarWidgetsCommand(L"openSettings", L"", widgetId);
+                    HideDynamicWidgetPopup();
+                } else {
+                    WriteCommunityWidgetCommand(widgetId, instanceId, action);
+                }
+            });
+        }
+        return button;
+    }
     if (type == L"text" || type == L"icon") {
-        auto block = MakeText(
-            type == L"icon" ? JsonString(node, L"glyph", L"\xE7C3").c_str()
-                              : DynamicText(node, context).c_str(),
-            std::clamp(JsonNumber(node, L"fontSize", 10.0), 8.0, 18.0));
-        block.Foreground(wuxm::SolidColorBrush(
-            ResolveDynamicColor(JsonString(node, L"color", L"#FFF8FAFC"))));
+        const std::wstring text = type == L"icon"
+            ? DynamicStringProperty(node, context, L"glyph", L"\xE7C3")
+            : DynamicText(node, context);
+        const double fontSize =
+            std::clamp(JsonNumber(node, L"fontSize", 10.0), 8.0, 32.0);
+        const auto color = DynamicColorProperty(
+            node, context, L"color", L"#FFF8FAFC");
+        const auto weight = JsonString(node, L"fontWeight");
+        const double width = JsonNumber(node, L"width", 0.0);
+        const double height = JsonNumber(node, L"height", fontSize + 5.0);
+        if (type == L"text" && JsonBool(node, L"marquee", false) && width > 0.0) {
+            auto marquee = MakeDynamicMarqueeText(
+                text, fontSize, width, height, color, weight);
+            if (auto framework = marquee.try_as<wux::FrameworkElement>()) {
+                ApplyDynamicElementLayout(framework, node);
+            }
+            return marquee;
+        }
+        auto block = MakeText(text.c_str(), fontSize);
+        block.Foreground(wuxm::SolidColorBrush(color));
+        if (type == L"icon") {
+            block.FontFamily(wuxm::FontFamily(L"Segoe MDL2 Assets"));
+        }
+        if (weight == L"semibold") {
+            block.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        } else if (weight == L"bold") {
+            block.FontWeight(winrt::Windows::UI::Text::FontWeights::Bold());
+        }
+        if (JsonString(node, L"trimming") == L"characterEllipsis") {
+            block.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+            block.TextWrapping(wux::TextWrapping::NoWrap);
+        }
         block.VerticalAlignment(wux::VerticalAlignment::Center);
+        ApplyDynamicElementLayout(block, node);
         return block;
     }
     if (type == L"spacer") {
         wuxc::Border spacer;
         spacer.Width(std::clamp(JsonNumber(node, L"width", 3.0), 0.0, 96.0));
-        spacer.Height(std::clamp(JsonNumber(node, L"height", 1.0), 0.0, 48.0));
+        spacer.Height(std::clamp(JsonNumber(node, L"height", 1.0), 0.0, 480.0));
         return spacer;
     }
     if (type == L"divider") {
@@ -5328,9 +6760,34 @@ wux::UIElement BuildDynamicElement(const wdj::JsonObject& node,
         return track;
     }
     if (type == L"image") {
-        auto placeholder = MakeText(L"\xE91B", 12);
-        placeholder.Foreground(wuxm::SolidColorBrush(color));
-        return placeholder;
+        const double width = std::clamp(JsonNumber(node, L"width", 24.0), 1.0, 640.0);
+        const double height = std::clamp(JsonNumber(node, L"height", 24.0), 1.0, 480.0);
+        const auto source = DynamicStringProperty(node, context, L"source");
+        wuxc::Border frame;
+        frame.Width(width);
+        frame.Height(height);
+        frame.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(
+            std::clamp(JsonNumber(node, L"radius", 0.0), 0.0, 24.0)));
+        frame.Background(wuxm::SolidColorBrush(DynamicColorProperty(
+            node, context, L"backgroundColor", L"#FF171B24")));
+        ApplyDynamicElementLayout(frame, node);
+        if (!source.empty() && FileExists(source)) {
+            try {
+                wuxmi::BitmapImage bitmap;
+                bitmap.UriSource(wf::Uri(ToFileUri(source)));
+                wuxc::Image image;
+                image.Source(bitmap);
+                image.Width(width);
+                image.Height(height);
+                const auto stretch = JsonString(node, L"stretch", L"uniformToFill");
+                image.Stretch(stretch == L"uniform" ? wuxm::Stretch::Uniform
+                              : stretch == L"fill" ? wuxm::Stretch::Fill
+                              : wuxm::Stretch::UniformToFill);
+                frame.Child(image);
+            } catch (...) {
+            }
+        }
+        return frame;
     }
     return MakeText(L"--", 10);
 }
@@ -5352,6 +6809,76 @@ wdj::JsonObject ReadDynamicWidgetContext(const WidgetInstanceRuntime& instance) 
     return context;
 }
 
+bool ShowDynamicWidgetPopup(const wux::UIElement& anchor,
+                            const std::wstring& widgetId,
+                            const std::wstring& instanceId) {
+    const auto* definition = FindDynamicWidget(widgetId);
+    if (!definition || !definition->expandedLayout ||
+        _wcsicmp(definition->renderer.c_str(), L"native") != 0) {
+        return false;
+    }
+    HideDynamicWidgetPopup();
+    try {
+        WidgetInstanceRuntime instance;
+        instance.id = instanceId;
+        instance.instanceId = instanceId;
+        instance.designId = widgetId;
+
+        wuxc::Border shell;
+        shell.Width(definition->expandedWidth);
+        shell.Height(definition->expandedHeight);
+        shell.Padding(wux::ThicknessHelper::FromUniformLength(12));
+        shell.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(14));
+        shell.Background(MakeBrush(0xFA, 0x08, 0x12, 0x20));
+        shell.BorderBrush(MakeBrush(0x90, 0x22, 0xD3, 0xEE));
+        shell.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        shell.Child(BuildDynamicElement(
+            definition->expandedLayout, ReadDynamicWidgetContext(instance), &instance));
+
+        wuxc::Flyout popup;
+        popup.Content(shell);
+        HWND taskbar = FindCurrentProcessTaskbarWindow();
+        RECT taskbarRect{};
+        RECT monitorRect{};
+        bool taskbarAtBottom = true;
+        if (taskbar && GetWindowRect(taskbar, &taskbarRect)) {
+            HMONITOR monitor =
+                MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO monitorInfo{sizeof(monitorInfo)};
+            if (GetMonitorInfo(monitor, &monitorInfo)) {
+                monitorRect = monitorInfo.rcMonitor;
+                taskbarAtBottom =
+                    taskbarRect.top >= monitorRect.top +
+                        (monitorRect.bottom - monitorRect.top) / 2;
+            }
+        }
+        const bool expandUp = definition->expandDirection == L"up" ||
+            (definition->expandDirection == L"auto" && taskbarAtBottom);
+        popup.Placement(expandUp ? wuxcp::FlyoutPlacementMode::Top
+                                 : wuxcp::FlyoutPlacementMode::Bottom);
+
+        g_dynamicWidgetPopup = popup;
+        g_dynamicWidgetPopupShell = shell;
+        g_dynamicWidgetPopupInstance = instanceId;
+        g_dynamicWidgetPopupSignature.clear();
+        popup.ShowAt(anchor.as<wux::FrameworkElement>());
+        Wh_Log(L"Native flyout ShowAt completed: %s; open=%d",
+               widgetId.c_str(), popup.IsOpen() ? 1 : 0);
+        return true;
+    } catch (const winrt::hresult_error& error) {
+        Wh_Log(L"Native flyout failed for %s: 0x%08X %s",
+               widgetId.c_str(), static_cast<unsigned>(error.code().value),
+               error.message().c_str());
+        HideDynamicWidgetPopup();
+        return false;
+    } catch (...) {
+        Wh_Log(L"Native flyout failed for %s with an unknown error.",
+               widgetId.c_str());
+        HideDynamicWidgetPopup();
+        return false;
+    }
+}
+
 void UpdateDynamicWidgetPanel(wux::UIElement const& root,
                               const WidgetInstanceRuntime& instance) {
     auto definition = FindDynamicWidget(instance.designId);
@@ -5365,6 +6892,13 @@ void UpdateDynamicWidgetPanel(wux::UIElement const& root,
         rootElement.Height(definition->height);
         rootElement.Margin(wux::ThicknessHelper::FromLengths(0, 0, 0, 0));
     }
+    if (_wcsicmp(definition->renderer.c_str(), L"web") == 0) {
+        panel.Background(MakeBrush(0, 0, 0, 0));
+        panel.Child(nullptr);
+        panel.Opacity(0.0);
+        return;
+    }
+    panel.Opacity(1.0);
     std::wstring statePath = GetTaskbarWidgetsPath(
         (L"State\\" + instance.instanceId + L".json").c_str());
     std::wstring signature = instance.designId + L"|" +
@@ -5376,7 +6910,50 @@ void UpdateDynamicWidgetPanel(wux::UIElement const& root,
     }
     panel.Tag(winrt::box_value(winrt::hstring(signature)));
     try {
-        panel.Child(BuildDynamicElement(definition->layout, ReadDynamicWidgetContext(instance)));
+        auto context = ReadDynamicWidgetContext(instance);
+        auto compact = BuildDynamicElement(definition->layout, context, &instance);
+        if (_wcsicmp(definition->renderer.c_str(), L"native") == 0 &&
+            definition->expandedLayout) {
+            wuxc::Button button;
+            button.Name(L"TaskbarWidgetsNativeExpandButton");
+            button.Width(definition->width);
+            button.Height(definition->height);
+            button.Padding(wux::ThicknessHelper::FromUniformLength(0));
+            button.BorderThickness(wux::ThicknessHelper::FromUniformLength(0));
+            button.Background(MakeBrush(0, 0, 0, 0));
+            button.HorizontalContentAlignment(wux::HorizontalAlignment::Stretch);
+            button.VerticalContentAlignment(wux::VerticalAlignment::Stretch);
+            button.Content(compact);
+            auto weakButton = winrt::make_weak(button);
+            const std::wstring widgetId = instance.designId;
+            const std::wstring instanceId = instance.instanceId;
+            button.Click(
+                [weakButton, widgetId, instanceId](
+                    auto const&, wux::RoutedEventArgs const&) {
+                    if (auto anchor = weakButton.get()) {
+                        const bool opened = ShowDynamicWidgetPopup(
+                            anchor.as<wux::UIElement>(), widgetId, instanceId);
+                        Wh_Log(L"Native widget button click: %s; opened=%d",
+                               widgetId.c_str(), opened ? 1 : 0);
+                    }
+                });
+            panel.Child(button);
+        } else {
+            panel.Child(compact);
+        }
+        if (g_dynamicWidgetPopup && g_dynamicWidgetPopup.IsOpen() &&
+            g_dynamicWidgetPopupShell &&
+            g_dynamicWidgetPopupInstance == instance.instanceId &&
+            definition->expandedLayout) {
+            const std::wstring popupSignature =
+                instance.designId + L"|" +
+                std::to_wstring(GetFileWriteVersion(statePath));
+            if (popupSignature != g_dynamicWidgetPopupSignature) {
+                g_dynamicWidgetPopupShell.Child(BuildDynamicElement(
+                    definition->expandedLayout, context, &instance));
+                g_dynamicWidgetPopupSignature = popupSignature;
+            }
+        }
     } catch (...) {
         panel.Child(MakeText(L"--", 10));
     }
@@ -5655,8 +7232,13 @@ void SetExpandedMode(wux::UIElement const& root, bool expanded) {
                 rootElement.Width(230);
                 rootElement.Height(44);
             } else if (activeDesign == L"discord-voice") {
-                rootElement.Width(196);
-                rootElement.Height(36);
+                WidgetRuntimeSettings settings = ReadWidgetRuntimeSettings();
+                bool channelTheme = settings.discordDisplayMode == L"channel";
+                rootElement.Width(channelTheme ? 134 : 196);
+                rootElement.Height(channelTheme ? 44 : 40);
+            } else if (activeDesign == L"parking-lot") {
+                rootElement.Width(112);
+                rootElement.Height(24);
             } else if (activeDesign.rfind(L"system-", 0) == 0) {
                 rootElement.Width(176);
                 rootElement.Height(36);
@@ -5704,6 +7286,10 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
     }
 
     std::wstring activeDesign = instance.designId;
+    bool isParkingLot = activeDesign == L"parking-lot";
+    SetNamedVisibility(root, L"TaskbarWidgetsParkingLotPanel",
+                       isParkingLot ? wux::Visibility::Visible
+                                    : wux::Visibility::Collapsed);
     bool isDynamic = FindDynamicWidget(activeDesign) != nullptr;
     SetNamedVisibility(root, L"TaskbarWidgetsDynamicPanel",
                        isDynamic ? wux::Visibility::Visible
@@ -5717,6 +7303,31 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
         SetNamedVisibility(root, L"TaskbarWidgetsMediaPanel", wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarWidgetsSteamPanel", wux::Visibility::Collapsed);
         UpdateDynamicWidgetPanel(root, instance);
+        return;
+    }
+    if (isParkingLot) {
+        if (rootElement) {
+            rootElement.Width(64);
+            rootElement.Height(32);
+            rootElement.Margin(wux::ThicknessHelper::FromLengths(4, 0, 4, 0));
+        }
+        SetNamedVisibility(root, L"TaskbarWidgetsSystemPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsCompactPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsExpandedPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsWeatherPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsDiscordPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsSteamPanel",
+                           wux::Visibility::Collapsed);
+        SetNamedVisibility(root, L"TaskbarWidgetsDynamicPanel",
+                           wux::Visibility::Collapsed);
+        RefreshParkingLotPanel(root);
         return;
     }
     bool isSystemMetric = activeDesign == L"system-cpu" ||
@@ -5845,10 +7456,17 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
     if (activeDesign == L"discord-voice") {
         WidgetRuntimeSettings settings = ReadWidgetRuntimeSettings();
         DiscordVoiceSnapshot discord = ReadDiscordVoiceSnapshot();
+        bool channelTheme = settings.discordDisplayMode == L"channel";
         auto rootElement = root.try_as<wux::FrameworkElement>();
         if (rootElement) {
-            rootElement.Width(196);
-            rootElement.Height(36);
+            rootElement.Width(channelTheme ? 134 : 196);
+            rootElement.Height(channelTheme ? 44 : 40);
+        }
+        auto discordPanel = FindNamedFrameworkElement(
+            root, L"TaskbarWidgetsDiscordPanel");
+        if (discordPanel) {
+            discordPanel.Width(channelTheme ? 124 : 184);
+            discordPanel.Height(channelTheme ? 44 : 40);
         }
 
         SetNamedVisibility(root, L"TaskbarWidgetsCompactPanel",
@@ -5863,22 +7481,50 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarWidgetsDiscordPanel",
                            wux::Visibility::Visible);
+        SetNamedVisibility(root, L"TaskbarWidgetsDiscordAvatarsTheme",
+                           channelTheme ? wux::Visibility::Collapsed
+                                        : wux::Visibility::Visible);
+        SetNamedVisibility(root, L"TaskbarWidgetsDiscordChannelTheme",
+                           channelTheme ? wux::Visibility::Visible
+                                        : wux::Visibility::Collapsed);
         SetDiscordPanelBackground(root, settings.discordBackgroundEnabled);
+        std::wstring channelTitle = Trim(discord.channelName);
+        if (!channelTitle.empty() && channelTitle.front() == L'\x26A1') {
+            channelTitle = Trim(channelTitle.substr(1));
+        }
+        SetNamedText(root, L"TaskbarWidgetsDiscordChannelName",
+                     channelTitle.empty() ? L"Voice" : channelTitle);
 
         for (int i = 0; i < 5; ++i) {
+            std::wstring slotName = L"TaskbarWidgetsDiscordAvatarSlot" + std::to_wstring(i);
             std::wstring frameName = L"TaskbarWidgetsDiscordAvatarFrame" + std::to_wstring(i);
             std::wstring avatarName = L"TaskbarWidgetsDiscordAvatarEllipse" + std::to_wstring(i);
+            std::wstring mutedName = L"TaskbarWidgetsDiscordAvatarMuted" + std::to_wstring(i);
+            std::wstring channelSlotName = L"TaskbarWidgetsDiscordChannelAvatarSlot" + std::to_wstring(i);
+            std::wstring channelFrameName = L"TaskbarWidgetsDiscordChannelAvatarFrame" + std::to_wstring(i);
+            std::wstring channelAvatarName = L"TaskbarWidgetsDiscordChannelAvatarEllipse" + std::to_wstring(i);
+            std::wstring channelMutedName = L"TaskbarWidgetsDiscordChannelAvatarMuted" + std::to_wstring(i);
             if (i < static_cast<int>(discord.users.size())) {
                 const auto& user = discord.users[i];
-                SetNamedVisibility(root, frameName.c_str(), wux::Visibility::Visible);
+                SetNamedVisibility(root, slotName.c_str(), wux::Visibility::Visible);
+                SetNamedVisibility(root, channelSlotName.c_str(), wux::Visibility::Visible);
                 std::wstring avatarPath = user.speaking && !user.animatedAvatarPath.empty()
                                               ? user.animatedAvatarPath
                                               : user.avatarPath;
                 SetNamedEllipseImageFill(root, avatarName.c_str(), avatarPath);
-                SetNamedOpacity(root, avatarName.c_str(), user.speaking ? 1.0 : 0.38);
+                SetNamedEllipseImageFill(root, channelAvatarName.c_str(), avatarPath);
+                SetNamedOpacity(root, avatarName.c_str(), 1.0);
+                SetNamedOpacity(root, channelAvatarName.c_str(), 1.0);
                 SetNamedBorderVisual(root, frameName.c_str(), user.speaking);
+                SetNamedBorderVisual(root, channelFrameName.c_str(), user.speaking);
+                auto muteVisibility = user.muted || user.deafened
+                                          ? wux::Visibility::Visible
+                                          : wux::Visibility::Collapsed;
+                SetNamedVisibility(root, mutedName.c_str(), muteVisibility);
+                SetNamedVisibility(root, channelMutedName.c_str(), muteVisibility);
             } else {
-                SetNamedVisibility(root, frameName.c_str(), wux::Visibility::Collapsed);
+                SetNamedVisibility(root, slotName.c_str(), wux::Visibility::Collapsed);
+                SetNamedVisibility(root, channelSlotName.c_str(), wux::Visibility::Collapsed);
             }
         }
         return;
@@ -6062,7 +7708,12 @@ double WidgetDesignWidth(const std::wstring& designId) {
         return 230.0;
     }
     if (designId == L"discord-voice") {
-        return 196.0;
+        return ReadWidgetRuntimeSettings().discordDisplayMode == L"channel"
+                   ? 134.0
+                   : 196.0;
+    }
+    if (designId == L"parking-lot") {
+        return 64.0;
     }
     if (designId == L"weather-static") {
         return 240.0;
@@ -6081,6 +7732,14 @@ double WidgetDesignHeight(const std::wstring& designId) {
         designId == L"steam-download") {
         return 44.0;
     }
+    if (designId == L"discord-voice") {
+        return ReadWidgetRuntimeSettings().discordDisplayMode == L"channel"
+                   ? 44.0
+                   : 40.0;
+    }
+    if (designId == L"parking-lot") {
+        return 32.0;
+    }
     return 36.0;
 }
 
@@ -6094,11 +7753,15 @@ WidgetLayoutBounds ComputeWidgetLayoutBounds(
     const std::vector<WidgetInstanceRuntime>& widgets) {
     WidgetLayoutBounds bounds;
     bool first = true;
+    double minimumCollisionFreeWidth = 0.0;
+    size_t enabledCount = 0;
     for (const auto& widget : widgets) {
         if (!widget.enabled) {
             continue;
         }
         double width = WidgetDesignWidth(widget.designId);
+        minimumCollisionFreeWidth += width;
+        ++enabledCount;
         double right = static_cast<double>(widget.moveX);
         double left = right - width;
         if (first) {
@@ -6111,8 +7774,510 @@ WidgetLayoutBounds ComputeWidgetLayoutBounds(
         }
     }
 
-    bounds.width = std::max(1.0, bounds.maxRight - bounds.minLeft);
+    if (enabledCount > 1) {
+        minimumCollisionFreeWidth += 8.0 * static_cast<double>(enabledCount - 1);
+    }
+    bounds.width = std::max(
+        {1.0, bounds.maxRight - bounds.minLeft, minimumCollisionFreeWidth});
     return bounds;
+}
+
+std::wstring WebWidgetHostName(const std::wstring& instanceId) {
+    std::wstring host = L"w-";
+    for (wchar_t character : instanceId) {
+        if ((character >= L'a' && character <= L'z') ||
+            (character >= L'0' && character <= L'9') ||
+            character == L'-') {
+            host += character;
+        } else if (character >= L'A' && character <= L'Z') {
+            host += static_cast<wchar_t>(character - L'A' + L'a');
+        } else {
+            host += L'-';
+        }
+    }
+    host += L".taskbarwidgets.local";
+    return host;
+}
+
+void PublishWebWidgetGeometry(const std::string& json) {
+    DWORD session = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &session)) return;
+    std::wstring pipeName =
+        L"\\\\.\\pipe\\TaskbarWidgets.RenderHost." + std::to_wstring(session);
+    HANDLE pipe = CreateFile(
+        pipeName.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) return;
+    DWORD length = static_cast<DWORD>(json.size());
+    DWORD written = 0;
+    if (length > 0 && length <= 256 * 1024 &&
+        WriteFile(pipe, &length, sizeof(length), &written, nullptr) &&
+        written == sizeof(length)) {
+        WriteFile(pipe, json.data(), length, &written, nullptr);
+    }
+    CloseHandle(pipe);
+}
+
+void PublishWebWidgetSnapshot(const std::wstring& instanceId) {
+    if (!IsSafeWidgetInstanceId(instanceId)) return;
+    PublishWebWidgetGeometry(
+        "{\"type\":\"snapshot\",\"instanceId\":\"" +
+        JsonEscapeUtf8(instanceId) + "\"}");
+}
+
+void PublishWebWidgetLayout(
+    const wux::UIElement& root,
+    const wuxc::Canvas& host,
+    const std::vector<WidgetInstanceRuntime>& widgets) {
+    using Clock = std::chrono::steady_clock;
+    static thread_local Clock::time_point nextLayoutCheck{};
+    const auto now = Clock::now();
+    if (now < nextLayoutCheck) return;
+    nextLayoutCheck = now + std::chrono::milliseconds(100);
+
+    HWND taskbar = FindCurrentProcessTaskbarWindow();
+    if (!taskbar) return;
+    RECT taskbarRect{};
+    GetWindowRect(taskbar, &taskbarRect);
+    HMONITOR monitor = MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEX monitorInfo{sizeof(monitorInfo)};
+    if (!GetMonitorInfo(monitor, &monitorInfo)) return;
+    const RECT bounds = monitorInfo.rcMonitor;
+    const bool taskbarAtBottom =
+        taskbarRect.top >= bounds.top + (bounds.bottom - bounds.top) / 2;
+
+    uint32_t childIndex = 0;
+    for (const auto& widget : widgets) {
+        if (!widget.enabled) continue;
+        if (childIndex >= host.Children().Size()) break;
+        auto child = host.Children().GetAt(childIndex++);
+        const auto* definition = FindDynamicWidget(widget.designId);
+        if (!definition || _wcsicmp(definition->renderer.c_str(), L"web") != 0) continue;
+        try {
+            auto point = child.TransformToVisual(nullptr).TransformPoint({0, 0});
+            POINT screen{
+                static_cast<LONG>(std::lround(point.X)),
+                static_cast<LONG>(std::lround(point.Y))
+            };
+            ClientToScreen(taskbar, &screen);
+            const double scale = static_cast<double>(GetDpiForWindow(taskbar)) / 96.0;
+            const int width = std::max(1, static_cast<int>(std::lround(definition->width * scale)));
+            const int height = std::max(1, static_cast<int>(std::lround(definition->height * scale)));
+            const int expandedWidth = std::max(
+                width, static_cast<int>(std::lround(definition->expandedWidth * scale)));
+            const int expandedHeight = std::max(
+                height, static_cast<int>(std::lround(definition->expandedHeight * scale)));
+            int expandedX = screen.x + (width - expandedWidth) / 2;
+            expandedX = std::clamp(
+                expandedX, static_cast<int>(bounds.left),
+                static_cast<int>(bounds.right) - expandedWidth);
+            bool expandUp = definition->expandDirection == L"up" ||
+                (definition->expandDirection == L"auto" && taskbarAtBottom);
+            int expandedY = expandUp
+                ? screen.y + height - expandedHeight
+                : screen.y;
+            expandedY = std::clamp(
+                expandedY, static_cast<int>(bounds.top),
+                static_cast<int>(bounds.bottom) - expandedHeight);
+
+            std::wstring source = definition->sourcePath;
+            std::replace(source.begin(), source.end(), L'\\', L'/');
+            std::wstring entry = definition->webEntry;
+            std::replace(entry.begin(), entry.end(), L'\\', L'/');
+            const std::wstring hostName = WebWidgetHostName(widget.instanceId);
+            std::string json =
+                "{\"instanceId\":\"" + JsonEscapeUtf8(widget.instanceId) +
+                "\",\"widgetId\":\"" + JsonEscapeUtf8(widget.designId) +
+                "\",\"monitorId\":\"" + JsonEscapeUtf8(monitorInfo.szDevice) +
+                "\",\"explorerPid\":" + std::to_string(GetCurrentProcessId()) +
+                ",\"packagePath\":\"" + JsonEscapeUtf8(source) +
+                "\",\"entry\":\"" + JsonEscapeUtf8(entry) +
+                "\",\"hostName\":\"" + JsonEscapeUtf8(hostName) +
+                "\",\"url\":\"https://" + JsonEscapeUtf8(hostName) + "/" +
+                    JsonEscapeUtf8(entry) +
+                "\",\"x\":" + std::to_string(screen.x - bounds.left) +
+                ",\"y\":" + std::to_string(screen.y - bounds.top) +
+                ",\"width\":" + std::to_string(width) +
+                ",\"height\":" + std::to_string(height) +
+                ",\"expandedRect\":{\"x\":" + std::to_string(expandedX - bounds.left) +
+                ",\"y\":" + std::to_string(expandedY - bounds.top) +
+                ",\"width\":" + std::to_string(expandedWidth) +
+                ",\"height\":" + std::to_string(expandedHeight) +
+                "},\"monitorX\":" + std::to_string(bounds.left) +
+                ",\"monitorY\":" + std::to_string(bounds.top) +
+                ",\"monitorRight\":" + std::to_string(bounds.right) +
+                ",\"monitorBottom\":" + std::to_string(bounds.bottom) +
+                ",\"dpi\":" + std::to_string(GetDpiForWindow(taskbar)) +
+                ",\"visible\":true,\"storageAllowed\":" +
+                    std::string(definition->storageAllowed ? "true" : "false") +
+                ",\"webglAllowed\":" +
+                    std::string(definition->webglAllowed ? "true" : "false") +
+                ",\"continuousAnimationAllowed\":" +
+                    std::string(definition->continuousAnimationAllowed ? "true" : "false") +
+                ",\"activation\":\"" +
+                    JsonEscapeUtf8(definition->activation) +
+                "\",\"hoverDelayMs\":" + std::to_string(definition->hoverDelayMs) +
+                ",\"collapseDelayMs\":" + std::to_string(definition->collapseDelayMs) +
+                ",\"transitionMs\":" + std::to_string(definition->transitionMs) + "}";
+            struct PublishedGeometry {
+                std::string json;
+                Clock::time_point lastPublished{};
+            };
+            static thread_local std::unordered_map<std::string, PublishedGeometry>
+                publishedGeometries;
+            const std::string publishKey =
+                JsonEscapeUtf8(monitorInfo.szDevice) + ":" +
+                JsonEscapeUtf8(widget.instanceId);
+            auto& published = publishedGeometries[publishKey];
+            if (published.json != json ||
+                now - published.lastPublished >= std::chrono::seconds(1)) {
+                PublishWebWidgetGeometry(json);
+                published.json = std::move(json);
+                published.lastPublished = now;
+            }
+        } catch (...) {
+        }
+    }
+}
+
+bool CollectTaskbarButtonObstacles(
+    wux::DependencyObject const& node,
+    wux::UIElement const& widgetRoot,
+    double canvasWidth,
+    std::vector<taskbar_widgets::HorizontalSpan>& obstacles) {
+    if (!node ||
+        reinterpret_cast<uintptr_t>(winrt::get_abi(node)) ==
+            reinterpret_cast<uintptr_t>(winrt::get_abi(widgetRoot))) {
+        return true;
+    }
+
+    try {
+        auto button = node.try_as<wuxcp::ButtonBase>();
+        auto element = node.try_as<wux::FrameworkElement>();
+        if (button && element &&
+            element.Visibility() == wux::Visibility::Visible) {
+            const double width = element.ActualWidth();
+            const double height = element.ActualHeight();
+            if (width > 0.0 && width <= canvasWidth / 2.0 && height > 0.0) {
+                const auto point = element.TransformToVisual(widgetRoot).TransformPoint({0, 0});
+                const double top = static_cast<double>(point.Y);
+                const double verticalOverlap =
+                    std::min(48.0, top + height) - std::max(0.0, top);
+                if (verticalOverlap * 2.0 >= height) {
+                    constexpr double clearance = 4.0;
+                    obstacles.push_back({
+                        point.X - clearance,
+                        point.X + width + clearance});
+                }
+            }
+        }
+
+        const int childCount = wuxm::VisualTreeHelper::GetChildrenCount(node);
+        for (int index = 0; index < childCount; ++index) {
+            if (!CollectTaskbarButtonObstacles(
+                    wuxm::VisualTreeHelper::GetChild(node, index),
+                    widgetRoot,
+                    canvasWidth,
+                    obstacles)) {
+                return false;
+            }
+        }
+        return true;
+    } catch (...) {
+        // The taskbar visual tree can mutate during enumeration. The next layout
+        // pass retries with the new tree instead of destabilizing Explorer.
+        return false;
+    }
+}
+
+wux::DependencyObject FindTaskbarVisualRoot(
+    wux::DependencyObject const& start) {
+    wux::DependencyObject current = start;
+    // A SystemTrayFrame parent is only one branch of the taskbar tree. Walk to
+    // the XAML root first so running-app, Start, Search and Widgets buttons in
+    // sibling branches are included in collision detection.
+    for (int depth = 0; current && depth < 64; ++depth) {
+        try {
+            auto parent = wuxm::VisualTreeHelper::GetParent(current);
+            if (!parent) {
+                break;
+            }
+            current = parent;
+        } catch (...) {
+            break;
+        }
+    }
+    return current;
+}
+
+std::vector<HWND> EnumerateTaskbarWindowsForUia() {
+    struct Context {
+        DWORD processId;
+        std::vector<HWND> windows;
+    } context{GetCurrentProcessId(), {}};
+
+    EnumWindows(
+        [](HWND window, LPARAM parameter) -> BOOL {
+            auto& context = *reinterpret_cast<Context*>(parameter);
+            DWORD processId = 0;
+            WCHAR className[64]{};
+            if (GetWindowThreadProcessId(window, &processId) &&
+                processId == context.processId &&
+                GetClassName(window, className, ARRAYSIZE(className)) &&
+                (_wcsicmp(className, L"Shell_TrayWnd") == 0 ||
+                 _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)) {
+                context.windows.push_back(window);
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&context));
+    return context.windows;
+}
+
+bool ReadTaskbarUiaButtonRectangles(
+    IUIAutomation* automation,
+    HWND taskbar,
+    std::vector<RECT>& rectangles) {
+    if (!automation || !taskbar || !IsWindow(taskbar)) {
+        return false;
+    }
+
+    winrt::com_ptr<IUIAutomationElement> root;
+    if (FAILED(automation->ElementFromHandle(taskbar, root.put())) || !root) {
+        return false;
+    }
+
+    VARIANT value;
+    VariantInit(&value);
+    value.vt = VT_I4;
+    value.lVal = UIA_ButtonControlTypeId;
+    winrt::com_ptr<IUIAutomationCondition> condition;
+    const HRESULT conditionResult = automation->CreatePropertyCondition(
+        UIA_ControlTypePropertyId, value, condition.put());
+    VariantClear(&value);
+    if (FAILED(conditionResult) || !condition) {
+        return false;
+    }
+
+    winrt::com_ptr<IUIAutomationElementArray> buttons;
+    if (FAILED(root->FindAll(
+            TreeScope_Descendants, condition.get(), buttons.put())) ||
+        !buttons) {
+        return false;
+    }
+
+    int length = 0;
+    if (FAILED(buttons->get_Length(&length))) {
+        return false;
+    }
+
+    RECT taskbarRect{};
+    if (!GetWindowRect(taskbar, &taskbarRect) ||
+        taskbarRect.right <= taskbarRect.left ||
+        taskbarRect.bottom <= taskbarRect.top) {
+        return false;
+    }
+
+    rectangles.clear();
+    rectangles.reserve(static_cast<size_t>(std::max(0, length)));
+    for (int index = 0; index < length; ++index) {
+        winrt::com_ptr<IUIAutomationElement> button;
+        if (FAILED(buttons->GetElement(index, button.put())) || !button) {
+            continue;
+        }
+
+        BSTR automationId = nullptr;
+        if (SUCCEEDED(button->get_CurrentAutomationId(&automationId)) &&
+            automationId) {
+            const std::wstring_view id(
+                automationId, static_cast<size_t>(SysStringLen(automationId)));
+            const bool belongsToTaskbarWidgets =
+                id.starts_with(L"TaskbarWidgets");
+            SysFreeString(automationId);
+            if (belongsToTaskbarWidgets) {
+                continue;
+            }
+        }
+
+        RECT rectangle{};
+        if (FAILED(button->get_CurrentBoundingRectangle(&rectangle)) ||
+            rectangle.right <= rectangle.left ||
+            rectangle.bottom <= rectangle.top) {
+            continue;
+        }
+
+        const LONG height = rectangle.bottom - rectangle.top;
+        const LONG verticalOverlap =
+            std::min(rectangle.bottom, taskbarRect.bottom) -
+            std::max(rectangle.top, taskbarRect.top);
+        if (verticalOverlap <= 0 || verticalOverlap * 2 < height) {
+            continue;
+        }
+        rectangles.push_back(rectangle);
+    }
+    return true;
+}
+
+void RefreshTaskbarUiaButtonCache() {
+    static thread_local winrt::com_ptr<IUIAutomation> automation;
+    static thread_local std::unordered_map<HWND, size_t> loggedCounts;
+    if (!automation) {
+        if (FAILED(CoCreateInstance(
+                CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(automation.put()))) ||
+            !automation) {
+            return;
+        }
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    for (HWND taskbar : EnumerateTaskbarWindowsForUia()) {
+        std::vector<RECT> rectangles;
+        if (!ReadTaskbarUiaButtonRectangles(
+                automation.get(), taskbar, rectangles) ||
+            rectangles.empty()) {
+            continue;
+        }
+        const size_t count = rectangles.size();
+        auto [logged, inserted] = loggedCounts.emplace(taskbar, count);
+        if (inserted || logged->second != count) {
+            logged->second = count;
+            Wh_Log(L"UI Automation taskbar button scan: hwnd=%08X count=%zu",
+                   static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(taskbar)),
+                   count);
+        }
+        std::lock_guard lock(g_taskbarUiaCacheMutex);
+        g_taskbarUiaButtonCache[taskbar] =
+            CachedTaskbarUiaButtons{std::move(rectangles), now};
+    }
+}
+
+std::vector<taskbar_widgets::HorizontalSpan> GetTaskbarButtonObstacles(
+    wux::UIElement const& taskbarWidgetsRoot,
+    double canvasWidth,
+    bool refresh) {
+    if (!taskbarWidgetsRoot) {
+        return {};
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (HWND taskbar = FindCurrentProcessTaskbarWindow()) {
+        std::vector<RECT> rectangles;
+        {
+            std::lock_guard lock(g_taskbarUiaCacheMutex);
+            auto found = g_taskbarUiaButtonCache.find(taskbar);
+            if (found != g_taskbarUiaButtonCache.end() &&
+                now - found->second.capturedAt < std::chrono::seconds(30)) {
+                rectangles = found->second.rectangles;
+            }
+        }
+
+        if (!rectangles.empty()) {
+            try {
+                RECT taskbarRect{};
+                if (GetWindowRect(taskbar, &taskbarRect)) {
+                    const double scale =
+                        static_cast<double>(GetDpiForWindow(taskbar)) / 96.0;
+                    auto rootPoint = taskbarWidgetsRoot.TransformToVisual(nullptr)
+                                         .TransformPoint({0, 0});
+                    const double rootScreenLeft =
+                        static_cast<double>(taskbarRect.left) +
+                        static_cast<double>(rootPoint.X) * scale;
+                    const taskbar_widgets::ScreenRectangle band{
+                        static_cast<double>(taskbarRect.left),
+                        static_cast<double>(taskbarRect.top),
+                        static_cast<double>(taskbarRect.right),
+                        static_cast<double>(taskbarRect.bottom)};
+                    std::vector<taskbar_widgets::HorizontalSpan> projected;
+                    projected.reserve(rectangles.size());
+                    for (const RECT& rectangle : rectangles) {
+                        auto span =
+                            taskbar_widgets::ProjectScreenObstacleToCanvas(
+                                taskbar_widgets::ScreenRectangle{
+                                    static_cast<double>(rectangle.left),
+                                    static_cast<double>(rectangle.top),
+                                    static_cast<double>(rectangle.right),
+                                    static_cast<double>(rectangle.bottom)},
+                                band, rootScreenLeft, scale, canvasWidth, 4.0);
+                        if (span) {
+                            projected.push_back(*span);
+                        }
+                    }
+                    if (!projected.empty()) {
+                        return projected;
+                    }
+                }
+            } catch (...) {
+                // Fall through to the in-process XAML scan until the next UIA
+                // cache refresh. Never perform UIA work on the pointer thread.
+            }
+        }
+    }
+
+    auto& cached =
+        g_taskbarObstacleCache[WidgetElementKey(taskbarWidgetsRoot)];
+    if (refresh) {
+        auto rootElement =
+            taskbarWidgetsRoot.try_as<wux::DependencyObject>();
+        auto visualRoot = FindTaskbarVisualRoot(rootElement);
+        std::vector<taskbar_widgets::HorizontalSpan> scanned;
+        const bool scanComplete = visualRoot &&
+            CollectTaskbarButtonObstacles(
+                visualRoot, taskbarWidgetsRoot, canvasWidth, scanned);
+        if (scanComplete && !scanned.empty()) {
+            cached = CachedTaskbarObstacles{std::move(scanned), now};
+        }
+    }
+
+    if (!cached.spans.empty() &&
+        now - cached.capturedAt < std::chrono::seconds(30)) {
+        return cached.spans;
+    }
+    return {};
+}
+
+void RefreshTaskbarObstacleCacheForDrag(
+    wux::UIElement const& draggedWidget,
+    wuxc::Canvas const& host) {
+    (void)draggedWidget;
+    auto taskbarWidgetsRoot = host.Parent().try_as<wux::UIElement>();
+    if (!taskbarWidgetsRoot) {
+        return;
+    }
+    (void)GetTaskbarButtonObstacles(
+        taskbarWidgetsRoot, host.ActualWidth(), true);
+}
+
+std::vector<taskbar_widgets::HorizontalSpan> BuildLiveDragObstacles(
+    wux::UIElement const& draggedWidget,
+    wuxc::Canvas const& host) {
+    auto taskbarWidgetsRoot = host.Parent().try_as<wux::UIElement>();
+    auto obstacles = GetTaskbarButtonObstacles(
+        taskbarWidgetsRoot, host.ActualWidth(), false);
+
+    constexpr double widgetClearance = 4.0;
+    const auto draggedKey = WidgetElementKey(draggedWidget);
+    for (auto const& child : host.Children()) {
+        if (WidgetElementKey(child) == draggedKey ||
+            child.Visibility() != wux::Visibility::Visible) {
+            continue;
+        }
+        auto element = child.try_as<wux::FrameworkElement>();
+        if (!element) {
+            continue;
+        }
+        const double left = wuxc::Canvas::GetLeft(child);
+        const double width = element.ActualWidth() > 0.0
+                                 ? element.ActualWidth()
+                                 : element.Width();
+        if (!std::isfinite(left) || !std::isfinite(width) || width <= 0.0) {
+            continue;
+        }
+        obstacles.push_back({
+            left - widgetClearance,
+            left + width + widgetClearance});
+    }
+    return obstacles;
 }
 
 void ApplyWidgetCanvasLayout(wux::UIElement const& root,
@@ -6136,6 +8301,11 @@ void ApplyWidgetCanvasLayout(wux::UIElement const& root,
     rootElement.Height(48);
     host.Width(canvasWidth);
     host.Height(48);
+
+    // Match TaskbarQuota's last-known-good strategy: a transient XAML tree
+    // mutation must not make widgets jump on top of app icons.
+    std::vector<taskbar_widgets::HorizontalSpan> obstacles =
+        GetTaskbarButtonObstacles(root, canvasWidth, true);
 
     uint32_t childIndex = 0;
     for (const auto& widget : widgets) {
@@ -6175,11 +8345,23 @@ void ApplyWidgetCanvasLayout(wux::UIElement const& root,
             }
         }
         left = std::clamp(left, 0.0, std::max(0.0, canvasWidth - width));
+        constexpr double widgetClearance = 4.0;
+        const auto placed = taskbar_widgets::PlaceAndReserve(
+            left, 0.0, canvasWidth, width, obstacles, widgetClearance);
+        if (!placed.has_value()) {
+            child.Visibility(wux::Visibility::Collapsed);
+            ++childIndex;
+            continue;
+        }
+
+        left = *placed;
+        child.Visibility(wux::Visibility::Visible);
         double top = std::max(0.0, (48.0 - height) / 2.0);
         wuxc::Canvas::SetLeft(child, left);
         wuxc::Canvas::SetTop(child, top);
         ++childIndex;
     }
+    PublishWebWidgetLayout(root, host, widgets);
 }
 
 void UpdateTaskbarWidgetsRoot(wux::UIElement const& root) {
@@ -6239,23 +8421,56 @@ void RefreshInsertedTaskbarWidgetsRoots() {
     }
 }
 
+void RefreshInsertedWidgetState(const std::wstring& instanceId) {
+    const auto widgets = ReadWidgetInstances();
+    for (auto const& module : g_insertedModules) {
+        if (!module.root) continue;
+        auto hostElement =
+            FindNamedFrameworkElement(module.root, L"TaskbarWidgetsWidgetHost");
+        auto host = hostElement.try_as<wuxc::Canvas>();
+        if (!host) continue;
+
+        uint32_t childIndex = 0;
+        for (const auto& widget : widgets) {
+            if (!widget.enabled) continue;
+            if (childIndex >= host.Children().Size()) break;
+            auto child = host.Children().GetAt(childIndex++);
+            if (_wcsicmp(widget.instanceId.c_str(), instanceId.c_str()) == 0) {
+                const auto* definition = FindDynamicWidget(widget.designId);
+                if (definition &&
+                    _wcsicmp(definition->renderer.c_str(), L"web") == 0) {
+                    break;
+                }
+                UpdateTaskbarWidgetsWidgetRoot(child, widget);
+                break;
+            }
+        }
+    }
+}
+
 wux::DispatcherTimer StartTaskbarWidgetsTimer(wux::UIElement const& root,
                                             wuxc::Grid const& parent,
                                             wux::FrameworkElement const& trayElement) {
     wux::DispatcherTimer timer;
     timer.Interval(std::chrono::milliseconds(33));
-    timer.Tick([root, parent, trayElement](auto const&, auto const&) {
+    auto weakLayoutRoot = winrt::make_weak(root);
+    timer.Tick([weakLayoutRoot,
+                nextCollisionPass = std::chrono::steady_clock::time_point{}]
+               (auto const&, auto const&) mutable {
         try {
-            auto rootElement = root.try_as<wux::FrameworkElement>();
-            if (rootElement && parent && trayElement) {
-                ApplyTaskbarWidgetsAnchorMargin(rootElement, parent, trayElement);
+            AnimateTaskbarWidgetMarquees();
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= nextCollisionPass) {
+                nextCollisionPass = now + std::chrono::milliseconds(100);
+                if (auto currentRoot = weakLayoutRoot.get()) {
+                    ApplyWidgetCanvasLayout(currentRoot, ReadWidgetInstances());
+                }
             }
-            UpdateTaskbarWidgetsRoot(root);
         } catch (winrt::hresult_error const& ex) {
-            Wh_Log(L"TaskbarWidgets update failed: 0x%08X %s", ex.code(),
+            Wh_Log(L"TaskbarWidgets animation failed: 0x%08X %s", ex.code(),
                    ex.message().c_str());
         } catch (...) {
-            Wh_Log(L"TaskbarWidgets update failed with unknown exception");
+            Wh_Log(L"TaskbarWidgets animation failed with unknown exception");
         }
     });
     auto rootElement = root.try_as<wux::FrameworkElement>();
@@ -6263,6 +8478,24 @@ wux::DispatcherTimer StartTaskbarWidgetsTimer(wux::UIElement const& root,
         ApplyTaskbarWidgetsAnchorMargin(rootElement, parent, trayElement);
     }
     UpdateTaskbarWidgetsRoot(root);
+    if (rootElement && parent && trayElement) {
+        auto weakRoot = winrt::make_weak(rootElement);
+        auto weakParent = winrt::make_weak(parent);
+        auto weakTray = winrt::make_weak(trayElement);
+        trayElement.SizeChanged(
+            [weakRoot, weakParent, weakTray](auto const&, auto const&) {
+                try {
+                    auto currentRoot = weakRoot.get();
+                    auto currentParent = weakParent.get();
+                    auto currentTray = weakTray.get();
+                    if (!currentRoot || !currentParent || !currentTray) return;
+                    ApplyTaskbarWidgetsAnchorMargin(
+                        currentRoot, currentParent, currentTray);
+                    UpdateTaskbarWidgetsRoot(currentRoot);
+                } catch (...) {
+                }
+            });
+    }
     timer.Start();
     return timer;
 }
@@ -6887,23 +9120,69 @@ bool RunFromWindowThread(HWND window,
 }
 
 HWND FindCurrentProcessTaskbarWindow() {
-    HWND taskbar = nullptr;
+    struct SearchContext {
+        DWORD processId{};
+        DWORD threadId{};
+        HWND matchingTaskbar{};
+        HWND primaryFallback{};
+        HWND anyFallback{};
+    } context{
+        GetCurrentProcessId(),
+        GetCurrentThreadId(),
+        nullptr,
+        nullptr,
+        nullptr
+    };
     EnumWindows(
         [](HWND window, LPARAM parameter) -> BOOL {
+            auto& context = *reinterpret_cast<SearchContext*>(parameter);
             DWORD processId = 0;
             WCHAR className[64]{};
             if (GetWindowThreadProcessId(window, &processId) &&
-                processId == GetCurrentProcessId() &&
-                GetClassName(window, className, ARRAYSIZE(className)) &&
-                _wcsicmp(className, L"Shell_TrayWnd") == 0) {
-                *reinterpret_cast<HWND*>(parameter) = window;
-                return FALSE;
+                processId == context.processId &&
+                GetClassName(window, className, ARRAYSIZE(className))) {
+                const bool primary = _wcsicmp(className, L"Shell_TrayWnd") == 0;
+                const bool secondary =
+                    _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0;
+                if (!primary && !secondary) return TRUE;
+
+                if (!context.anyFallback) context.anyFallback = window;
+                if (primary) context.primaryFallback = window;
+
+                bool ownsCurrentThread =
+                    GetWindowThreadProcessId(window, nullptr) == context.threadId;
+                if (!ownsCurrentThread) {
+                    struct ChildContext {
+                        DWORD threadId;
+                        bool found;
+                    } childContext{context.threadId, false};
+                    EnumChildWindows(
+                        window,
+                        [](HWND child, LPARAM childParameter) -> BOOL {
+                            auto& childContext =
+                                *reinterpret_cast<ChildContext*>(childParameter);
+                            if (GetWindowThreadProcessId(child, nullptr) ==
+                                childContext.threadId) {
+                                childContext.found = true;
+                                return FALSE;
+                            }
+                            return TRUE;
+                        },
+                        reinterpret_cast<LPARAM>(&childContext));
+                    ownsCurrentThread = childContext.found;
+                }
+                if (ownsCurrentThread) {
+                    context.matchingTaskbar = window;
+                    return FALSE;
+                }
             }
 
             return TRUE;
         },
-        reinterpret_cast<LPARAM>(&taskbar));
-    return taskbar;
+        reinterpret_cast<LPARAM>(&context));
+    if (context.matchingTaskbar) return context.matchingTaskbar;
+    if (context.primaryFallback) return context.primaryFallback;
+    return context.anyFallback;
 }
 
 HWND GetTaskbarUiWindow() {
@@ -7320,6 +9599,9 @@ void Wh_ModUninit() {
     }
 
     Wh_Log(L"TaskbarWidgets uninit");
+    if (HANDLE refreshEvent = g_refreshRequestEvent.load()) {
+        SetEvent(refreshEvent);
+    }
 
     if (g_weatherMenuWindow && IsWindow(g_weatherMenuWindow)) {
         DestroyWindow(g_weatherMenuWindow);
@@ -7368,13 +9650,222 @@ std::wstring GetLoadEventName() {
     return name;
 }
 
-DWORD WINAPI TaskbarWidgetsRuntimeThread(LPVOID) {
-    while (!g_uninitializing) {
-        InitializeExistingTaskbarThreads();
-        InitializeTapOnce();
-        Sleep(5000);
+struct TaskbarWidgetRefreshRequest {
+    bool full{};
+    std::vector<std::wstring> instanceIds;
+};
+
+void RefreshExistingTaskbarThreads(const TaskbarWidgetRefreshRequest& request) {
+    std::vector<HWND> windows;
+    if (HWND taskbarUi = GetTaskbarUiWindow()) {
+        windows.push_back(taskbarUi);
+    }
+    for (HWND xamlHost : GetXamlHostWindows()) {
+        windows.push_back(xamlHost);
     }
 
+    std::vector<DWORD> refreshedThreads;
+    for (HWND window : windows) {
+        const DWORD threadId = GetWindowThreadProcessId(window, nullptr);
+        if (!threadId ||
+            std::find(refreshedThreads.begin(), refreshedThreads.end(), threadId) !=
+                refreshedThreads.end()) {
+            continue;
+        }
+        refreshedThreads.push_back(threadId);
+        RunFromWindowThread(
+            window,
+            [](PVOID parameter) {
+                const auto& request =
+                    *reinterpret_cast<const TaskbarWidgetRefreshRequest*>(parameter);
+                if (request.full) {
+                    RefreshInsertedTaskbarWidgetsRoots();
+                    return;
+                }
+                for (const auto& instanceId : request.instanceIds) {
+                    RefreshInsertedWidgetState(instanceId);
+                }
+            },
+            const_cast<TaskbarWidgetRefreshRequest*>(&request));
+    }
+}
+
+TaskbarWidgetRefreshRequest ParseTaskbarWidgetChanges(
+    const BYTE* buffer, DWORD bytes) {
+    TaskbarWidgetRefreshRequest request;
+    DWORD offset = 0;
+    while (offset < bytes) {
+        auto information = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(
+            buffer + offset);
+        std::wstring relative(
+            information->FileName,
+            information->FileNameLength / sizeof(wchar_t));
+        std::transform(relative.begin(), relative.end(), relative.begin(),
+                       [](wchar_t character) {
+                           return static_cast<wchar_t>(towlower(character));
+                       });
+
+        if (relative == L"config.json" ||
+            relative == L"runtime\\widgetcatalog.json") {
+            request.full = true;
+        } else if (relative.rfind(L"state\\", 0) == 0 &&
+                   relative.size() > 11 &&
+                   relative.ends_with(L".json")) {
+            std::wstring instanceId =
+                relative.substr(6, relative.size() - 6 - 5);
+            if (IsSafeWidgetInstanceId(instanceId) &&
+                std::find(request.instanceIds.begin(), request.instanceIds.end(),
+                          instanceId) == request.instanceIds.end()) {
+                request.instanceIds.push_back(std::move(instanceId));
+            }
+        }
+
+        if (!information->NextEntryOffset) break;
+        offset += information->NextEntryOffset;
+    }
+    return request;
+}
+
+void CALLBACK TaskbarWidgetWindowEvent(
+    HWINEVENTHOOK, DWORD, HWND window, LONG objectId, LONG, DWORD, DWORD) {
+    if (objectId != OBJID_WINDOW || !window || g_uninitializing) return;
+    WCHAR title[512]{};
+    if (GetWindowText(window, title, ARRAYSIZE(title)) <= 0 ||
+        std::wstring_view(title).find(L"Antigravity") == std::wstring_view::npos) {
+        return;
+    }
+    if (HANDLE refreshEvent = g_refreshRequestEvent.load()) {
+        SetEvent(refreshEvent);
+    }
+}
+
+DWORD WINAPI TaskbarWidgetsRuntimeThread(LPVOID) {
+    const HRESULT comResult =
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitializeCom =
+        comResult == S_OK || comResult == S_FALSE;
+    const std::wstring dataDirectory = GetTaskbarWidgetsRootPath();
+    HANDLE directory = CreateFile(
+        dataDirectory.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    HANDLE directoryEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    HANDLE refreshEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    g_refreshRequestEvent = refreshEvent;
+    HWINEVENTHOOK windowEvent = SetWinEventHook(
+        EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr,
+        TaskbarWidgetWindowEvent, 0, 0,
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
+    std::vector<BYTE> notificationBuffer(64 * 1024);
+    OVERLAPPED overlapped{};
+    overlapped.hEvent = directoryEvent;
+    bool watchPending = false;
+    auto armWatcher = [&]() {
+        if (directory == INVALID_HANDLE_VALUE || !directoryEvent) return false;
+        ResetEvent(directoryEvent);
+        DWORD ignored = 0;
+        BOOL result = ReadDirectoryChangesW(
+            directory, notificationBuffer.data(),
+            static_cast<DWORD>(notificationBuffer.size()), TRUE,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                FILE_NOTIFY_CHANGE_SIZE,
+            &ignored, &overlapped, nullptr);
+        return result || GetLastError() == ERROR_IO_PENDING;
+    };
+    watchPending = armWatcher();
+
+    auto nextMaintenance = std::chrono::steady_clock::time_point{};
+    auto nextUiaScan = std::chrono::steady_clock::time_point{};
+    while (!g_uninitializing) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextMaintenance) {
+            InitializeExistingTaskbarThreads();
+            InitializeTapOnce();
+            nextMaintenance = now + std::chrono::seconds(5);
+        }
+        if (now >= nextUiaScan) {
+            RefreshTaskbarUiaButtonCache();
+            nextUiaScan = now + std::chrono::milliseconds(500);
+        }
+
+        const auto nextWake = std::min(nextMaintenance, nextUiaScan);
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            nextWake - std::chrono::steady_clock::now());
+        const DWORD waitMilliseconds = static_cast<DWORD>(
+            std::clamp<long long>(remaining.count(), 1, 500));
+        HANDLE events[] = {directoryEvent, refreshEvent};
+        DWORD eventCount = 0;
+        if (directoryEvent) events[eventCount++] = directoryEvent;
+        if (refreshEvent) events[eventCount++] = refreshEvent;
+        DWORD waitResult = eventCount
+            ? WaitForMultipleObjects(eventCount, events, FALSE, waitMilliseconds)
+            : WAIT_TIMEOUT;
+        if (g_uninitializing) break;
+
+        if (directoryEvent && waitResult == WAIT_OBJECT_0) {
+            DWORD transferred = 0;
+            if (watchPending &&
+                GetOverlappedResult(directory, &overlapped, &transferred, FALSE) &&
+                transferred > 0) {
+                auto request = ParseTaskbarWidgetChanges(
+                    notificationBuffer.data(), transferred);
+                if (request.full || !request.instanceIds.empty()) {
+                    RefreshDynamicWidgetCatalog();
+                    const auto instances = ReadWidgetInstances();
+                    std::vector<std::wstring> nativeInstanceIds;
+                    for (const auto& instanceId : request.instanceIds) {
+                        bool webRenderer = false;
+                        const auto instance = std::find_if(
+                            instances.begin(), instances.end(),
+                            [&instanceId](const WidgetInstanceRuntime& candidate) {
+                                return _wcsicmp(
+                                    candidate.instanceId.c_str(),
+                                    instanceId.c_str()) == 0;
+                            });
+                        if (instance != instances.end()) {
+                            const auto* definition =
+                                FindDynamicWidget(instance->designId);
+                            webRenderer = definition &&
+                                _wcsicmp(
+                                    definition->renderer.c_str(), L"web") == 0;
+                        }
+                        if (webRenderer) {
+                            PublishWebWidgetSnapshot(instanceId);
+                        } else {
+                            nativeInstanceIds.push_back(instanceId);
+                        }
+                    }
+                    request.instanceIds = std::move(nativeInstanceIds);
+                    if (request.full || !request.instanceIds.empty()) {
+                        RefreshExistingTaskbarThreads(request);
+                    }
+                }
+            }
+            ZeroMemory(&overlapped, sizeof(overlapped));
+            overlapped.hEvent = directoryEvent;
+            watchPending = armWatcher();
+        } else {
+            const DWORD refreshIndex = directoryEvent ? 1 : 0;
+            if (refreshEvent &&
+                waitResult == WAIT_OBJECT_0 + refreshIndex) {
+                RefreshExistingTaskbarThreads(
+                    TaskbarWidgetRefreshRequest{
+                        false, {L"codex-status"}});
+            }
+        }
+    }
+
+    g_refreshRequestEvent = nullptr;
+    if (windowEvent) UnhookWinEvent(windowEvent);
+    if (watchPending && directory != INVALID_HANDLE_VALUE) {
+        CancelIoEx(directory, &overlapped);
+    }
+    if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+    if (directoryEvent) CloseHandle(directoryEvent);
+    if (refreshEvent) CloseHandle(refreshEvent);
+    if (uninitializeCom) CoUninitialize();
     return 0;
 }
 
@@ -7422,7 +9913,10 @@ DWORD WINAPI TaskbarWidgetsControlThread(LPVOID) {
         DWORD result = WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, INFINITE);
         if (result == WAIT_OBJECT_0) {
             ResetEvent(shutdownEvent);
-            if (!runtimeActive) {
+            if (taskbar_widgets::RuntimeActionForSignal(
+                    runtimeActive,
+                    taskbar_widgets::RuntimeControlSignal::Shutdown) !=
+                taskbar_widgets::RuntimeControlAction::Stop) {
                 continue;
             }
 
@@ -7434,9 +9928,12 @@ DWORD WINAPI TaskbarWidgetsControlThread(LPVOID) {
                 runtimeThread = nullptr;
             }
             runtimeActive = false;
-            Wh_Log(L"Runtime unloaded; hook module remains ready for Load");
+            Wh_Log(L"Runtime stopped; waiting for load event");
         } else if (result == WAIT_OBJECT_0 + 1) {
-            if (runtimeActive) {
+            if (taskbar_widgets::RuntimeActionForSignal(
+                    runtimeActive,
+                    taskbar_widgets::RuntimeControlSignal::Load) !=
+                taskbar_widgets::RuntimeControlAction::Start) {
                 continue;
             }
 

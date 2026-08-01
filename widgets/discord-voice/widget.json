@@ -9,8 +9,7 @@
   "assets": [],
   "settings": [
     { "key": "backgroundEnabled", "type": "boolean", "label": "Show background", "default": true },
-    { "key": "clientId", "type": "text", "label": "Discord client ID", "default": "" },
-    { "key": "clientSecret", "type": "secret", "label": "Discord client secret", "default": "" },
-    { "key": "redirectUri", "type": "text", "label": "Redirect URI", "default": "http://127.0.0.1/callback" }
+    { "key": "realTimeVoiceEnabled", "type": "boolean", "label": "Instant speaking detection", "default": false },
+    { "key": "displayMode", "type": "select", "label": "Theme", "default": "avatars", "options": ["avatars", "channel"] }
   ]
 }

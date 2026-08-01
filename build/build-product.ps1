@@ -14,17 +14,21 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid version: $Ver
 $NativeSource = Join-Path $RepoRoot "src\native"
 $NativeBuild = Join-Path $RepoRoot "artifacts\native-build"
 $LoaderProject = Join-Path $RepoRoot "src\loader\TaskbarWidgets.csproj"
+$VoiceCaptureProject = Join-Path $RepoRoot "src\voice-capture\TaskbarWidgets.VoiceCapture.csproj"
 $WidgetHostProject = Join-Path $RepoRoot "src\widget-host\TaskbarWidgets.WidgetHost.csproj"
 $TwDevProject = Join-Path $RepoRoot "src\twdev\twdev.csproj"
 $SettingsProject = Join-Path $RepoRoot "src\settings\src-tauri"
 $SettingsTargetDir = if ($env:TASKBARWIDGETS_TAURI_TARGET_DIR) {
     $env:TASKBARWIDGETS_TAURI_TARGET_DIR
+} elseif ($env:BUILDAGENT_PROJECT_CACHE) {
+    Join-Path $env:BUILDAGENT_PROJECT_CACHE "cargo-target"
 } else {
     Join-Path $env:TEMP "taskbarwidgets-tauri-target"
 }
 $ResourceDir = Join-Path $RepoRoot "src\loader\Resources"
 $PublishDir = Join-Path $RepoRoot "artifacts\TaskbarWidgets"
 $AssemblyVersion = if ($Version.Split('.').Count -eq 3) { "$Version.0" } else { $Version }
+$WebView2SdkRoot = (& (Join-Path $PSScriptRoot "restore-webview2.ps1") -PrintPath | Select-Object -Last 1).Trim()
 
 function Find-CMake {
     $command = Get-Command cmake -ErrorAction SilentlyContinue
@@ -53,9 +57,11 @@ Remove-Item -Recurse -Force $PublishDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $ResourceDir, $PublishDir, $NativeBuild | Out-Null
 Get-Process "TaskbarWidgets.MediaHelper" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process "TaskbarWidgets.RenderHost" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 
 $cmake = Find-CMake
-& $cmake -S $NativeSource -B $NativeBuild -A x64 -DBUILD_TESTING=ON
+& $cmake -S $NativeSource -B $NativeBuild -A x64 -DBUILD_TESTING=ON "-DWEBVIEW2_SDK_ROOT=$WebView2SdkRoot"
 if ($LASTEXITCODE -ne 0) { throw "Native configure failed." }
 & $cmake --build $NativeBuild --config $Configuration --parallel
 if ($LASTEXITCODE -ne 0) { throw "Native build failed." }
@@ -63,16 +69,31 @@ if ($LASTEXITCODE -ne 0) { throw "Native build failed." }
 $NativeOutput = Join-Path $NativeBuild $Configuration
 $HookOutput = Join-Path $NativeOutput "TaskbarWidgets.Hook.dll"
 $MediaHelperOutput = Join-Path $NativeOutput "TaskbarWidgets.MediaHelper.exe"
+$RenderHostOutput = Join-Path $NativeOutput "TaskbarWidgets.RenderHost.exe"
 if (-not (Test-Path $HookOutput)) { throw "Native hook output missing: $HookOutput" }
 if (-not (Test-Path $MediaHelperOutput)) { throw "Media helper output missing: $MediaHelperOutput" }
+if (-not (Test-Path $RenderHostOutput)) { throw "RenderHost output missing: $RenderHostOutput" }
 Copy-Item -Force $HookOutput (Join-Path $ResourceDir "TaskbarWidgets.Hook.dll")
 
 Write-Host "Building Taskbar Widgets Settings..."
-cargo build --manifest-path (Join-Path $SettingsProject "Cargo.toml") --release -j 1 --target-dir $SettingsTargetDir
+cargo build --manifest-path (Join-Path $SettingsProject "Cargo.toml") --release --target-dir $SettingsTargetDir
 if ($LASTEXITCODE -ne 0) { throw "Settings build failed." }
 $SettingsBuildOutput = Join-Path $SettingsTargetDir "release\taskbar_widgets_settings.exe"
 if (-not (Test-Path $SettingsBuildOutput)) { throw "Settings output missing: $SettingsBuildOutput" }
 Copy-Item -Force $SettingsBuildOutput (Join-Path $ResourceDir "TaskbarWidgets.Settings.exe")
+
+$VoiceCapturePublish = Join-Path $RepoRoot "artifacts\voice-capture-publish"
+Remove-Item -Recurse -Force $VoiceCapturePublish -ErrorAction SilentlyContinue
+Write-Host "Publishing optional Discord voice capture helper..."
+dotnet publish $VoiceCaptureProject `
+    -c $Configuration -r win-x64 --self-contained true `
+    -p:Version=$Version -p:AssemblyVersion=$AssemblyVersion -p:FileVersion=$AssemblyVersion `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true -o $VoiceCapturePublish
+if ($LASTEXITCODE -ne 0) { throw "Voice capture helper publish failed." }
+$VoiceCaptureOutput = Join-Path $VoiceCapturePublish "TaskbarWidgets.VoiceCapture.exe"
+if (-not (Test-Path $VoiceCaptureOutput)) { throw "Voice capture helper output missing: $VoiceCaptureOutput" }
+Copy-Item -Force $VoiceCaptureOutput (Join-Path $ResourceDir "TaskbarWidgets.VoiceCapture.exe")
 
 Write-Host "Publishing Taskbar Widgets loader..."
 dotnet publish $LoaderProject `
@@ -84,6 +105,31 @@ if ($LASTEXITCODE -ne 0) { throw "Loader publish failed." }
 
 Copy-Item -Force $SettingsBuildOutput (Join-Path $PublishDir "TaskbarWidgets.Settings.exe")
 Copy-Item -Force $MediaHelperOutput (Join-Path $PublishDir "TaskbarWidgets.MediaHelper.exe")
+Copy-Item -Force $RenderHostOutput (Join-Path $PublishDir "TaskbarWidgets.RenderHost.exe")
+Copy-Item -Force $VoiceCaptureOutput (Join-Path $PublishDir "TaskbarWidgets.VoiceCapture.exe")
+Remove-Item -Recurse -Force $VoiceCapturePublish
+
+$WebViewBootstrapper = Join-Path $PublishDir "MicrosoftEdgeWebview2Setup.exe"
+if (-not (Test-Path $WebViewBootstrapper)) {
+    $WebViewCacheRoot = if ($env:BUILDAGENT_PROJECT_CACHE) {
+        Join-Path $env:BUILDAGENT_PROJECT_CACHE "webview2"
+    } else {
+        Join-Path $RepoRoot "artifacts\tools\webview2"
+    }
+    $CachedBootstrapper = Join-Path $WebViewCacheRoot "MicrosoftEdgeWebview2Setup.exe"
+    New-Item -ItemType Directory -Path $WebViewCacheRoot -Force | Out-Null
+    if (-not (Test-Path $CachedBootstrapper)) {
+        Write-Host "Downloading the Microsoft WebView2 Evergreen Bootstrapper to the persistent cache..."
+        Invoke-WebRequest `
+            -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+            -OutFile $CachedBootstrapper `
+            -UseBasicParsing
+    }
+    Copy-Item -LiteralPath $CachedBootstrapper -Destination $WebViewBootstrapper -Force
+}
+if ((Get-Item $WebViewBootstrapper).Length -lt 500000) {
+    throw "WebView2 Evergreen Bootstrapper download is unexpectedly small."
+}
 
 Write-Host "Publishing sandboxed community WidgetHost..."
 dotnet publish $WidgetHostProject -c $Configuration -r win-x64 --self-contained true `
