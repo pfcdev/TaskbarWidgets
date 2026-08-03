@@ -52,6 +52,7 @@
 #include "generated/widget_catalog.g.h"
 #include "layout_math.h"
 #include "../common/json_string.h"
+#include "../common/media_visualizer_shared.h"
 #include "widget_renderer.h"
 
 #include <cstdarg>
@@ -70,6 +71,7 @@ namespace wuxm = winrt::Windows::UI::Xaml::Media;
 namespace wuxmi = winrt::Windows::UI::Xaml::Media::Imaging;
 namespace wuxs = winrt::Windows::UI::Xaml::Shapes;
 namespace gdi = Gdiplus;
+namespace media_visualizer = taskbar_widgets::media_visualizer;
 
 std::atomic_bool g_tapInitialized = false;
 std::atomic_bool g_delayedInitializationScheduled = false;
@@ -88,11 +90,17 @@ HWND g_win32ProofWindow = nullptr;
 HWND g_win32ProofParent = nullptr;
 HMODULE g_hookModule = nullptr;
 ULONG_PTR g_gdiplusToken = 0;
+thread_local bool g_mediaScrollingEnabled = true;
+thread_local double g_mediaScrollingSpeed = 18.0;
 
 HMODULE GetCurrentModuleHandle();
 std::wstring GetTaskbarWidgetsRootPath();
 wuxm::Brush MakeMediaGradientBrush(const winrt::Windows::UI::Color& left,
                                    const winrt::Windows::UI::Color& right);
+wuxm::Brush MakeMediaControlsGradientBrush(
+    const winrt::Windows::UI::Color& color,
+    bool controlsOnLeft,
+    BYTE maximumAlpha);
 
 std::wstring ParentDirectory(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
@@ -538,6 +546,8 @@ void SetParkingLotDropHighlight(wux::UIElement const& root, bool highlighted);
 void SetNamedVisibility(wux::UIElement const& root, PCWSTR name,
                         wux::Visibility visibility);
 void SetNamedIconGlyph(wux::UIElement const& root, PCWSTR name, PCWSTR glyph);
+wux::FrameworkElement FindNamedFrameworkElement(
+    wux::DependencyObject const& root, PCWSTR name);
 winrt::fire_and_forget HandleParkingLotDrop(
     wux::UIElement root, wux::DragEventArgs args);
 winrt::fire_and_forget HandleParkingLotDragStarting(
@@ -722,6 +732,7 @@ wux::FrameworkElement MakeWeatherPanel() {
     weather.Padding(wux::ThicknessHelper::FromLengths(10, 1, 6, 1));
 
     wuxc::Grid layout;
+    layout.Name(L"TaskbarWidgetsMediaLayout");
     layout.Width(212);
     layout.Height(34);
 
@@ -1069,39 +1080,62 @@ wux::FrameworkElement MakeDiscordPanel() {
 wux::FrameworkElement MakeMediaPanel() {
     wuxc::Border panel;
     panel.Name(L"TaskbarWidgetsMediaPanel");
-    panel.Width(220);
+    panel.Width(282);
     panel.Height(44);
     panel.Visibility(wux::Visibility::Collapsed);
-    panel.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(9));
-    panel.Background(MakeBrush(0xFF, 0xFA, 0xFA, 0xF8));
+    panel.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+    panel.BorderThickness(wux::ThicknessHelper::FromUniformLength(0));
     panel.Padding(wux::ThicknessHelper::FromUniformLength(0));
 
-    wuxc::Grid layout;
-    layout.Width(220);
+    wuxc::Canvas layout;
+    layout.Name(L"TaskbarWidgetsMediaLayout");
+    layout.Width(282);
     layout.Height(44);
 
-    wuxc::Grid content;
-    content.Width(197);
-    content.Height(30);
+    wuxc::Border mediaCard;
+    mediaCard.Name(L"TaskbarWidgetsMediaCard");
+    mediaCard.Width(214);
+    mediaCard.Height(40);
+    mediaCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    mediaCard.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+    mediaCard.BorderBrush(MakeBrush(0x00, 0xFF, 0xFF, 0xFF));
+    mediaCard.BorderThickness(wux::ThicknessHelper::FromLengths(0, 1, 0, 0));
+    wuxc::Canvas::SetLeft(mediaCard, 0.0);
+    wuxc::Canvas::SetTop(mediaCard, 2.0);
+
+    wuxc::Border visualizerCard;
+    visualizerCard.Name(L"TaskbarWidgetsMediaVisualizerCard");
+    visualizerCard.Width(64);
+    visualizerCard.Height(40);
+    visualizerCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    visualizerCard.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+    visualizerCard.BorderBrush(MakeBrush(0x00, 0xFF, 0xFF, 0xFF));
+    visualizerCard.BorderThickness(
+        wux::ThicknessHelper::FromLengths(0, 1, 0, 0));
+    wuxc::Canvas::SetLeft(visualizerCard, 218.0);
+    wuxc::Canvas::SetTop(visualizerCard, 2.0);
+
+    wuxc::Canvas content;
+    content.Name(L"TaskbarWidgetsMediaContent");
+    content.Width(206);
+    content.Height(36);
     content.HorizontalAlignment(wux::HorizontalAlignment::Left);
     content.VerticalAlignment(wux::VerticalAlignment::Center);
-    content.Margin(wux::ThicknessHelper::FromLengths(12, 0, 11, 0));
+    content.Margin(wux::ThicknessHelper::FromLengths(4, 2, 4, 2));
 
-    wuxc::ColumnDefinition coverColumn;
-    coverColumn.Width(wux::GridLengthHelper::FromPixels(49));
-    wuxc::ColumnDefinition textColumn;
-    textColumn.Width(wux::GridLengthHelper::FromPixels(126));
-    wuxc::ColumnDefinition buttonColumn;
-    buttonColumn.Width(wux::GridLengthHelper::FromPixels(22));
-    content.ColumnDefinitions().Append(coverColumn);
-    content.ColumnDefinitions().Append(textColumn);
-    content.ColumnDefinitions().Append(buttonColumn);
+    wuxc::Border controlTint;
+    controlTint.Name(L"TaskbarWidgetsMediaControlTint");
+    controlTint.Width(166);
+    controlTint.Height(36);
+    controlTint.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(5));
+    controlTint.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+    controlTint.IsHitTestVisible(false);
 
     wuxc::Border cover;
     cover.Name(L"TaskbarWidgetsMediaCover");
-    cover.Width(49);
-    cover.Height(30);
-    cover.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(4));
+    cover.Width(32);
+    cover.Height(32);
+    cover.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(5));
     cover.HorizontalAlignment(wux::HorizontalAlignment::Left);
     cover.VerticalAlignment(wux::VerticalAlignment::Center);
     cover.Background(MakeBrush(0xFF, 0x17, 0x1B, 0x24));
@@ -1114,12 +1148,28 @@ wux::FrameworkElement MakeMediaPanel() {
         brush.Stretch(wuxm::Stretch::UniformToFill);
         cover.Background(brush);
     }
-    wuxc::Grid::SetColumn(cover, 0);
+    wuxc::Grid coverContent;
+    wuxc::Border pauseVeil;
+    pauseVeil.Name(L"TaskbarWidgetsMediaPauseOverlay");
+    pauseVeil.Width(32);
+    pauseVeil.Height(32);
+    pauseVeil.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(5));
+    pauseVeil.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+    pauseVeil.Visibility(wux::Visibility::Collapsed);
+    wuxc::FontIcon pauseOverlayIcon;
+    pauseOverlayIcon.Glyph(L"\xE769");
+    pauseOverlayIcon.FontFamily(wuxm::FontFamily(L"Segoe Fluent Icons"));
+    pauseOverlayIcon.FontSize(20);
+    pauseOverlayIcon.Foreground(MakeBrush(0xFF, 0xFF, 0xFF, 0xFF));
+    pauseVeil.Child(pauseOverlayIcon);
+    coverContent.Children().Append(pauseVeil.as<wux::UIElement>());
+    cover.Child(coverContent);
 
     wuxc::Grid textGrid;
-    textGrid.Width(112);
-    textGrid.Height(30);
-    textGrid.Margin(wux::ThicknessHelper::FromLengths(12, 0, 0, 0));
+    textGrid.Name(L"TaskbarWidgetsMediaText");
+    textGrid.Width(78);
+    textGrid.Height(32);
+    textGrid.Margin(wux::ThicknessHelper::FromLengths(0, 1, 0, 0));
     textGrid.VerticalAlignment(wux::VerticalAlignment::Center);
     wuxc::RowDefinition titleRow;
     titleRow.Height(wux::GridLengthHelper::FromPixels(16));
@@ -1127,13 +1177,12 @@ wux::FrameworkElement MakeMediaPanel() {
     artistRow.Height(wux::GridLengthHelper::FromPixels(14));
     textGrid.RowDefinitions().Append(titleRow);
     textGrid.RowDefinitions().Append(artistRow);
-    wuxc::Grid::SetColumn(textGrid, 1);
 
     wuxc::Grid titleViewport;
-    titleViewport.Width(112);
+    titleViewport.Width(78);
     titleViewport.Height(16);
     wuxm::RectangleGeometry titleClip;
-    titleClip.Rect(wf::Rect{0, 0, 112, 16});
+    titleClip.Rect(wf::Rect{0, 0, 78, 16});
     titleViewport.Clip(titleClip);
     wuxc::Grid::SetRow(titleViewport, 0);
 
@@ -1149,14 +1198,14 @@ wux::FrameworkElement MakeMediaPanel() {
     title.HorizontalAlignment(wux::HorizontalAlignment::Left);
     title.TextAlignment(wux::TextAlignment::Left);
     title.Foreground(MakeBrush(0xFF, 0x00, 0x00, 0x00));
-    title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-    title.Width(112);
+    title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
+    title.Width(78);
 
     auto titleClone = MakeNamedText(L"TaskbarWidgetsMediaTitleClone", L"", 11, 0xFF);
     titleClone.HorizontalAlignment(wux::HorizontalAlignment::Left);
     titleClone.TextAlignment(wux::TextAlignment::Left);
     titleClone.Foreground(MakeBrush(0xFF, 0x00, 0x00, 0x00));
-    titleClone.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    titleClone.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
     titleClone.Width(0);
 
     titleMarquee.Children().Append(title.as<wux::UIElement>());
@@ -1168,38 +1217,139 @@ wux::FrameworkElement MakeMediaPanel() {
     artist.TextAlignment(wux::TextAlignment::Left);
     artist.TextTrimming(wux::TextTrimming::CharacterEllipsis);
     artist.Foreground(MakeBrush(0xF0, 0x00, 0x00, 0x00));
-    artist.Width(112);
+    artist.Width(78);
     wuxc::Grid::SetRow(artist, 1);
 
     textGrid.Children().Append(titleViewport.as<wux::UIElement>());
     textGrid.Children().Append(artist.as<wux::UIElement>());
 
+    wuxc::Grid wave;
+    wave.Name(L"TaskbarWidgetsMediaWave");
+    wave.Width(56);
+    wave.Height(32);
+    wave.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    wave.VerticalAlignment(wux::VerticalAlignment::Center);
+
+    wuxc::StackPanel waveBars;
+    waveBars.Name(L"TaskbarWidgetsMediaWaveBars");
+    waveBars.Width(56);
+    waveBars.Height(32);
+    waveBars.Orientation(wuxc::Orientation::Horizontal);
+    waveBars.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    waveBars.VerticalAlignment(wux::VerticalAlignment::Bottom);
+    for (int index = 0; index < 20; ++index) {
+        wuxc::Border bar;
+        bar.Name((L"TaskbarWidgetsMediaWaveBar" + std::to_wstring(index + 1)).c_str());
+        bar.Width(5.4);
+        bar.Height(0);
+        bar.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(1));
+        bar.Background(MakeBrush(0xFF, 0x00, 0x78, 0xD4));
+        bar.Margin(wux::ThicknessHelper::FromLengths(index == 0 ? 0 : 2, 0, 0, 0));
+        bar.VerticalAlignment(wux::VerticalAlignment::Bottom);
+        waveBars.Children().Append(bar.as<wux::UIElement>());
+    }
+
+    wuxc::Border waveBaseline;
+    waveBaseline.Name(L"TaskbarWidgetsMediaWaveBaseline");
+    waveBaseline.Width(54);
+    waveBaseline.Height(1);
+    waveBaseline.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(0.5));
+    waveBaseline.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    waveBaseline.VerticalAlignment(wux::VerticalAlignment::Bottom);
+    waveBaseline.Background(MakeBrush(0xFF, 0x00, 0x78, 0xD4));
+    waveBaseline.Visibility(wux::Visibility::Collapsed);
+    wave.Children().Append(waveBars.as<wux::UIElement>());
+    wave.Children().Append(waveBaseline.as<wux::UIElement>());
+
+    auto makeTransportIcon = [](PCWSTR name, PCWSTR glyph, double size) {
+        wuxc::FontIcon icon;
+        icon.Name(name);
+        icon.Glyph(glyph);
+        icon.FontFamily(wuxm::FontFamily(L"Segoe UI Symbol"));
+        icon.FontSize(size);
+        icon.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        icon.VerticalAlignment(wux::VerticalAlignment::Center);
+        icon.Foreground(MakeBrush(0xFF, 0x20, 0x20, 0x20));
+        return icon;
+    };
+
+    wuxc::Border previousButton;
+    previousButton.Name(L"TaskbarWidgetsMediaPreviousButton");
+    previousButton.Width(28);
+    previousButton.Height(32);
+    previousButton.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    previousButton.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    previousButton.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    previousButton.VerticalAlignment(wux::VerticalAlignment::Center);
+    previousButton.Child(makeTransportIcon(
+        L"TaskbarWidgetsMediaPreviousIcon", L"\x23EE", 16));
+    previousButton.Tapped([](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+        WriteTaskbarWidgetsCommand(L"mediaPrevious");
+        args.Handled(true);
+    });
+
     wuxc::Border playButton;
     playButton.Name(L"TaskbarWidgetsMediaPlayButton");
-    playButton.Width(18);
-    playButton.Height(18);
-    playButton.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(9));
-    playButton.HorizontalAlignment(wux::HorizontalAlignment::Right);
+    playButton.Width(28);
+    playButton.Height(32);
+    playButton.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    playButton.HorizontalAlignment(wux::HorizontalAlignment::Center);
     playButton.VerticalAlignment(wux::VerticalAlignment::Center);
-    playButton.Background(MakeBrush(0xFF, 0x00, 0x00, 0x00));
-    wuxc::Grid::SetColumn(playButton, 2);
+    playButton.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    playButton.Child(makeTransportIcon(
+        L"TaskbarWidgetsMediaPlayIcon", L"\x25B6", 14));
+    playButton.Tapped([](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+        WriteTaskbarWidgetsCommand(L"mediaToggle");
+        args.Handled(true);
+    });
 
-    wuxc::FontIcon playIcon;
-    playIcon.Name(L"TaskbarWidgetsMediaPlayIcon");
-    playIcon.Glyph(L"\xE768");
-    playIcon.FontFamily(wuxm::FontFamily(L"Segoe MDL2 Assets"));
-    playIcon.FontSize(9);
-    playIcon.Width(18);
-    playIcon.Height(18);
-    playIcon.HorizontalAlignment(wux::HorizontalAlignment::Center);
-    playIcon.VerticalAlignment(wux::VerticalAlignment::Center);
-    playIcon.Foreground(MakeBrush(0xFF, 0xFF, 0xFF, 0xFF));
-    playButton.Child(playIcon);
+    wuxc::Border nextButton;
+    nextButton.Name(L"TaskbarWidgetsMediaNextButton");
+    nextButton.Width(28);
+    nextButton.Height(32);
+    nextButton.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    nextButton.Background(MakeBrush(0x01, 0x00, 0x00, 0x00));
+    nextButton.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    nextButton.VerticalAlignment(wux::VerticalAlignment::Center);
+    nextButton.Child(makeTransportIcon(
+        L"TaskbarWidgetsMediaNextIcon", L"\x23ED", 16));
+    nextButton.Tapped([](auto const&, wuxi::TappedRoutedEventArgs const& args) {
+        WriteTaskbarWidgetsCommand(L"mediaNext");
+        args.Handled(true);
+    });
 
+    content.Children().Append(controlTint.as<wux::UIElement>());
     content.Children().Append(cover.as<wux::UIElement>());
     content.Children().Append(textGrid.as<wux::UIElement>());
+    content.Children().Append(previousButton.as<wux::UIElement>());
     content.Children().Append(playButton.as<wux::UIElement>());
-    layout.Children().Append(content.as<wux::UIElement>());
+    content.Children().Append(nextButton.as<wux::UIElement>());
+    mediaCard.Child(content);
+    visualizerCard.Child(wave);
+
+    auto installFluentHover = [](wuxc::Border const& card) {
+        card.PointerEntered([](winrt::Windows::Foundation::IInspectable const& sender,
+                               wuxi::PointerRoutedEventArgs const&) {
+            if (auto border = sender.try_as<wuxc::Border>()) {
+                // FluentFlyout dark-taskbar hover: roughly 7.5% of its
+                // translucent white brush, with a faint top highlight.
+                border.Background(MakeBrush(0x0F, 0xFF, 0xFF, 0xFF));
+                border.BorderBrush(MakeBrush(0x17, 0xFF, 0xFF, 0xFF));
+            }
+        });
+        card.PointerExited([](winrt::Windows::Foundation::IInspectable const& sender,
+                              wuxi::PointerRoutedEventArgs const&) {
+            if (auto border = sender.try_as<wuxc::Border>()) {
+                border.Background(MakeBrush(0x00, 0x00, 0x00, 0x00));
+                border.BorderBrush(MakeBrush(0x00, 0xFF, 0xFF, 0xFF));
+            }
+        });
+    };
+    installFluentHover(mediaCard);
+    installFluentHover(visualizerCard);
+
+    layout.Children().Append(mediaCard.as<wux::UIElement>());
+    layout.Children().Append(visualizerCard.as<wux::UIElement>());
 
     panel.Child(layout);
     return panel;
@@ -1904,12 +2054,9 @@ wux::FrameworkElement MakeTaskbarWidgetsWidgetRoot(const WidgetInstanceRuntime& 
         } else if (activeDesign == L"parking-lot") {
             CycleParkingLotSelection(root.as<wux::UIElement>());
         } else if (activeDesign == L"media-player") {
-            wf::Point point = args.GetPosition(root);
-            if (point.X >= 190.0) {
-                WriteTaskbarWidgetsCommand(L"mediaToggle");
-            } else {
-                ShowWidgetLibraryWindow();
-            }
+            // Transport controls handle their own taps so custom left/right
+            // ordering cannot turn visualizer clicks into media commands.
+            ShowWidgetLibraryWindow();
         } else if (activeDesign == L"steam-download" ||
                    activeDesign.rfind(L"system-", 0) == 0) {
             if (activeDesign.rfind(L"system-", 0) == 0) {
@@ -2359,9 +2506,26 @@ struct WidgetRuntimeSettings {
     bool discordBackgroundEnabled = true;
     std::wstring discordDisplayMode = L"avatars";
     bool mediaDarkMode = true;
+    bool mediaShowControls = true;
+    bool mediaShowVisualizer = true;
+    bool mediaShowPauseOverlay = true;
+    bool mediaHideWhenInactive{};
+    bool mediaAutoHidePaused{};
+    bool mediaVisualizerCentered{};
+    bool mediaVisualizerBaseline{};
+    bool mediaVisualizerBaselineAutoHide{};
+    bool mediaScrollingEnabled = true;
+    std::wstring mediaControlsPosition = L"right";
+    std::wstring mediaVisualizerPosition = L"right";
+    long long mediaVisualizerBarCount = 10;
+    long long mediaVisualizerSensitivity = 2;
+    long long mediaVisualizerPeakLevel = 3;
+    long long mediaScrollingSpeed = 18;
     long long widgetOffsetPx = 0;
     long long widgetMoveX = 0;
 };
+
+thread_local WidgetRuntimeSettings g_mediaRuntimeSettings;
 
 std::vector<std::string> ExtractJsonObjectArray(const std::string& json,
                                                 const char* key);
@@ -2403,9 +2567,58 @@ WidgetRuntimeSettings ReadWidgetRuntimeSettings() {
         settings.discordDisplayMode = L"avatars";
     }
 
-    bool mediaDarkMode = true;
-    if (ExtractJsonBool(json, "darkMode", mediaDarkMode)) {
-        settings.mediaDarkMode = mediaDarkMode;
+    for (const auto& object : ExtractJsonObjectArray(json, "widgets")) {
+        std::wstring designId;
+        if (!ExtractJsonString(object, "widgetId", designId)) {
+            ExtractJsonString(object, "id", designId);
+        }
+        if (_wcsicmp(designId.c_str(), L"media-player") != 0) {
+            continue;
+        }
+        ExtractJsonBool(object, "darkMode", settings.mediaDarkMode);
+        ExtractJsonBool(object, "showControls", settings.mediaShowControls);
+        ExtractJsonBool(object, "showVisualizer", settings.mediaShowVisualizer);
+        ExtractJsonBool(object, "showPauseOverlay",
+                        settings.mediaShowPauseOverlay);
+        ExtractJsonBool(object, "hideWhenInactive",
+                        settings.mediaHideWhenInactive);
+        ExtractJsonBool(object, "autoHidePaused",
+                        settings.mediaAutoHidePaused);
+        ExtractJsonBool(object, "visualizerCentered",
+                        settings.mediaVisualizerCentered);
+        ExtractJsonBool(object, "visualizerBaseline",
+                        settings.mediaVisualizerBaseline);
+        ExtractJsonBool(object, "visualizerBaselineAutoHide",
+                        settings.mediaVisualizerBaselineAutoHide);
+        ExtractJsonBool(object, "scrollingEnabled",
+                        settings.mediaScrollingEnabled);
+        ExtractJsonString(object, "controlsPosition",
+                          settings.mediaControlsPosition);
+        ExtractJsonString(object, "visualizerPosition",
+                          settings.mediaVisualizerPosition);
+        ExtractJsonInt64(object, "visualizerBarCount",
+                         settings.mediaVisualizerBarCount);
+        ExtractJsonInt64(object, "visualizerSensitivity",
+                         settings.mediaVisualizerSensitivity);
+        ExtractJsonInt64(object, "visualizerPeakLevel",
+                         settings.mediaVisualizerPeakLevel);
+        ExtractJsonInt64(object, "scrollingSpeed",
+                         settings.mediaScrollingSpeed);
+        break;
+    }
+    settings.mediaVisualizerBarCount =
+        std::clamp(settings.mediaVisualizerBarCount, 1LL, 20LL);
+    settings.mediaVisualizerSensitivity =
+        std::clamp(settings.mediaVisualizerSensitivity, 1LL, 3LL);
+    settings.mediaVisualizerPeakLevel =
+        std::clamp(settings.mediaVisualizerPeakLevel, 1LL, 3LL);
+    settings.mediaScrollingSpeed =
+        std::clamp(settings.mediaScrollingSpeed, 1LL, 100LL);
+    if (settings.mediaControlsPosition != L"left") {
+        settings.mediaControlsPosition = L"right";
+    }
+    if (settings.mediaVisualizerPosition != L"left") {
+        settings.mediaVisualizerPosition = L"right";
     }
 
     long long rotationInterval = 0;
@@ -4186,6 +4399,9 @@ struct MediaSnapshot {
     bool loaded{};
     bool active{};
     bool playing{};
+    bool canToggle{};
+    bool canPrevious{};
+    bool canNext{};
     long long positionSeconds = 34;
     std::wstring title;
     std::wstring artist;
@@ -4207,6 +4423,9 @@ MediaSnapshot ReadMediaSnapshot() {
     snapshot.loaded = true;
     ExtractJsonBool(json, "active", snapshot.active);
     ExtractJsonBool(json, "playing", snapshot.playing);
+    ExtractJsonBool(json, "canToggle", snapshot.canToggle);
+    ExtractJsonBool(json, "canPrevious", snapshot.canPrevious);
+    ExtractJsonBool(json, "canNext", snapshot.canNext);
     ExtractJsonString(json, "title", snapshot.title);
     ExtractJsonString(json, "artist", snapshot.artist);
     ExtractJsonString(json, "coverPath", snapshot.coverPath);
@@ -5549,14 +5768,15 @@ void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
         value = L"Media";
     }
 
-    constexpr double viewportWidth = 112.0;
+    // FluentFlyout reserves the native Widgets-button width (216 px at the
+    // internal 0.9 scale), leaving about 185 px for media text.
+    constexpr double viewportWidth = 78.0;
     constexpr double averageCharWidth = 6.2;
     constexpr double separatorWidth = 18.0;
-    constexpr double pixelsPerSecond = 18.0;
     const std::wstring separator = L"  •";
 
     double textWidth = static_cast<double>(value.size()) * averageCharWidth;
-    if (textWidth <= viewportWidth) {
+    if (!g_mediaScrollingEnabled || textWidth <= viewportWidth) {
         if (first.Text() != value) {
             first.Text(value);
         }
@@ -5594,7 +5814,8 @@ void SetMediaTitleText(wux::UIElement const& root, const std::wstring& text) {
         marqueeElement.RenderTransform(transform);
     }
 
-    ConfigureMarqueeAnimation(marqueeElement, itemWidth, pixelsPerSecond);
+    ConfigureMarqueeAnimation(marqueeElement, itemWidth,
+                              std::clamp(g_mediaScrollingSpeed, 1.0, 100.0));
 }
 
 void SetSteamTitleText(wux::UIElement const& root, const std::wstring& text) {
@@ -5882,6 +6103,35 @@ wuxm::Brush MakeMediaGradientBrush(const winrt::Windows::UI::Color& left,
     rightStop.Color(right);
     rightStop.Offset(1.0);
     brush.GradientStops().Append(rightStop);
+    return brush;
+}
+
+wuxm::Brush MakeMediaControlsGradientBrush(
+    const winrt::Windows::UI::Color& color,
+    bool controlsOnLeft,
+    BYTE maximumAlpha) {
+    wuxm::LinearGradientBrush brush;
+    // The transparent edge faces the media text; the colored edge remains
+    // underneath the transport buttons. Mirror it when controls are on the
+    // left so custom layouts retain the same visual hierarchy.
+    brush.StartPoint(controlsOnLeft ? wf::Point{1.0f, 0.5f}
+                                    : wf::Point{0.0f, 0.5f});
+    brush.EndPoint(controlsOnLeft ? wf::Point{0.0f, 0.5f}
+                                  : wf::Point{1.0f, 0.5f});
+
+    auto appendStop = [&brush, &color](double offset, BYTE alpha) {
+        auto stopColor = color;
+        stopColor.A = alpha;
+        wuxm::GradientStop stop;
+        stop.Color(stopColor);
+        stop.Offset(offset);
+        brush.GradientStops().Append(stop);
+    };
+    appendStop(0.0, 0x00);
+    appendStop(0.18, 0x00);
+    appendStop(0.42, static_cast<BYTE>(maximumAlpha / 4));
+    appendStop(0.70, static_cast<BYTE>((maximumAlpha * 2) / 3));
+    appendStop(1.0, maximumAlpha);
     return brush;
 }
 
@@ -6959,58 +7209,300 @@ void UpdateDynamicWidgetPanel(wux::UIElement const& root,
     }
 }
 
-void ApplyMediaTheme(wux::UIElement const& root,
-                     bool darkMode,
-                     bool active,
-                     const MediaSnapshot& media) {
-    if (darkMode) {
-        winrt::Windows::UI::Color left{0xFF, 0x0F, 0x17, 0x2A};
-        winrt::Windows::UI::Color right{0xFF, 0x11, 0x18, 0x27};
-        bool hasAdaptive =
-            ParseHexColor(media.backgroundLeftColor, left) &&
-            ParseHexColor(media.backgroundRightColor, right);
-        if (hasAdaptive) {
-            SetNamedBorderFill(root, L"TaskbarWidgetsMediaPanel",
-                               MakeMediaGradientBrush(left, right));
-        } else {
-            SetNamedBorderFill(root, L"TaskbarWidgetsMediaPanel",
-                               MakeBrush(0xFF, 0x0F, 0x17, 0x2A));
+class MediaVisualizerReader {
+public:
+    ~MediaVisualizerReader() {
+        if (frame_) UnmapViewOfFile(frame_);
+        if (mapping_) CloseHandle(mapping_);
+    }
+
+    bool Read(media_visualizer::SharedFrame& result) {
+        if (!frame_) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now < nextOpenAttempt_) return false;
+            nextOpenAttempt_ = now + std::chrono::seconds(1);
+            mapping_ = OpenFileMappingW(FILE_MAP_READ, FALSE,
+                                        media_visualizer::MappingName().c_str());
+            if (!mapping_) return false;
+            frame_ = static_cast<const media_visualizer::SharedFrame*>(
+                MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0,
+                              sizeof(media_visualizer::SharedFrame)));
+            if (!frame_) {
+                CloseHandle(mapping_);
+                mapping_ = nullptr;
+                return false;
+            }
         }
 
-        winrt::Windows::UI::Color accent{0xFF, 0x22, 0xD3, 0xEE};
-        ParseHexColor(media.accentColor, accent);
-        SetNamedTextColor(root, L"TaskbarWidgetsMediaTitle",
-                          winrt::Windows::UI::Color{0xFF, 0xF8, 0xFA, 0xFC});
-        SetNamedTextColor(root, L"TaskbarWidgetsMediaTitleClone",
-                          winrt::Windows::UI::Color{0xFF, 0xF8, 0xFA, 0xFC});
-        SetNamedTextColor(root, L"TaskbarWidgetsMediaArtist",
-                          winrt::Windows::UI::Color{0xFF, 0x94, 0xA3, 0xB8});
-        if (active) {
-            SetNamedBorderFill(root, L"TaskbarWidgetsMediaPlayButton",
-                               wuxm::SolidColorBrush(accent));
-        } else {
-            SetNamedBorderFill(root, L"TaskbarWidgetsMediaPlayButton",
-                               MakeBrush(0xFF, 0x33, 0x41, 0x55));
-        }
-        SetNamedIconColor(root, L"TaskbarWidgetsMediaPlayIcon",
-                          active ? winrt::Windows::UI::Color{0xFF, 0x08, 0x17, 0x1F}
-                                 : winrt::Windows::UI::Color{0xFF, 0xCB, 0xD5, 0xE1});
+        if (!media_visualizer::CopyStableFrame(frame_, result)) return false;
+        const auto now = GetTickCount64();
+        return result.tickMilliseconds > 0 && now >= result.tickMilliseconds &&
+               now - result.tickMilliseconds <= 1500;
+    }
+
+private:
+    HANDLE mapping_{};
+    const media_visualizer::SharedFrame* frame_{};
+    std::chrono::steady_clock::time_point nextOpenAttempt_{};
+};
+
+thread_local MediaVisualizerReader g_mediaVisualizerReader;
+void ArrangeMediaContent(wux::UIElement const& root,
+                         const WidgetRuntimeSettings& settings) {
+    auto contentElement = FindNamedFrameworkElement(
+        root, L"TaskbarWidgetsMediaContent");
+    auto content = contentElement ? contentElement.try_as<wuxc::Canvas>() : nullptr;
+    auto mediaCard = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaCard");
+    auto visualizerCard = FindNamedFrameworkElement(
+        root, L"TaskbarWidgetsMediaVisualizerCard");
+    auto controlTint = FindNamedFrameworkElement(
+        root, L"TaskbarWidgetsMediaControlTint");
+    auto cover = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaCover");
+    auto text = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaText");
+    auto previous = FindNamedFrameworkElement(
+        root, L"TaskbarWidgetsMediaPreviousButton");
+    auto play = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaPlayButton");
+    auto next = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaNextButton");
+    if (!content || !mediaCard || !visualizerCard || !controlTint ||
+        !cover || !text ||
+        !previous || !play || !next) {
         return;
     }
 
+    const double mediaCardWidth =
+        124.0 + (settings.mediaShowControls ? 90.0 : 0.0);
+    mediaCard.Width(mediaCardWidth);
+    content.Width(mediaCardWidth - 8.0);
+    if (!settings.mediaShowVisualizer) {
+        visualizerCard.Visibility(wux::Visibility::Collapsed);
+    }
+    controlTint.Visibility(settings.mediaShowControls
+                               ? wux::Visibility::Visible
+                               : wux::Visibility::Collapsed);
+    wuxc::Canvas::SetLeft(
+        controlTint,
+        settings.mediaControlsPosition == L"left"
+            ? 0.0
+            : std::max(0.0, content.Width() - controlTint.Width()));
+    wuxc::Canvas::SetTop(controlTint, 0.0);
+    if (settings.mediaShowVisualizer &&
+        settings.mediaVisualizerPosition == L"left") {
+        wuxc::Canvas::SetLeft(visualizerCard, 0.0);
+        wuxc::Canvas::SetLeft(mediaCard, 68.0);
+    } else {
+        wuxc::Canvas::SetLeft(mediaCard, 0.0);
+        wuxc::Canvas::SetLeft(visualizerCard, mediaCardWidth + 4.0);
+    }
+
+    double cursor = 0.0;
+    auto place = [&cursor](const wux::FrameworkElement& element,
+                           double width,
+                           double top = 0.0) {
+        wuxc::Canvas::SetLeft(element, cursor);
+        wuxc::Canvas::SetTop(element, top);
+        cursor += width;
+    };
+    auto placeControls = [&]() {
+        // FluentFlyout uses three transparent 32x32 controls and an 8 px
+        // separator from the media information.
+        cursor += settings.mediaControlsPosition == L"left" ? 2.0 : 6.0;
+        place(previous, 28.0, 2.0);
+        place(play, 28.0, 2.0);
+        place(next, 28.0, 2.0);
+        if (settings.mediaControlsPosition == L"left") cursor += 4.0;
+    };
+
+    if (settings.mediaShowControls &&
+        settings.mediaControlsPosition == L"left") {
+        placeControls();
+    }
+    place(cover, 32.0, 2.0);
+    cursor += 6.0;
+    place(text, 78.0, 1.0);
+    if (settings.mediaShowControls &&
+        settings.mediaControlsPosition != L"left") {
+        placeControls();
+    }
+}
+
+void ApplyMediaTheme(wux::UIElement const& root,
+                     const WidgetRuntimeSettings& settings,
+                     bool active,
+                     const MediaSnapshot& media) {
+    const bool darkMode = settings.mediaDarkMode;
+    auto setWaveColor = [&root](winrt::Windows::UI::Color color) {
+        for (int index = 1; index <= 20; ++index) {
+            const std::wstring name =
+                L"TaskbarWidgetsMediaWaveBar" + std::to_wstring(index);
+            SetNamedBorderFill(root, name.c_str(), wuxm::SolidColorBrush(color));
+        }
+        SetNamedBorderFill(root, L"TaskbarWidgetsMediaWaveBaseline",
+                           wuxm::SolidColorBrush(color));
+    };
     SetNamedBorderFill(root, L"TaskbarWidgetsMediaPanel",
-                       MakeBrush(0xFF, 0xFA, 0xFA, 0xF8));
-    SetNamedTextColor(root, L"TaskbarWidgetsMediaTitle",
-                      winrt::Windows::UI::Color{0xFF, 0x00, 0x00, 0x00});
-    SetNamedTextColor(root, L"TaskbarWidgetsMediaTitleClone",
-                      winrt::Windows::UI::Color{0xFF, 0x00, 0x00, 0x00});
-    SetNamedTextColor(root, L"TaskbarWidgetsMediaArtist",
-                      winrt::Windows::UI::Color{0xF0, 0x00, 0x00, 0x00});
+                       MakeBrush(0x00, 0x00, 0x00, 0x00));
+
+    // FluentFlyout does not paint an always-on media/visualizer pill. The
+    // taskbar remains the surface and the two cards only receive a very faint
+    // white fill while hovered (installed in MakeMediaPanel).
     SetNamedBorderFill(root, L"TaskbarWidgetsMediaPlayButton",
-                       active ? MakeBrush(0xFF, 0x00, 0x00, 0x00)
-                              : MakeBrush(0x55, 0x00, 0x00, 0x00));
-    SetNamedIconColor(root, L"TaskbarWidgetsMediaPlayIcon",
-                      winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
+                       MakeBrush(0x01, 0x00, 0x00, 0x00));
+
+    winrt::Windows::UI::Color accent{0xFF, 0x00, 0x78, 0xD4};
+    ParseHexColor(media.accentColor, accent);
+    accent.A = 0xFF;
+
+    // The sampled background colors are intentionally dark and vanished once
+    // composited over a dark taskbar. The cover-derived accent retains the
+    // same album identity while remaining visible at a controlled opacity.
+    winrt::Windows::UI::Color controlTint = accent;
+    SetNamedBorderFill(
+        root, L"TaskbarWidgetsMediaControlTint",
+        active
+            ? MakeMediaControlsGradientBrush(
+                  controlTint, settings.mediaControlsPosition == L"left",
+                  darkMode ? 0x78 : 0x58)
+            : MakeBrush(0x00, 0x00, 0x00, 0x00));
+
+    if (darkMode) {
+        SetNamedTextColor(root, L"TaskbarWidgetsMediaTitle",
+                          winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
+        SetNamedTextColor(root, L"TaskbarWidgetsMediaTitleClone",
+                          winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF});
+        SetNamedTextColor(root, L"TaskbarWidgetsMediaArtist",
+                          winrt::Windows::UI::Color{0x80, 0xFF, 0xFF, 0xFF});
+        const auto foreground =
+            winrt::Windows::UI::Color{0xFF, 0xFF, 0xFF, 0xFF};
+        SetNamedIconColor(root, L"TaskbarWidgetsMediaPreviousIcon", foreground);
+        SetNamedIconColor(root, L"TaskbarWidgetsMediaPlayIcon", foreground);
+        SetNamedIconColor(root, L"TaskbarWidgetsMediaNextIcon", foreground);
+        setWaveColor(accent);
+        return;
+    }
+
+    SetNamedTextColor(root, L"TaskbarWidgetsMediaTitle",
+                      winrt::Windows::UI::Color{0xE4, 0x1C, 0x1C, 0x1C});
+    SetNamedTextColor(root, L"TaskbarWidgetsMediaTitleClone",
+                      winrt::Windows::UI::Color{0xE4, 0x1C, 0x1C, 0x1C});
+    SetNamedTextColor(root, L"TaskbarWidgetsMediaArtist",
+                      winrt::Windows::UI::Color{0x72, 0x1C, 0x1C, 0x1C});
+    const auto foreground =
+        winrt::Windows::UI::Color{0xE4, 0x1C, 0x1C, 0x1C};
+    SetNamedIconColor(root, L"TaskbarWidgetsMediaPreviousIcon", foreground);
+    SetNamedIconColor(root, L"TaskbarWidgetsMediaPlayIcon", foreground);
+    SetNamedIconColor(root, L"TaskbarWidgetsMediaNextIcon", foreground);
+    setWaveColor(accent);
+}
+
+void AnimateMediaWave(wux::UIElement const& root) {
+    auto wave = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaWave");
+    if (!wave || wave.Visibility() != wux::Visibility::Visible) {
+        return;
+    }
+
+    media_visualizer::SharedFrame frame;
+    const bool fresh = g_mediaVisualizerReader.Read(frame);
+    const bool hasAudio = fresh && (frame.flags & 1u) != 0;
+    const int barCount = static_cast<int>(std::clamp(
+        g_mediaRuntimeSettings.mediaVisualizerBarCount, 1LL, 20LL));
+    const float minimumDb =
+        static_cast<float>(g_mediaRuntimeSettings.mediaVisualizerSensitivity) *
+            -10.0f - 30.0f;
+    const float maximumDb =
+        static_cast<float>(g_mediaRuntimeSettings.mediaVisualizerPeakLevel) *
+            10.0f - 30.0f;
+    const double spacing = 2.0;
+    // Keep FluentFlyout's 3x raster proportions inside the compact 56 px host.
+    const double barWidth = std::max(
+        1.0,
+        std::floor((168.0 - 6.0 * static_cast<double>(barCount - 1) - 1.0) /
+                   static_cast<double>(barCount)) /
+            3.0);
+
+    auto barsHost = FindNamedFrameworkElement(root, L"TaskbarWidgetsMediaWaveBars");
+    if (barsHost) {
+        barsHost.VerticalAlignment(
+            g_mediaRuntimeSettings.mediaVisualizerCentered
+                ? wux::VerticalAlignment::Center
+                : wux::VerticalAlignment::Bottom);
+    }
+
+    bool hasVisibleBar = false;
+    for (int index = 0; index < 20; ++index) {
+        const std::wstring name =
+            L"TaskbarWidgetsMediaWaveBar" + std::to_wstring(index + 1);
+        auto bar = FindNamedFrameworkElement(root, name.c_str())
+                       .try_as<wuxc::Border>();
+        if (!bar) continue;
+        if (index >= barCount) {
+            bar.Visibility(wux::Visibility::Collapsed);
+            continue;
+        }
+
+        bar.Visibility(wux::Visibility::Visible);
+        bar.Width(barWidth);
+        bar.Margin(wux::ThicknessHelper::FromLengths(
+            index == 0 ? 0.0 : spacing, 0, 0, 0));
+        bar.VerticalAlignment(g_mediaRuntimeSettings.mediaVisualizerCentered
+                                  ? wux::VerticalAlignment::Center
+                                  : wux::VerticalAlignment::Bottom);
+
+        float level = 0.0f;
+        if (fresh) {
+            const std::size_t first = static_cast<std::size_t>(index) *
+                                      media_visualizer::kBandCount / barCount;
+            const std::size_t last = std::max(
+                first + 1,
+                static_cast<std::size_t>(index + 1) *
+                    media_visualizer::kBandCount / barCount);
+            float raw = 0.0f;
+            for (std::size_t band = first;
+                 band < std::min(last, media_visualizer::kBandCount); ++band) {
+                raw = std::max(raw, frame.bands[band]);
+            }
+            const float db = raw * 100.0f - 100.0f;
+            level = std::clamp((db - minimumDb) /
+                                   std::max(1.0f, maximumDb - minimumDb),
+                               0.0f, 1.0f);
+        }
+        const double targetHeight = hasAudio ? level * 32.0 : 0.0;
+        const double currentHeight = std::max(0.0, bar.Height());
+        const double height = targetHeight >= currentHeight
+                                  ? targetHeight
+                                  : currentHeight * 0.8 + targetHeight * 0.2;
+        bar.Height(height < 0.15 ? 0.0 : height);
+        const double radius = std::min(
+            {2.0 / std::max(1.0, static_cast<double>(barCount) / 10.0),
+             barWidth / 2.0,
+             height / 2.0});
+        bar.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(
+            std::max(0.0, radius)));
+        hasVisibleBar = hasVisibleBar || height > 0.32;
+    }
+
+    auto baseline = FindNamedFrameworkElement(
+        root, L"TaskbarWidgetsMediaWaveBaseline");
+    if (baseline) {
+        baseline.VerticalAlignment(g_mediaRuntimeSettings.mediaVisualizerCentered
+                                       ? wux::VerticalAlignment::Center
+                                       : wux::VerticalAlignment::Bottom);
+        const bool showBaseline = g_mediaRuntimeSettings.mediaVisualizerBaseline &&
+            (!g_mediaRuntimeSettings.mediaVisualizerBaselineAutoHide || hasAudio);
+        baseline.Visibility(showBaseline ? wux::Visibility::Visible
+                                         : wux::Visibility::Collapsed);
+    }
+
+    if (auto visualizerCard = FindNamedFrameworkElement(
+            root, L"TaskbarWidgetsMediaVisualizerCard")) {
+        const bool persistentBaseline =
+            g_mediaRuntimeSettings.mediaVisualizerBaseline &&
+            !g_mediaRuntimeSettings.mediaVisualizerBaselineAutoHide;
+        const bool showVisualizer =
+            g_mediaRuntimeSettings.mediaShowVisualizer &&
+            (hasVisibleBar || persistentBaseline);
+        visualizerCard.Visibility(showVisualizer ? wux::Visibility::Visible
+                                                  : wux::Visibility::Collapsed);
+    }
 }
 
 void ApplySteamDownloadTheme(wux::UIElement const& root,
@@ -7355,11 +7847,30 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
     if (activeDesign == L"media-player") {
         MediaSnapshot media = ReadMediaSnapshot();
         WidgetRuntimeSettings settings = ReadWidgetRuntimeSettings();
+        g_mediaRuntimeSettings = settings;
+        g_mediaScrollingEnabled = settings.mediaScrollingEnabled;
+        g_mediaScrollingSpeed =
+            static_cast<double>(settings.mediaScrollingSpeed);
+        const bool hideMedia =
+            (settings.mediaHideWhenInactive && !media.active) ||
+            (settings.mediaAutoHidePaused && media.active && !media.playing);
+        const double mediaWidth =
+            134.0 + (settings.mediaShowVisualizer ? 68.0 : 0.0) +
+            (settings.mediaShowControls ? 90.0 : 0.0);
         auto rootElement = root.try_as<wux::FrameworkElement>();
         if (rootElement) {
-            rootElement.Width(230);
+            rootElement.Width(hideMedia ? 0.0 : mediaWidth);
             rootElement.Height(44);
         }
+        if (auto mediaPanel = FindNamedFrameworkElement(
+                root, L"TaskbarWidgetsMediaPanel")) {
+            mediaPanel.Width(mediaWidth - 10.0);
+        }
+        if (auto mediaLayout = FindNamedFrameworkElement(
+                root, L"TaskbarWidgetsMediaLayout")) {
+            mediaLayout.Width(mediaWidth - 10.0);
+        }
+        ArrangeMediaContent(root, settings);
 
         SetNamedVisibility(root, L"TaskbarWidgetsCompactPanel",
                            wux::Visibility::Collapsed);
@@ -7372,8 +7883,13 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
         SetNamedVisibility(root, L"TaskbarWidgetsSteamPanel",
                            wux::Visibility::Collapsed);
         SetNamedVisibility(root, L"TaskbarWidgetsMediaPanel",
-                           wux::Visibility::Visible);
+                           hideMedia ? wux::Visibility::Collapsed
+                                     : wux::Visibility::Visible);
         bool hasMediaText = !Trim(media.title).empty() || !Trim(media.artist).empty();
+        if (auto mediaPanel = FindNamedFrameworkElement(
+                root, L"TaskbarWidgetsMediaPanel")) {
+            mediaPanel.Opacity(1.0);
+        }
         SetMediaTitleText(root, hasMediaText
                                     ? (media.title.empty() ? L"Unknown media" : media.title)
                                     : L"No media");
@@ -7382,12 +7898,44 @@ void UpdateTaskbarWidgetsWidgetRoot(wux::UIElement const& root,
                          ? (media.artist.empty() ? L"Unknown artist" : media.artist)
                          : L"Open a player");
         SetNamedIconGlyph(root, L"TaskbarWidgetsMediaPlayIcon",
-                          media.playing ? L"\xE769" : L"\xE768");
-        SetNamedOpacity(root, L"TaskbarWidgetsMediaPlayIcon", media.active ? 1.0 : 0.45);
-        ApplyMediaTheme(root, settings.mediaDarkMode,
-                        media.active || hasMediaText, media);
+                          media.playing ? L"\x23F8" : L"\x25B6");
+        SetNamedOpacity(root, L"TaskbarWidgetsMediaPreviousButton",
+                        media.active && media.canPrevious ? 1.0 : 0.5);
+        SetNamedOpacity(root, L"TaskbarWidgetsMediaPlayButton",
+                        media.active && media.canToggle ? 1.0 : 0.5);
+        SetNamedOpacity(root, L"TaskbarWidgetsMediaNextButton",
+                        media.active && media.canNext ? 1.0 : 0.5);
+        SetNamedOpacity(root, L"TaskbarWidgetsMediaWave", 1.0);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaWave",
+                           settings.mediaShowVisualizer
+                               ? wux::Visibility::Visible
+                               : wux::Visibility::Collapsed);
+        const auto controlsVisibility = settings.mediaShowControls
+                                            ? wux::Visibility::Visible
+                                            : wux::Visibility::Collapsed;
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPreviousButton",
+                           controlsVisibility);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPlayButton",
+                           controlsVisibility);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaNextButton",
+                           controlsVisibility);
+        SetNamedVisibility(root, L"TaskbarWidgetsMediaPauseOverlay",
+                           settings.mediaShowPauseOverlay && media.active &&
+                                   !media.playing
+                               ? wux::Visibility::Visible
+                               : wux::Visibility::Collapsed);
+        ApplyMediaTheme(root, settings, media.active || hasMediaText, media);
         SetNamedBorderImageBackground(root, L"TaskbarWidgetsMediaCover",
                                       media.coverPath);
+        if (auto cover = FindNamedFrameworkElement(
+                root, L"TaskbarWidgetsMediaCover").try_as<wuxc::Border>()) {
+            if (auto brush = cover.Background()) {
+                brush.Opacity(settings.mediaShowPauseOverlay && media.active &&
+                                      !media.playing
+                                  ? 0.4
+                                  : 1.0);
+            }
+        }
         return;
     }
 
@@ -7705,6 +8253,16 @@ double WidgetDesignWidth(const std::wstring& designId) {
     }
     if (designId == L"media-player" ||
         designId == L"steam-download") {
+        if (designId == L"media-player") {
+            auto settings = ReadWidgetRuntimeSettings();
+            const auto media = ReadMediaSnapshot();
+            if ((settings.mediaHideWhenInactive && !media.active) ||
+                (settings.mediaAutoHidePaused && media.active && !media.playing)) {
+                return 0.0;
+            }
+            return 134.0 + (settings.mediaShowVisualizer ? 68.0 : 0.0) +
+                   (settings.mediaShowControls ? 90.0 : 0.0);
+        }
         return 230.0;
     }
     if (designId == L"discord-voice") {
@@ -8459,6 +9017,9 @@ wux::DispatcherTimer StartTaskbarWidgetsTimer(wux::UIElement const& root,
                (auto const&, auto const&) mutable {
         try {
             AnimateTaskbarWidgetMarquees();
+            if (auto currentRoot = weakLayoutRoot.get()) {
+                AnimateMediaWave(currentRoot);
+            }
             const auto now = std::chrono::steady_clock::now();
             if (now >= nextCollisionPass) {
                 nextCollisionPass = now + std::chrono::milliseconds(100);

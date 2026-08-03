@@ -28,13 +28,26 @@
 </p>
 
 <p align="center">
-  <img src="sf.gif" alt="Windows 11 görev çubuğunda çalışan Taskbar Widgets" />
+  <img src="assets/social/taskbar-widgets-v0.5.34-ultrawide-promo-v4-matte.png" alt="Windows 11 üzerinde Taskbar Widgets koleksiyonu" />
 </p>
 
 Taskbar Widgets, **Windows 11 x64** görev çubuğuna canlı bilgiler ve kullanışlı
 kontroller ekleyen ücretsiz, açık kaynaklı bir uygulamadır. İstediğiniz
 widget'ları seçebilir, doğrudan görev çubuğunda sürükleyebilir ve hepsini tek bir
 Settings uygulamasından yönetebilirsiniz.
+
+## 0.5.34 sürümündeki yenilikler
+
+- Media Player; kompakt native yerleşim, kapak görselinden türetilen renk
+  gradyanı ve dolu önceki, oynat veya duraklat ve sonraki kontrolleriyle yenilendi.
+- Aktif medya akışına tepki veren ve sessizlikte duran, oturum odaklı gerçek
+  zamanlı WASAPI FFT audio visualizer eklendi.
+- Çubuk sayısı, hassasiyet, tepe seviyesi, konum, merkezden büyüme ve isteğe
+  bağlı taban çizgisi ayarları eklendi.
+- Kontrol konumu, kapak üzerinde duraklatma simgesi, pasif veya duraklatılmış
+  medyayı otomatik gizleme ve uzun parça adlarını kaydırma seçenekleri eklendi.
+- Canlı medya durumu güncellemeleri ile farklı görev çubukları ve monitör
+  ölçeklerindeki çizim tutarlılığı iyileştirildi.
 
 > [!IMPORTANT]
 > Taskbar Widgets beta aşamasındadır ve Windows 11'in özel XAML yüzeyleriyle

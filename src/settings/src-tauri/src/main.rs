@@ -116,6 +116,36 @@ struct WidgetSettings {
     discord_real_time_voice_enabled: Option<bool>,
     #[serde(default)]
     media_dark_mode: Option<bool>,
+    #[serde(default)]
+    media_show_controls: Option<bool>,
+    #[serde(default)]
+    media_controls_position: Option<String>,
+    #[serde(default)]
+    media_show_visualizer: Option<bool>,
+    #[serde(default)]
+    media_visualizer_position: Option<String>,
+    #[serde(default)]
+    media_visualizer_bar_count: Option<u32>,
+    #[serde(default)]
+    media_visualizer_centered: Option<bool>,
+    #[serde(default)]
+    media_visualizer_baseline: Option<bool>,
+    #[serde(default)]
+    media_visualizer_baseline_auto_hide: Option<bool>,
+    #[serde(default)]
+    media_visualizer_sensitivity: Option<u32>,
+    #[serde(default)]
+    media_visualizer_peak_level: Option<u32>,
+    #[serde(default)]
+    media_show_pause_overlay: Option<bool>,
+    #[serde(default)]
+    media_hide_when_inactive: Option<bool>,
+    #[serde(default)]
+    media_auto_hide_paused: Option<bool>,
+    #[serde(default)]
+    media_scrolling_enabled: Option<bool>,
+    #[serde(default)]
+    media_scrolling_speed: Option<u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -381,6 +411,21 @@ fn default_settings() -> WidgetSettings {
         discord_background_enabled: Some(true),
         discord_real_time_voice_enabled: Some(false),
         media_dark_mode: Some(true),
+        media_show_controls: Some(true),
+        media_controls_position: Some("right".to_owned()),
+        media_show_visualizer: Some(true),
+        media_visualizer_position: Some("right".to_owned()),
+        media_visualizer_bar_count: Some(10),
+        media_visualizer_centered: Some(false),
+        media_visualizer_baseline: Some(false),
+        media_visualizer_baseline_auto_hide: Some(false),
+        media_visualizer_sensitivity: Some(2),
+        media_visualizer_peak_level: Some(3),
+        media_show_pause_overlay: Some(true),
+        media_hide_when_inactive: Some(false),
+        media_auto_hide_paused: Some(false),
+        media_scrolling_enabled: Some(true),
+        media_scrolling_speed: Some(18),
     }
 }
 
@@ -758,6 +803,14 @@ fn setting_bool(widget: Option<&ConfigWidget>, key: &str, fallback: bool) -> boo
         .unwrap_or(fallback)
 }
 
+fn setting_u32(widget: Option<&ConfigWidget>, key: &str, fallback: u32) -> u32 {
+    widget
+        .and_then(|item| item.settings.get(key))
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(fallback)
+}
+
 fn config_widget_design(widget: &ConfigWidget) -> &str {
     if widget.widget_id.is_empty() {
         &widget.id
@@ -980,6 +1033,25 @@ fn config_to_transport(mut config: ConfigV2) -> WidgetSettings {
             false,
         )),
         media_dark_mode: Some(setting_bool(media, "darkMode", true)),
+        media_show_controls: Some(setting_bool(media, "showControls", true)),
+        media_controls_position: Some(setting_string(media, "controlsPosition", "right")),
+        media_show_visualizer: Some(setting_bool(media, "showVisualizer", true)),
+        media_visualizer_position: Some(setting_string(media, "visualizerPosition", "right")),
+        media_visualizer_bar_count: Some(setting_u32(media, "visualizerBarCount", 10)),
+        media_visualizer_centered: Some(setting_bool(media, "visualizerCentered", false)),
+        media_visualizer_baseline: Some(setting_bool(media, "visualizerBaseline", false)),
+        media_visualizer_baseline_auto_hide: Some(setting_bool(
+            media,
+            "visualizerBaselineAutoHide",
+            false,
+        )),
+        media_visualizer_sensitivity: Some(setting_u32(media, "visualizerSensitivity", 2)),
+        media_visualizer_peak_level: Some(setting_u32(media, "visualizerPeakLevel", 3)),
+        media_show_pause_overlay: Some(setting_bool(media, "showPauseOverlay", true)),
+        media_hide_when_inactive: Some(setting_bool(media, "hideWhenInactive", false)),
+        media_auto_hide_paused: Some(setting_bool(media, "autoHidePaused", false)),
+        media_scrolling_enabled: Some(setting_bool(media, "scrollingEnabled", true)),
+        media_scrolling_speed: Some(setting_u32(media, "scrollingSpeed", 18)),
     }
 }
 
@@ -1042,9 +1114,103 @@ fn transport_to_config(settings: &WidgetSettings) -> ConfigV2 {
                     );
                 }
                 MEDIA_DESIGN => {
+                    values.remove("animated");
+                    values.remove("showBackgroundArt");
                     values.insert(
                         "darkMode".to_owned(),
                         serde_json::Value::Bool(settings.media_dark_mode.unwrap_or(true)),
+                    );
+                    values.insert(
+                        "showControls".to_owned(),
+                        serde_json::Value::Bool(settings.media_show_controls.unwrap_or(true)),
+                    );
+                    values.insert(
+                        "controlsPosition".to_owned(),
+                        serde_json::Value::String(
+                            settings
+                                .media_controls_position
+                                .clone()
+                                .unwrap_or_else(|| "right".to_owned()),
+                        ),
+                    );
+                    values.insert(
+                        "showVisualizer".to_owned(),
+                        serde_json::Value::Bool(settings.media_show_visualizer.unwrap_or(true)),
+                    );
+                    values.insert(
+                        "visualizerPosition".to_owned(),
+                        serde_json::Value::String(
+                            settings
+                                .media_visualizer_position
+                                .clone()
+                                .unwrap_or_else(|| "right".to_owned()),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerBarCount".to_owned(),
+                        serde_json::Value::from(
+                            settings.media_visualizer_bar_count.unwrap_or(10).clamp(1, 20),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerCentered".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.media_visualizer_centered.unwrap_or(false),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerBaseline".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.media_visualizer_baseline.unwrap_or(false),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerBaselineAutoHide".to_owned(),
+                        serde_json::Value::Bool(
+                            settings
+                                .media_visualizer_baseline_auto_hide
+                                .unwrap_or(false),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerSensitivity".to_owned(),
+                        serde_json::Value::from(
+                            settings.media_visualizer_sensitivity.unwrap_or(2).clamp(1, 3),
+                        ),
+                    );
+                    values.insert(
+                        "visualizerPeakLevel".to_owned(),
+                        serde_json::Value::from(
+                            settings.media_visualizer_peak_level.unwrap_or(3).clamp(1, 3),
+                        ),
+                    );
+                    values.insert(
+                        "showPauseOverlay".to_owned(),
+                        serde_json::Value::Bool(settings.media_show_pause_overlay.unwrap_or(true)),
+                    );
+                    values.insert(
+                        "hideWhenInactive".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.media_hide_when_inactive.unwrap_or(false),
+                        ),
+                    );
+                    values.insert(
+                        "autoHidePaused".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.media_auto_hide_paused.unwrap_or(false),
+                        ),
+                    );
+                    values.insert(
+                        "scrollingEnabled".to_owned(),
+                        serde_json::Value::Bool(
+                            settings.media_scrolling_enabled.unwrap_or(true),
+                        ),
+                    );
+                    values.insert(
+                        "scrollingSpeed".to_owned(),
+                        serde_json::Value::from(
+                            settings.media_scrolling_speed.unwrap_or(18).clamp(1, 100),
+                        ),
                     );
                 }
                 _ => {}

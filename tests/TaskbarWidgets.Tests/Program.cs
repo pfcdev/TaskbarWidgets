@@ -12,6 +12,7 @@ Run("legacy config migration", TestLegacyMigration);
 Run("unknown widget preservation", TestUnknownWidgetPreservation);
 Run("atomic snapshot write", TestAtomicWrite);
 Run("command allowlist", TestCommandValidation);
+Run("native media controls", TestMediaControlContract);
 Run("widget position command", TestWidgetPositionCommand);
 Run("updater asset selection", TestUpdaterAssetSelection);
 Run("system metric math", TestSystemMetricMath);
@@ -229,12 +230,141 @@ void TestCommandValidation()
     var invalidAction = valid with { Action = "runArbitraryProcess" };
     var taskManager = valid with { Action = "openTaskManager", WidgetId = "system-cpu" };
     var moveWidget = valid with { Action = "moveWidget", WidgetId = "weather-static" };
+    var mediaPrevious = valid with { Action = "mediaPrevious", WidgetId = "media-player" };
+    var mediaNext = valid with { Action = "mediaNext", WidgetId = "media-player" };
     var stale = valid with { CreatedAtUnix = now - 301 };
     Assert(WidgetCommandValidator.IsValid(valid, now), "valid command rejected");
     Assert(!WidgetCommandValidator.IsValid(invalidAction, now), "unknown command accepted");
     Assert(WidgetCommandValidator.IsValid(taskManager, now), "Task Manager command rejected");
     Assert(WidgetCommandValidator.IsValid(moveWidget, now), "widget move command rejected");
+    Assert(WidgetCommandValidator.IsValid(mediaPrevious, now), "previous media command rejected");
+    Assert(WidgetCommandValidator.IsValid(mediaNext, now), "next media command rejected");
     Assert(!WidgetCommandValidator.IsValid(stale, now), "stale command accepted");
+}
+
+void TestMediaControlContract()
+{
+    var manifestPath = Path.Combine(
+        Directory.GetCurrentDirectory(), "widgets", "media-player", "widget.json");
+    using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+    Assert(manifest.RootElement.GetProperty("defaultSize").GetProperty("width").GetInt32() == 292,
+        "media widget should use the requested 30 percent narrower width");
+    var settings = manifest.RootElement.GetProperty("settings")
+        .EnumerateArray()
+        .Select(item => item.GetProperty("key").GetString())
+        .ToHashSet(StringComparer.Ordinal);
+    Assert(settings.Contains("showControls"), "media control setting missing");
+    Assert(settings.Contains("showVisualizer"), "media visualizer setting missing");
+    Assert(settings.Contains("visualizerBarCount"), "media visualizer bar count missing");
+    Assert(settings.Contains("visualizerCentered"), "centered visualizer setting missing");
+    Assert(settings.Contains("visualizerBaseline"), "visualizer baseline setting missing");
+    Assert(settings.Contains("visualizerSensitivity"), "visualizer sensitivity setting missing");
+    Assert(settings.Contains("visualizerPeakLevel"), "visualizer peak setting missing");
+    Assert(settings.Contains("controlsPosition"), "media controls position missing");
+    Assert(settings.Contains("visualizerPosition"), "media visualizer position missing");
+    Assert(settings.Contains("showPauseOverlay"), "media pause overlay setting missing");
+
+    var native = File.ReadAllText(Path.Combine(
+        Directory.GetCurrentDirectory(), "src", "native", "taskbar-hook",
+        "taskbar_widgets_hook.cpp"));
+    Assert(native.Contains("TaskbarWidgetsMediaPreviousButton", StringComparison.Ordinal),
+        "native previous media button missing");
+    Assert(native.Contains("TaskbarWidgetsMediaNextButton", StringComparison.Ordinal),
+        "native next media button missing");
+    Assert(native.Contains("TaskbarWidgetsMediaCard", StringComparison.Ordinal),
+        "single-layer media card missing");
+    Assert(native.Contains("TaskbarWidgetsMediaVisualizerCard", StringComparison.Ordinal),
+        "separate Fluent visualizer card missing");
+    Assert(native.Contains("TaskbarWidgetsMediaControlTint", StringComparison.Ordinal) &&
+           native.Contains("MakeMediaControlsGradientBrush", StringComparison.Ordinal),
+        "album-color transport gradient layer missing");
+    Assert(native.Contains("controlTint.Width(166)", StringComparison.Ordinal) &&
+           native.Contains("appendStop(0.18, 0x00)", StringComparison.Ordinal) &&
+           native.Contains("darkMode ? 0x78 : 0x58", StringComparison.Ordinal),
+        "transport gradient must extend visibly left from the media controls");
+    Assert(native.Contains("L\"\\x23EE\"", StringComparison.Ordinal) &&
+           native.Contains("L\"\\x25B6\"", StringComparison.Ordinal) &&
+           native.Contains("L\"\\x23ED\"", StringComparison.Ordinal),
+        "solid transport media glyphs missing");
+    Assert(!native.Contains("TaskbarWidgetsMediaBackdrop", StringComparison.Ordinal),
+        "media album-art backdrop layer must not be rendered");
+    Assert(native.Contains("mediaCard.Background(MakeBrush(0x00", StringComparison.Ordinal),
+        "Fluent media surface must be transparent until hover");
+    Assert(native.Contains("playButton.Background(MakeBrush(0x01", StringComparison.Ordinal),
+        "Fluent transport play button must not use a permanent accent circle");
+    Assert(native.Contains("const float db = raw * 100.0f - 100.0f", StringComparison.Ordinal),
+        "visualizer dB frame must be decoded exactly once");
+    Assert(native.Contains("height < 0.15 ? 0.0", StringComparison.Ordinal),
+        "silent visualizer bars must disappear instead of drawing a dotted floor");
+    Assert(native.Contains("const double targetHeight = hasAudio ? level * 32.0", StringComparison.Ordinal),
+        "media visualizer must retain its full physical bar height");
+    Assert(native.Contains("AnimateMediaWave", StringComparison.Ordinal),
+        "native media wave animation missing");
+    Assert(native.Contains("OpenFileMappingW", StringComparison.Ordinal),
+        "native visualizer shared-memory reader missing");
+    Assert(native.Contains("FILE_MAP_READ", StringComparison.Ordinal),
+        "visualizer mapping should remain read-only inside Explorer");
+    Assert(native.Contains("try_as<wuxc::Canvas>()", StringComparison.Ordinal),
+        "media layout must use a stable Canvas instead of reparenting children");
+    Assert(native.Contains("TaskbarWidgetsMediaWaveBar20", StringComparison.Ordinal) ||
+           native.Contains("index < 20", StringComparison.Ordinal),
+        "native 20-bar visualizer capacity missing");
+
+    var helper = File.ReadAllText(Path.Combine(
+        Directory.GetCurrentDirectory(), "src", "native", "media-helper",
+        "media_helper.cpp"));
+    Assert(helper.Contains("TrySkipPreviousAsync", StringComparison.Ordinal),
+        "GSMTC previous command missing");
+    Assert(helper.Contains("TrySkipNextAsync", StringComparison.Ordinal),
+        "GSMTC next command missing");
+    Assert(helper.Contains("AUDCLNT_STREAMFLAGS_LOOPBACK", StringComparison.Ordinal),
+        "WASAPI loopback capture missing");
+    Assert(helper.Contains("CaptureAudioStream(writer, 0)", StringComparison.Ordinal),
+        "visualizer must use FluentFlyout-style render endpoint loopback");
+    Assert(helper.Contains("FindMediaAudioSessionProcessId", StringComparison.Ordinal),
+        "media audio-session PID resolver missing");
+    Assert(helper.Contains("FindSourceProcessTreeRoot", StringComparison.Ordinal),
+        "source-app process tree fallback missing");
+    Assert(helper.Contains("g_visualizerMediaPlaying", StringComparison.Ordinal),
+        "paused media must gate visualizer capture");
+    Assert(helper.Contains("g_visualizerSessionPeak", StringComparison.Ordinal),
+        "selected media audio-session peak diagnostics missing");
+    Assert(helper.Contains("constexpr float visualizerResponseScale = 0.60f", StringComparison.Ordinal) &&
+           helper.Contains("(1.0f / 8.0f) * visualizerResponseScale", StringComparison.Ordinal) &&
+           !helper.Contains("static_cast<float>(count)", StringComparison.Ordinal),
+        "visualizer FFT response must be reduced by 40 percent without shortening bars");
+    Assert(!helper.Contains("automaticGain", StringComparison.Ordinal),
+        "FluentFlyout-compatible FFT must not apply a second automatic gain stage");
+    Assert(helper.Contains("inputPeak > 0.00032f", StringComparison.Ordinal),
+        "visualizer quiet-track noise gate calibration missing");
+    Assert(helper.Contains("FastFourierTransform", StringComparison.Ordinal),
+        "FFT audio analysis missing");
+    Assert(helper.Contains("strongest = std::abs(sample)", StringComparison.Ordinal),
+        "multichannel FFT input must preserve the strongest real channel");
+    Assert(helper.Contains("progress * 75.0f", StringComparison.Ordinal),
+        "FluentFlyout high-frequency visualizer gain is missing");
+    Assert(helper.Contains("constexpr std::size_t fftSize = 4096", StringComparison.Ordinal),
+        "FluentFlyout 4096-sample FFT window is missing");
+    Assert(helper.Contains("CreateFileMappingW", StringComparison.Ordinal),
+        "visualizer shared-memory writer missing");
+    Assert(helper.Contains("return SendMediaCommand(MediaCommand::Toggle) ? 0 : 2", StringComparison.Ordinal),
+        "media toggle must report whether GSMTC accepted the command");
+    Assert(helper.Contains("visualizerCaptureReady", StringComparison.Ordinal),
+        "visualizer capture diagnostics missing");
+    Assert(!helper.Contains("void SendMediaCommand", StringComparison.Ordinal),
+        "media command helper must not hide rejected commands from fallback");
+
+    var shared = File.ReadAllText(Path.Combine(
+        Directory.GetCurrentDirectory(), "src", "native", "common",
+        "media_visualizer_shared.h"));
+    Assert(!shared.Contains("InterlockedCompareExchange64(", StringComparison.Ordinal),
+        "read-only visualizer mapping must not use a read-modify-write interlocked read");
+    Assert(shared.Contains("const LONG64 before = source->sequence", StringComparison.Ordinal),
+        "aligned read-only visualizer sequence load missing");
+    Assert(shared.Contains("MediaVisualizer.v6", StringComparison.Ordinal),
+        "visualizer frame semantic changes require a new mapping version");
+    Assert(!native.Contains("StartMediaEntranceAnimation", StringComparison.Ordinal),
+        "global media entrance animation is unsafe across multiple monitors");
 }
 
 void TestWidgetPositionCommand()

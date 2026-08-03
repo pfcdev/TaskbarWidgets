@@ -1,6 +1,6 @@
 [package]
 name = "taskbar-widgets-settings-tauri"
-version = "0.5.21"
+version = "0.5.34"
 edition = "2021"
 
 [[bin]]

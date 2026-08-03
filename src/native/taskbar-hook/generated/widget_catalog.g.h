@@ -8,7 +8,7 @@ struct WidgetDefinition { std::wstring_view id; std::wstring_view displayName; d
 inline constexpr std::array<WidgetDefinition, 10> kWidgets{{
     {L"codex-status", L"Codex Status", 220.0, 48.0},
     {L"discord-voice", L"Discord Voice", 220.0, 48.0},
-    {L"media-player", L"Media Player", 240.0, 48.0},
+    {L"media-player", L"Media Player", 292.0, 48.0},
     {L"parking-lot", L"Parking Lot", 64.0, 32.0},
     {L"steam-download", L"Steam Downloads", 240.0, 48.0},
     {L"system-cpu", L"CPU", 32.0, 24.0},

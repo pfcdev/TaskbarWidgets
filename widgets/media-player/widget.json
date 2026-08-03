@@ -4,10 +4,25 @@
   "id": "media-player",
   "displayName": "Media Player",
   "category": "Media",
-  "description": "Current Windows media session with playback controls.",
-  "defaultSize": { "width": 240, "height": 48 },
+  "description": "Native Windows media session with transport controls and a real-time WASAPI audio visualizer.",
+  "defaultSize": { "width": 292, "height": 48 },
   "assets": ["assets/media_cover.png"],
   "settings": [
-    { "key": "darkMode", "type": "boolean", "label": "Dark appearance", "default": true }
+    { "key": "darkMode", "type": "boolean", "label": "Dark appearance", "default": true },
+    { "key": "showControls", "type": "boolean", "label": "Show media controls", "default": true },
+    { "key": "controlsPosition", "type": "select", "label": "Controls position", "default": "right", "options": ["left", "right"] },
+    { "key": "showVisualizer", "type": "boolean", "label": "Show real-time audio visualizer", "default": true },
+    { "key": "visualizerPosition", "type": "select", "label": "Visualizer position", "default": "right", "options": ["left", "right"] },
+    { "key": "visualizerBarCount", "type": "number", "label": "Visualizer bar count", "default": 10, "minimum": 1, "maximum": 20, "step": 1 },
+    { "key": "visualizerCentered", "type": "boolean", "label": "Centered visualizer bars", "default": false },
+    { "key": "visualizerBaseline", "type": "boolean", "label": "Show visualizer baseline", "default": false },
+    { "key": "visualizerBaselineAutoHide", "type": "boolean", "label": "Hide baseline during silence", "default": false },
+    { "key": "visualizerSensitivity", "type": "number", "label": "Audio sensitivity", "default": 2, "minimum": 1, "maximum": 3, "step": 1 },
+    { "key": "visualizerPeakLevel", "type": "number", "label": "Audio peak level", "default": 3, "minimum": 1, "maximum": 3, "step": 1 },
+    { "key": "showPauseOverlay", "type": "boolean", "label": "Show pause icon over cover art", "default": true },
+    { "key": "hideWhenInactive", "type": "boolean", "label": "Hide when no media is active", "default": false },
+    { "key": "autoHidePaused", "type": "boolean", "label": "Hide while paused", "default": false },
+    { "key": "scrollingEnabled", "type": "boolean", "label": "Scroll long titles", "default": true },
+    { "key": "scrollingSpeed", "type": "number", "label": "Title scroll speed", "default": 18, "minimum": 1, "maximum": 100, "step": 1 }
   ]
 }

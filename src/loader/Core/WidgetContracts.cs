@@ -34,6 +34,7 @@ public static class WidgetCommandValidator
     {
         "addAccount", "loginActiveAccount", "deleteActiveAccount", "deleteAccount",
         "switchAccount", "restartIde", "openSettings", "openTaskManager", "mediaToggle",
+        "mediaPrevious", "mediaNext",
         "moveWidget", "disableWidget", "communityInvoke", "quit"
     };
 

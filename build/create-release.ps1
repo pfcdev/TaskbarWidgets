@@ -30,7 +30,12 @@ foreach ($file in $Files) { if (-not (Test-Path $file)) { throw "Release artifac
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI is required to publish a release." }
 
 $unsigned = -not [bool]$env:WINDOWS_SIGNING_CERT_BASE64
-$notes = "Taskbar Widgets $Tag for Windows 11 x64. TaskbarWidgetsSetup-x64.exe is the single installer for installation and updates; existing user data is migrated and preserved."
+$releaseNotesPath = Join-Path $RepoRoot "RELEASE_NOTES.md"
+$notes = if (Test-Path $releaseNotesPath) {
+    (Get-Content -LiteralPath $releaseNotesPath -Raw).Trim()
+} else {
+    "Taskbar Widgets $Tag for Windows 11 x64. TaskbarWidgetsSetup-x64.exe is the single installer for installation and updates; existing user data is migrated and preserved."
+}
 if ($unsigned) { $notes += " This build is unsigned and Windows SmartScreen may show a warning." }
 
 gh release view $Tag --repo $Repo *> $null

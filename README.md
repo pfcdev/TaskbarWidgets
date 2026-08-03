@@ -28,13 +28,26 @@
 </p>
 
 <p align="center">
-  <img src="sf.gif" alt="Taskbar Widgets running on the Windows 11 taskbar" />
+  <img src="assets/social/taskbar-widgets-v0.5.34-ultrawide-promo-v4-matte.png" alt="Taskbar Widgets collection on Windows 11" />
 </p>
 
 Taskbar Widgets is a free, open-source app for **Windows 11 x64**. It puts useful
 information and controls directly on your taskbar without replacing the Windows
 shell. Choose only the widgets you want, arrange them by dragging, and manage
 everything from one Settings app.
+
+## What's new in 0.5.34
+
+- Rebuilt Media Player with a compact native layout, artwork-derived color
+  gradient, and filled previous, play or pause, and next controls.
+- Added a real-time, session-aware WASAPI FFT visualizer that reacts to the
+  active media stream and settles during silence.
+- Added visualizer bar count, sensitivity, peak level, position, centered mode,
+  and optional baseline controls.
+- Added configurable control placement, pause artwork overlay, inactive or
+  paused auto-hide, and smooth scrolling for long track titles.
+- Improved live media-state updates and rendering consistency across multiple
+  taskbars and monitor scaling levels.
 
 > [!IMPORTANT]
 > Taskbar Widgets is beta software and integrates with private Windows 11 XAML

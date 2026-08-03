@@ -12,6 +12,7 @@ src/loader/Resources/*.dll
 src/loader/Resources/*.exe
 src/settings/src-tauri/target/
 ornek_proje/OpenQuota/
+.reference/
 
 *.user
 *.suo

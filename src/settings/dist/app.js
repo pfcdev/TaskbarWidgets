@@ -58,6 +58,21 @@ const defaults = {
   discordBackgroundEnabled: true,
   discordRealTimeVoiceEnabled: false,
   mediaDarkMode: true,
+  mediaShowControls: true,
+  mediaControlsPosition: "right",
+  mediaShowVisualizer: true,
+  mediaVisualizerPosition: "right",
+  mediaVisualizerBarCount: 10,
+  mediaVisualizerCentered: false,
+  mediaVisualizerBaseline: false,
+  mediaVisualizerBaselineAutoHide: false,
+  mediaVisualizerSensitivity: 2,
+  mediaVisualizerPeakLevel: 3,
+  mediaShowPauseOverlay: true,
+  mediaHideWhenInactive: false,
+  mediaAutoHidePaused: false,
+  mediaScrollingEnabled: true,
+  mediaScrollingSpeed: 18,
 };
 
 const pageMeta = {
@@ -1080,6 +1095,21 @@ function currentWidgetSettingsFields() {
   if (id === "media-player") {
     return `
       ${settingToggle("mediaDarkMode", "Dark Mode", state.settings.mediaDarkMode)}
+      ${settingToggle("mediaShowControls", "Media Controls", state.settings.mediaShowControls)}
+      ${selectSetting("mediaControlsPosition", "Controls Position", "Place previous, play or pause, and next before or after the media information.", state.settings.mediaControlsPosition, [["left", "Left"], ["right", "Right"]])}
+      ${settingToggle("mediaShowVisualizer", "Real-time Audio Visualizer", state.settings.mediaShowVisualizer)}
+      ${selectSetting("mediaVisualizerPosition", "Visualizer Position", "Place the visualizer before or after the media widget.", state.settings.mediaVisualizerPosition, [["left", "Left"], ["right", "Right"]])}
+      ${rangeSetting("mediaVisualizerBarCount", "Visualizer Bars", "Number of frequency bars.", state.settings.mediaVisualizerBarCount, 1, 20)}
+      ${settingToggle("mediaVisualizerCentered", "Centered Bars", state.settings.mediaVisualizerCentered)}
+      ${settingToggle("mediaVisualizerBaseline", "Visualizer Baseline", state.settings.mediaVisualizerBaseline)}
+      ${settingToggle("mediaVisualizerBaselineAutoHide", "Hide Baseline During Silence", state.settings.mediaVisualizerBaselineAutoHide)}
+      ${rangeSetting("mediaVisualizerSensitivity", "Audio Sensitivity", "Raise quiet audio into view.", state.settings.mediaVisualizerSensitivity, 1, 3)}
+      ${rangeSetting("mediaVisualizerPeakLevel", "Peak Level", "Calibrate the maximum bar height.", state.settings.mediaVisualizerPeakLevel, 1, 3)}
+      ${settingToggle("mediaShowPauseOverlay", "Pause Cover Overlay", state.settings.mediaShowPauseOverlay)}
+      ${settingToggle("mediaHideWhenInactive", "Hide Without Media", state.settings.mediaHideWhenInactive)}
+      ${settingToggle("mediaAutoHidePaused", "Hide While Paused", state.settings.mediaAutoHidePaused)}
+      ${settingToggle("mediaScrollingEnabled", "Scroll Long Titles", state.settings.mediaScrollingEnabled)}
+      ${rangeSetting("mediaScrollingSpeed", "Title Scroll Speed", "Pixels per second.", state.settings.mediaScrollingSpeed, 1, 100, " px/s")}
       ${mediaDiagnostics()}
     `;
   }
@@ -1169,7 +1199,7 @@ function updatesPage() {
   const busy = isUpdateBusy(update);
   const downloading = update.state === "downloading";
   const installing = update.state === "installing" || updateInstallerLaunchInProgress;
-  const current = update.currentVersion || "0.5.21";
+  const current = update.currentVersion || "0.5.34";
   const latest = update.latestVersion || "Not checked";
   const checked = update.updatedAtUnix ? formatUnixTime(update.updatedAtUnix) : "Not checked";
   const isCurrent = update.state === "current" || (latest !== "Not checked" && latest.replace(/^v/i, "") === current.replace(/\.0$/, ""));
@@ -1378,6 +1408,15 @@ function toggleHint(key) {
     discordBackgroundEnabled: "Show the black capsule behind Discord avatars.",
     discordRealTimeVoiceEnabled: "Use the optional Windows helper for immediate speaking rings.",
     mediaDarkMode: "Use the modern dark media palette.",
+    mediaShowControls: "Show native previous, play or pause, and next controls.",
+    mediaShowVisualizer: "Draw FFT frequency bars from the active Windows output device.",
+    mediaVisualizerCentered: "Grow frequency bars outward from the center line.",
+    mediaVisualizerBaseline: "Draw a stable line below or through the visualizer.",
+    mediaVisualizerBaselineAutoHide: "Hide the baseline when no audible signal is detected.",
+    mediaShowPauseOverlay: "Show a pause glyph over the cover when playback is paused.",
+    mediaHideWhenInactive: "Remove the media widget when no Windows media session is active.",
+    mediaAutoHidePaused: "Temporarily remove the media widget while playback is paused.",
+    mediaScrollingEnabled: "Scroll titles that do not fit in the available width.",
   };
   return hints[key] || "";
 }
@@ -1388,6 +1427,13 @@ function mediaDiagnostics() {
     <div class="diagnostics-card">
       ${statusRow("Active", formatBool(media.active))}
       ${statusRow("Playing", formatBool(media.playing))}
+      ${statusRow("Play / pause control", formatBool(media.canToggle))}
+      ${statusRow("Previous control", formatBool(media.canPrevious))}
+      ${statusRow("Next control", formatBool(media.canNext))}
+      ${statusRow("Audio capture", formatBool(media.visualizerCaptureReady))}
+      ${statusRow("Audible signal", formatBool(media.visualizerHasAudio))}
+      ${statusRow("Visualizer sample rate", media.visualizerSampleRate ? `${media.visualizerSampleRate} Hz` : "Not available")}
+      ${statusRow("Visualizer peak", Number.isFinite(Number(media.visualizerPeak)) ? Number(media.visualizerPeak).toFixed(3) : "Not available")}
       ${statusRow("Metadata source", media.metadataSource || "Not available")}
       ${statusRow("Source app", media.sourceApp || "Not available")}
       ${media.error ? statusRow("Error", media.error) : ""}

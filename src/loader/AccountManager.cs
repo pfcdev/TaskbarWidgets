@@ -261,6 +261,14 @@ internal static class AccountManager
             {
                 MediaWorker.RequestToggle();
             }
+            else if (string.Equals(command, "mediaPrevious", StringComparison.OrdinalIgnoreCase))
+            {
+                MediaWorker.RequestPrevious();
+            }
+            else if (string.Equals(command, "mediaNext", StringComparison.OrdinalIgnoreCase))
+            {
+                MediaWorker.RequestNext();
+            }
             else if (string.Equals(command, "communityInvoke", StringComparison.OrdinalIgnoreCase))
             {
                 var arguments = node?["arguments"] as JsonObject;

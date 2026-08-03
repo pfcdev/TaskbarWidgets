@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TaskbarWidgetsNative VERSION 0.5.21 LANGUAGES CXX)
+project(TaskbarWidgetsNative VERSION 0.5.34 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Taskbar Widgets native components require Windows x64")
@@ -29,7 +29,7 @@ set_target_properties(TaskbarWidgetsMediaHelper PROPERTIES
     CXX_STANDARD_REQUIRED YES)
 target_compile_definitions(TaskbarWidgetsMediaHelper PRIVATE
     UNICODE _UNICODE NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
-target_link_libraries(TaskbarWidgetsMediaHelper PRIVATE ole32 oleaut32 runtimeobject gdi32 gdiplus)
+target_link_libraries(TaskbarWidgetsMediaHelper PRIVATE ole32 oleaut32 runtimeobject gdi32 gdiplus uuid mmdevapi)
 
 if(DEFINED WEBVIEW2_SDK_ROOT)
     set(WEBVIEW2_INCLUDE "${WEBVIEW2_SDK_ROOT}/build/native/include")
