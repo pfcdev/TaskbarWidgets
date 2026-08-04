@@ -87,4 +87,3 @@ body:
           required: true
         - label: This report does not contain passwords, tokens, or other sensitive information.
           required: true
-

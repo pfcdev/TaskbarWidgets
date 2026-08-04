@@ -72,4 +72,3 @@ body:
       options:
         - label: I searched for an existing request that covers this idea.
           required: true
-
