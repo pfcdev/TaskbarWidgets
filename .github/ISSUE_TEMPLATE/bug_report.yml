@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a reproducible problem in Taskbar Widgets
+title: "[Bug]: "
+labels:
+  - bug
+  - "status: needs triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search existing issues before submitting a new one.
+
+  - type: input
+    id: version
+    attributes:
+      label: Taskbar Widgets version
+      description: Find this in Settings or in the downloaded release name.
+      placeholder: "0.5.34"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation method
+      options:
+        - Installer
+        - Portable package
+        - Built from source
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Include the edition, version, and OS build when possible.
+      placeholder: "Windows 11 24H2, build 26100.4652"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Enable ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove tokens, account details, and other sensitive information before attaching files.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add anything else that may help, such as the affected widget or recent configuration changes.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched for an existing issue that describes this problem.
+          required: true
+        - label: This report does not contain passwords, tokens, or other sensitive information.
+          required: true
+
