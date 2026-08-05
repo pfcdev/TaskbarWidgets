@@ -1,11 +1,9 @@
-## Worldwide weather locations
+## English weather forecast labels
 
-- Fixed weather city lookup outside Türkiye by removing the hard-coded country
-  restriction from Open-Meteo geocoding requests.
-- Weather location names now follow the Windows display language, and forecast
-  day labels follow the current regional format.
-- Aligned the provider fallback city with the Istanbul default shown in
-  Settings.
+- Fixed the weather hover forecast so weekday labels always use English
+  abbreviations (`Mon` through `Sun`), regardless of the Windows regional
+  format.
+- Kept the current-day label consistently displayed as `Today`.
 
 TaskbarWidgetsSetup-x64.exe supports both new installations and in-place
 updates while preserving existing user data and widget settings.

@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -184,10 +183,10 @@ internal static class WeatherWorker
 
         for (var i = 0; i < Math.Min(7, count); i++)
         {
-            var label = i == 0
-                ? "Today"
-                : DateTime.TryParse(daily.Time[i], out var date)
-                    ? CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(date.DayOfWeek)
+            var label = DateTime.TryParse(daily.Time[i], out var date)
+                ? WeatherDayLabel.Format(date, isToday: i == 0)
+                : i == 0
+                    ? "Today"
                     : daily.Time[i];
 
             days.Add(new WeatherDay

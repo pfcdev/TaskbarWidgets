@@ -17,6 +17,7 @@ Run("widget position command", TestWidgetPositionCommand);
 Run("updater asset selection", TestUpdaterAssetSelection);
 Run("system metric math", TestSystemMetricMath);
 Run("worldwide weather location query", TestWeatherLocationQuery);
+Run("English weather day labels", TestWeatherDayLabels);
 Run("system meter settings reset", TestSystemMeterSettingsReset);
 Run("system PDH sampler", TestSystemPdhSampler);
 Run("community widget validation", TestCommunityWidgetValidation);
@@ -81,6 +82,20 @@ void TestWeatherLocationQuery()
         "weather city special characters are not URL encoded");
     Assert(escaped.Contains("language=en", StringComparison.Ordinal),
         "invalid weather language must fall back to English");
+}
+
+void TestWeatherDayLabels()
+{
+    var monday = new DateTime(2026, 8, 3);
+    var expected = new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+    var actual = Enumerable.Range(0, expected.Length)
+        .Select(offset => WeatherDayLabel.Format(monday.AddDays(offset), isToday: false))
+        .ToArray();
+
+    Assert(actual.SequenceEqual(expected),
+        $"weather weekday labels must be English: {string.Join(", ", actual)}");
+    Assert(WeatherDayLabel.Format(monday, isToday: true) == "Today",
+        "current weather day label must be Today");
 }
 
 void TestParkingLotContract()

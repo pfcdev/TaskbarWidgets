@@ -9,7 +9,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
-    <Version>0.5.35</Version>
+    <Version>0.5.36</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.3.0" />
