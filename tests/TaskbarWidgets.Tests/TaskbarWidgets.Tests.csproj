@@ -21,6 +21,7 @@
     <Compile Include="..\..\src\loader\Core\SystemMetricMath.cs" Link="Core\SystemMetricMath.cs" />
     <Compile Include="..\..\src\loader\Generated\WidgetCatalog.g.cs" Link="Generated\WidgetCatalog.g.cs" />
     <Compile Include="..\..\widgets\system-cpu\provider\SystemMetricsWorker.cs" Link="Widgets\SystemMetricsWorker.cs" />
+    <Compile Include="..\..\widgets\weather-static\provider\WeatherLocationQuery.cs" Link="Widgets\WeatherLocationQuery.cs" />
     <Compile Include="..\..\widgets\discord-voice\provider\DiscordLocalVoiceProbe.cs" Link="Widgets\DiscordLocalVoiceProbe.cs" />
     <Compile Include="..\..\widgets\discord-voice\provider\DiscordAvatarCacheResolver.cs" Link="Widgets\DiscordAvatarCacheResolver.cs" />
     <Compile Include="..\..\widgets\discord-voice\provider\DiscordWebRtcLogProbe.cs" Link="Widgets\DiscordWebRtcLogProbe.cs" />

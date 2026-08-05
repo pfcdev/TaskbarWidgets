@@ -16,6 +16,7 @@ Run("native media controls", TestMediaControlContract);
 Run("widget position command", TestWidgetPositionCommand);
 Run("updater asset selection", TestUpdaterAssetSelection);
 Run("system metric math", TestSystemMetricMath);
+Run("worldwide weather location query", TestWeatherLocationQuery);
 Run("system meter settings reset", TestSystemMeterSettingsReset);
 Run("system PDH sampler", TestSystemPdhSampler);
 Run("community widget validation", TestCommunityWidgetValidation);
@@ -63,6 +64,23 @@ void TestNotificationIconEntryPoint()
     Assert(import is not null, "ShellNotifyIcon import missing");
     Assert(import!.EntryPoint == "Shell_NotifyIconW", "wrong Shell_NotifyIcon entry point");
     Assert(import.ExactSpelling, "Shell_NotifyIcon import must use exact spelling");
+}
+
+void TestWeatherLocationQuery()
+{
+    var url = WeatherLocationQuery.Build(" Berlin ", "de");
+    Assert(url.Contains("name=Berlin", StringComparison.Ordinal),
+        "weather city is not URL encoded");
+    Assert(url.Contains("language=de", StringComparison.Ordinal),
+        "weather query does not use the requested language");
+    Assert(!url.Contains("countryCode", StringComparison.OrdinalIgnoreCase),
+        "weather query must not be restricted to a single country");
+
+    var escaped = WeatherLocationQuery.Build("Sao Paulo/Brazil", "invalid-language");
+    Assert(escaped.Contains("name=Sao%20Paulo%2FBrazil", StringComparison.Ordinal),
+        "weather city special characters are not URL encoded");
+    Assert(escaped.Contains("language=en", StringComparison.Ordinal),
+        "invalid weather language must fall back to English");
 }
 
 void TestParkingLotContract()

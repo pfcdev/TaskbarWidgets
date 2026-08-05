@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -9,7 +10,7 @@ namespace TaskbarWidgets.Loader;
 
 internal static class WeatherWorker
 {
-    private const string DefaultCity = "İzmir";
+    private const string DefaultCity = "Istanbul";
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan SettingsPollInterval = TimeSpan.FromSeconds(10);
     private static readonly string AppDirectory = AppPaths.AppDirectory;
@@ -120,17 +121,14 @@ internal static class WeatherWorker
         string city,
         CancellationToken cancellationToken)
     {
-        var geoUrl =
-            "https://geocoding-api.open-meteo.com/v1/search" +
-            $"?name={Uri.EscapeDataString(city)}" +
-            "&count=1&language=tr&countryCode=TR&format=json";
+        var geoUrl = WeatherLocationQuery.Build(city);
 
         var geo = await Http.GetFromJsonAsync<GeoResponse>(
             geoUrl,
             JsonOptions(),
             cancellationToken);
         var location = geo?.Results?.FirstOrDefault() ??
-                       throw new InvalidOperationException("Şehir bulunamadı.");
+                       throw new InvalidOperationException($"City not found: {city}");
 
         var weatherUrl =
             "https://api.open-meteo.com/v1/forecast" +
@@ -144,10 +142,10 @@ internal static class WeatherWorker
             weatherUrl,
             JsonOptions(),
             cancellationToken) ??
-                      throw new InvalidOperationException("Hava durumu verisi boş döndü.");
+                      throw new InvalidOperationException("The weather service returned no data.");
 
         var current = weather.Current ??
-                      throw new InvalidOperationException("Güncel hava durumu verisi boş döndü.");
+                      throw new InvalidOperationException("The weather service returned no current conditions.");
 
         return new WeatherSnapshot
         {
@@ -187,9 +185,9 @@ internal static class WeatherWorker
         for (var i = 0; i < Math.Min(7, count); i++)
         {
             var label = i == 0
-                ? "Bugün"
+                ? "Today"
                 : DateTime.TryParse(daily.Time[i], out var date)
-                    ? TurkishDayLabel(date.DayOfWeek)
+                    ? CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(date.DayOfWeek)
                     : daily.Time[i];
 
             days.Add(new WeatherDay
@@ -208,18 +206,6 @@ internal static class WeatherWorker
     {
         StateStore.Write("weather-static", snapshot);
     }
-
-    private static string TurkishDayLabel(DayOfWeek day) => day switch
-    {
-        DayOfWeek.Monday => "Pzt",
-        DayOfWeek.Tuesday => "Sal",
-        DayOfWeek.Wednesday => "Çar",
-        DayOfWeek.Thursday => "Per",
-        DayOfWeek.Friday => "Cum",
-        DayOfWeek.Saturday => "Cmt",
-        DayOfWeek.Sunday => "Paz",
-        _ => ""
-    };
 
     private static JsonSerializerOptions JsonOptions() => new()
     {
